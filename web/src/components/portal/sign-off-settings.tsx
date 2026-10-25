@@ -3,7 +3,9 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
+import { Row } from "./settings"
 
 type Provider = { provider: string; label: string; models: string[] }
 type SignOff = { on: boolean; provider: string; model: string; providers: Provider[] }
@@ -14,11 +16,10 @@ const matches = (query: string, ...texts: string[]) => texts.some(t => t.toLower
 function ModelPicker({ value, onPick }: { value: SignOff; onPick: (provider: string, model: string) => void }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
-  const current = value.providers.find(p => p.provider === value.provider)
   return (
     <>
-      <Button className="max-w-56 justify-between gap-2" onClick={() => setOpen(true)} size="sm" variant="ghost">
-        <span className="truncate">{value.model ? `${value.model} · ${current?.label ?? value.provider}` : "automatic"}</span>
+      <Button className="max-w-56 justify-between gap-2 font-normal" title={value.providers.find(p => p.provider === value.provider)?.label} onClick={() => setOpen(true)} size="sm" variant="outline">
+        <span className="truncate">{value.model || "automatic"}</span>
         <ChevronsUpDownIcon className="text-muted-foreground" />
       </Button>
       <Dialog onOpenChange={setOpen} open={open}>
@@ -60,20 +61,18 @@ function ModelPicker({ value, onPick }: { value: SignOff; onPick: (provider: str
 
 // Nako's line after a turn: whether she says it, and which model writes it. Kept on the server,
 // so every device and Desktop's Models page agree.
-export function SignOffSettings({ Row, onError }: { Row: (props: { label: string; children: React.ReactNode }) => React.ReactNode; onError: (message: string) => void }) {
+export function SignOffSettings({ onError }: { onError: (message: string) => void }) {
   const [state, setState] = useState<SignOff | null>(null)
   useEffect(() => void api<SignOff>("/api/signoff").then(setState, e => onError((e as Error).message)), [onError])
   const save = (body: Partial<SignOff>) => api<SignOff>("/api/signoff", { method: "POST", body }).then(setState, e => onError((e as Error).message))
   if (!state) return null
   return (
     <>
-      <Row label="Say a line when a turn ends">
-        <Button aria-pressed={state.on} onClick={() => save({ on: !state.on })} size="sm" variant="ghost">
-          {state.on ? "on" : "off"}
-        </Button>
+      <Row label="Sign-off line">
+        <Switch checked={state.on} label="Sign-off line" onCheckedChange={on => save({ on })} />
       </Row>
       {state.on && (
-        <Row label="Model for it">
+        <Row label="Sign-off model">
           <ModelPicker onPick={(provider, model) => save({ provider, model })} value={state} />
         </Row>
       )}
