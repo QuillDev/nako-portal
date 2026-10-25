@@ -6,6 +6,7 @@ use std::ffi::OsString;
 
 /// The environment for programs the app starts: entries pointing into the AppImage are dropped,
 /// and path lists keep only their entries outside it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn clean_env(vars: impl IntoIterator<Item = (OsString, OsString)>, appdir: Option<&str>) -> Vec<(OsString, OsString)> {
     let Some(appdir) = appdir.filter(|a| !a.is_empty()) else { return vars.into_iter().collect() };
     vars.into_iter()
@@ -24,7 +25,27 @@ pub fn clean_env(vars: impl IntoIterator<Item = (OsString, OsString)>, appdir: O
         .collect()
 }
 
+/// The command a `$BROWSER` setting (`firefox`, `chrome --new-window %s`) runs for `url`.
+/// Linux's openers already read it; on Windows and macOS the app does.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
+pub fn browser_command(setting: &str, url: &str) -> Option<Vec<String>> {
+    let mut parts: Vec<String> = setting.split_whitespace().map(str::to_string).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    if parts.iter().any(|p| p.contains("%s")) {
+        parts.iter_mut().for_each(|p| *p = p.replace("%s", url));
+    } else {
+        parts.push(url.to_string());
+    }
+    Some(parts)
+}
+
 pub fn open(url: &str) -> std::io::Result<()> {
+    #[cfg(not(target_os = "linux"))]
+    if let Some(command) = std::env::var("BROWSER").ok().and_then(|b| browser_command(&b, url)) {
+        return std::process::Command::new(&command[0]).args(&command[1..]).spawn().map(drop);
+    }
     #[cfg(target_os = "linux")]
     {
         let appdir = std::env::var("APPDIR").ok();
@@ -70,6 +91,14 @@ mod tests {
                 ("XDG_DATA_DIRS".into(), "/usr/local/share:/usr/share".into()),
             ]
         );
+    }
+
+    #[test]
+    fn a_browser_setting_runs_with_the_link() {
+        let url = "https://portal.example.com/#/desktop?port=1";
+        assert_eq!(browser_command("firefox", url).unwrap(), ["firefox", url]);
+        assert_eq!(browser_command("chrome --new-window %s", url).unwrap(), ["chrome", "--new-window", url]);
+        assert_eq!(browser_command("  ", url), None);
     }
 
     #[test]

@@ -29,11 +29,13 @@ MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 ANDROID_APK_PATH = "/android/nako.apk"
 ANDROID_PACKAGE = "moe.nakode.portal"
-DESKTOP_APP_PATH = "/desktop/nako.AppImage"
 # How long the desktop app has to collect a sign-in the browser approved.
 HANDOFF_TTL = 120
 PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+# Tauri updater platform keys, and the release files they point at (no paths).
+DESKTOP_PLATFORM = re.compile(r"^(linux|windows|darwin)-(x86_64|aarch64)$")
+DESKTOP_FILE = re.compile(r"^nako[\w.-]*\.(AppImage|exe|tar\.gz)$")
 # Scripts stay 'self' only. Inline styles are allowed because the UI components set them
 # (Radix's scroll area, Shiki's token colors); blob: lets the composer read picked files.
 CSP = (
@@ -121,7 +123,7 @@ class Portal:
         r.add_post("/api/desktop/link", self.desktop_link)
         r.add_get("/api/desktop/session", self.desktop_session)
         r.add_get("/api/desktop/release", self.desktop_release)
-        r.add_get(DESKTOP_APP_PATH, self.desktop_app)
+        r.add_get("/desktop/{file}", self.desktop_app)
         r.add_get("/ws", self.socket)
         r.add_get("/{path:.*}", self.static)
         return app
@@ -551,37 +553,47 @@ class Portal:
         return response
 
     def _published_desktop(self):
+        """The published release: its version and, per platform, the file and its updater signature.
+        A platform whose file is missing or doesn't match the manifest's size is left out."""
         if self.desktop_release_dir is None:
             return None
         try:
             manifest = json.loads((self.desktop_release_dir / "desktop-release.json").read_text())
-            image = self.desktop_release_dir / "nako.AppImage"
-            version, signature, size = manifest["version"], manifest["signature"], manifest["sizeBytes"]
+            version, platforms = manifest["version"], manifest["platforms"]
         except (OSError, ValueError, KeyError, TypeError):
             return None
-        valid = (
-            isinstance(version, str) and VERSION.match(version)
-            and isinstance(signature, str) and signature
-            and isinstance(size, int) and image.is_file() and image.stat().st_size == size
-        )
-        if not valid:
+        if not isinstance(version, str) or not VERSION.match(version) or not isinstance(platforms, dict):
             return None
-        # Tauri's updater format; it checks the signature against the key built into the app.
-        return {"version": version, "platforms": {"linux-x86_64": {"url": self.origin + DESKTOP_APP_PATH, "signature": signature}}}
+        files = {}
+        for platform, entry in platforms.items():
+            if not DESKTOP_PLATFORM.match(str(platform)) or not isinstance(entry, dict):
+                continue
+            name, signature, size = entry.get("file"), entry.get("signature"), entry.get("sizeBytes")
+            if not isinstance(name, str) or not DESKTOP_FILE.match(name) or not isinstance(signature, str) or not signature:
+                continue
+            path = self.desktop_release_dir / name
+            if isinstance(size, int) and path.is_file() and path.stat().st_size == size:
+                files[platform] = (name, signature)
+        return (version, files) if files else None
 
     async def desktop_release(self, request):
         self._require(request)
         release = self._published_desktop()
         if release is None:
             raise web.HTTPNotFound()
-        return web.json_response(release)
+        version, files = release
+        # Tauri's updater format; the app checks the signature against the key built into it.
+        platforms = {p: {"url": f"{self.origin}/desktop/{name}", "signature": sig} for p, (name, sig) in files.items()}
+        return web.json_response({"version": version, "platforms": platforms})
 
     async def desktop_app(self, request):
         self._require(request)
-        if self._published_desktop() is None:
+        release = self._published_desktop()
+        name = request.match_info["file"]
+        if release is None or name not in {n for n, _ in release[1].values()}:
             raise web.HTTPNotFound()
         return web.FileResponse(
-            self.desktop_release_dir / "nako.AppImage",
+            self.desktop_release_dir / name,
             headers={"Content-Type": "application/octet-stream", "Cache-Control": "no-store"},
         )
 

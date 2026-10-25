@@ -1,7 +1,9 @@
 name: Desktop
 
-# PRs test, lint and build the desktop app. Signed release builds (with the updater
-# signature the app checks) happen when a GitHub release tagged desktop-v<version> is published.
+# PRs test, lint and build the desktop app on Linux, Windows and macOS. Publishing a GitHub
+# release tagged desktop-v<version> builds the signed Linux and Windows apps (with the updater
+# signatures the app checks) and attaches them with desktop-release.json. macOS installs from
+# the Homebrew tap, which builds the tagged source.
 on:
   pull_request:
     paths: [desktop/**, .github/workflows/desktop.yml]
@@ -17,17 +19,30 @@ concurrency:
 
 defaults:
   run:
+    shell: bash
     working-directory: desktop
 
 jobs:
   build:
     if: github.event_name == 'pull_request' || startsWith(github.event.release.tag_name, 'desktop-v')
-    # The oldest supported runner, so the AppImage's glibc floor stays low.
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu, so the AppImage's glibc floor stays low.
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            bundles: appimage,deb
+          - os: windows-latest
+            platform: windows-x86_64
+            bundles: nsis
+          - os: macos-latest
+            platform: darwin-aarch64
+            bundles: app
+    runs-on: ${{ matrix.os }}
     env:
       TAG: ${{ github.event.release.tag_name }}
+      RELEASE: ${{ github.event_name == 'release' && matrix.platform != 'darwin-aarch64' }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,6 +58,7 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Install system libraries
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
@@ -68,47 +84,80 @@ jobs:
           cargo test --locked
           cargo clippy --locked --all-targets -- -D warnings
       - name: Build the app
-        if: github.event_name == 'pull_request'
-        run: npx tauri build --ci --bundles appimage,deb
-      - name: Keep the PR build
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v5
-        with:
-          name: nako-desktop-linux
-          path: |
-            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            desktop/src-tauri/target/release/bundle/deb/*.deb
-          retention-days: 7
+        if: env.RELEASE != 'true'
+        run: npx tauri build --ci --bundles ${{ matrix.bundles }}
       - name: Build the signed release
-        if: github.event_name == 'release'
+        if: env.RELEASE == 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.DESKTOP_UPDATER_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.DESKTOP_UPDATER_KEY_PASSWORD }}
         run: |
-          npx tauri build --ci --bundles appimage,deb \
+          npx tauri build --ci --bundles ${{ matrix.bundles }} \
             --config "{\"version\":\"$VERSION\",\"bundle\":{\"createUpdaterArtifacts\":true}}"
-      - name: Describe release
-        if: github.event_name == 'release'
+      - name: Collect the build
         run: |
-          out="$RUNNER_TEMP/release"
+          out="$RUNNER_TEMP/out"
           mkdir -p "$out"
-          cp src-tauri/target/release/bundle/appimage/*.AppImage "$out/nako.AppImage"
-          cp src-tauri/target/release/bundle/appimage/*.AppImage.sig "$out/nako.AppImage.sig"
-          cp src-tauri/target/release/bundle/deb/*.deb "$out/nako.deb"
-          cd "$out"
+          bundle=src-tauri/target/release/bundle
+          case "${{ matrix.platform }}" in
+            linux-*)
+              cp $bundle/appimage/*.AppImage "$out/nako.AppImage"
+              cp $bundle/deb/*.deb "$out/nako.deb"
+              if [ "$RELEASE" = true ]; then cp $bundle/appimage/*.AppImage.sig "$out/nako.AppImage.sig"; fi
+              ;;
+            windows-*)
+              cp $bundle/nsis/*-setup.exe "$out/nako-setup.exe"
+              if [ "$RELEASE" = true ]; then cp $bundle/nsis/*-setup.exe.sig "$out/nako-setup.exe.sig"; fi
+              ;;
+            darwin-*)
+              tar -czf "$out/Nako.app.tar.gz" -C $bundle/macos Nako.app
+              ;;
+          esac
+          ls -la "$out"
+      - name: Keep the build
+        uses: actions/upload-artifact@v5
+        with:
+          name: nako-desktop-${{ matrix.platform }}
+          path: ${{ runner.temp }}/out/*
+          retention-days: 7
+
+  # One manifest for every platform the release built; the portal serves it to the apps.
+  publish:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Fetch the builds
+        uses: actions/download-artifact@v5
+        with:
+          pattern: nako-desktop-*-x86_64
+          merge-multiple: true
+          path: release
+      - name: Describe release
+        working-directory: release
+        run: |
+          entry() {
+            jq -n --arg file "$1" --arg signature "$(cat "$1.sig")" --argjson sizeBytes "$(stat -c %s "$1")" \
+              '{file: $file, signature: $signature, sizeBytes: $sizeBytes}'
+          }
           jq -n \
-            --arg version "$VERSION" \
-            --arg signature "$(cat nako.AppImage.sig)" \
-            --arg sha256 "$(sha256sum nako.AppImage | cut -d' ' -f1)" \
-            --argjson sizeBytes "$(stat -c %s nako.AppImage)" \
-            '{version: $version, signature: $signature, sha256: $sha256, sizeBytes: $sizeBytes}' \
+            --arg version "${TAG#desktop-v}" \
+            --argjson linux "$(entry nako.AppImage)" \
+            --argjson windows "$(entry nako-setup.exe)" \
+            '{version: $version, platforms: {"linux-x86_64": $linux, "windows-x86_64": $windows}}' \
             > desktop-release.json
           cat desktop-release.json
-      - name: Attach the app to the release
-        if: github.event_name == 'release'
+      - name: Attach the apps to the release
+        working-directory: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cd "$RUNNER_TEMP/release"
-          gh release upload "$TAG" nako.AppImage nako.AppImage.sig nako.deb desktop-release.json \
+          gh release upload "$TAG" nako.AppImage nako.AppImage.sig nako.deb nako-setup.exe nako-setup.exe.sig desktop-release.json \
             --repo "$GITHUB_REPOSITORY" --clobber

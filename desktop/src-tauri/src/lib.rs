@@ -77,7 +77,10 @@ fn is_local(url: &Url) -> bool {
 
 async fn reachable(origin: &ServerOrigin) -> Result<(), String> {
     let client = reqwest::Client::builder().timeout(Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
-    let response = client.get(origin.page("/api/me")).send().await.map_err(|_| format!("Can't reach {}", origin.as_str()))?;
+    let response = client.get(origin.page("/api/me")).send().await.map_err(|error| {
+        eprintln!("nako: {}: {error:?}", origin.as_str());
+        format!("Can't reach {}", origin.as_str())
+    })?;
     let me: serde_json::Value = response.json().await.map_err(|_| format!("{} isn't a Nako portal", origin.as_str()))?;
     match me.get("signed_in") {
         Some(_) => Ok(()),
@@ -254,9 +257,24 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
 fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
     let navigating = app.clone();
     let opening = app.clone();
-    let window = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()))
+    let version = app.package_info().version.to_string();
+    // 1100x780, or less on a smaller screen.
+    let (mut width, mut height) = (1100.0, 780.0);
+    if let Ok(Some(monitor)) = app.primary_monitor() {
+        let screen = monitor.work_area().size.to_logical::<f64>(monitor.scale_factor());
+        (width, height) = (f64::min(width, screen.width * 0.92), f64::min(height, screen.height * 0.92));
+    }
+    let builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()));
+    // Tag the user agent so the portal offers browser sign-in instead of passkeys. WebKitGTK's own
+    // agent is extended after creation (below); elsewhere the webview takes a whole agent.
+    #[cfg(target_os = "macos")]
+    let builder = builder.user_agent(&format!("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NakoDesktop/{version}"));
+    #[cfg(windows)]
+    let builder = builder.user_agent(&format!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) NakoDesktop/{version}"));
+    let window = builder
         .title("Nako")
-        .inner_size(1100.0, 780.0)
+        .inner_size(width, height)
+        .center()
         .min_inner_size(380.0, 480.0)
         .visible(!hidden)
         .background_color(tauri::webview::Color(0x0d, 0x0a, 0x11, 0xff))
@@ -291,9 +309,6 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
         })
         .build()?;
 
-    // Tag the user agent so the portal offers browser sign-in instead of passkeys.
-    #[cfg(target_os = "linux")]
-    let version = app.package_info().version.to_string();
     #[cfg(target_os = "linux")]
     window.with_webview(move |webview| {
         use webkit2gtk::{SettingsExt, WebViewExt};
@@ -302,6 +317,8 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
             settings.set_user_agent(Some(&format!("{agent} NakoDesktop/{version}")));
         }
     })?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = version;
     Ok(window)
 }
 
@@ -333,9 +350,17 @@ pub fn run() {
                 }
             }
             if let WindowEvent::Focused(false) = event {
-                update::restart_if_pending(window.app_handle());
+                update::install_if_idle(window.app_handle());
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Nako");
+        .build(tauri::generate_context!())
+        .expect("error while starting Nako")
+        .run(|app, event| {
+            // Clicking the Dock icon brings back a window that was closed to the menu bar.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main(app);
+            }
+            let _ = (app, event);
+        });
 }
