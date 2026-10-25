@@ -2,9 +2,10 @@ import { PlusIcon, SettingsIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { navigate, type Portal } from "@/hooks/use-portal"
+import type { Portal } from "@/hooks/use-portal"
 import type { SessionRow, Status } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { useDrawer } from "./drawer"
 
 function age(seconds: number) {
   const days = (Date.now() / 1000 - seconds) / 86400
@@ -31,6 +32,7 @@ function groups(rows: SessionRow[]) {
 const DOT: Partial<Record<Status, string>> = { working: "bg-blue-500 animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
 
 export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
+  const { go } = useDrawer()
   const [filter, setFilter] = useState("")
   const needle = filter.trim().toLowerCase()
   const rows = portal.sessions.filter(s => !needle || s.title.toLowerCase().includes(needle))
@@ -40,7 +42,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
     <aside className={cn("flex w-full flex-col border-r bg-sidebar md:w-72", className)}>
       <div className="flex items-center gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <Input aria-label="Search chats" onChange={e => setFilter(e.target.value)} placeholder="Search" type="search" value={filter} />
-        <Button aria-label="New chat" onClick={() => navigate("#/new")} size="icon" title="New chat" variant="ghost">
+        <Button aria-label="New chat" onClick={() => go("#/new")} size="icon" title="New chat" variant="ghost">
           <PlusIcon />
         </Button>
       </div>
@@ -53,7 +55,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
               <button
                 className={cn("flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent", open === s.id && "bg-accent")}
                 key={s.id}
-                onClick={() => navigate(`#/c/${s.id}`)}
+                onClick={() => go(`#/c/${s.id}`)}
                 type="button"
               >
                 <span className="min-w-0 flex-1 truncate">{s.title}</span>
@@ -65,7 +67,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
       </nav>
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <span className="px-2 text-muted-foreground text-xs">{portal.connected ? "" : "hermes is offline"}</span>
-        <Button aria-label="Settings" onClick={() => navigate("#/settings")} size="icon" title="Settings" variant="ghost">
+        <Button aria-label="Settings" onClick={() => go("#/settings")} size="icon" title="Settings" variant="ghost">
           <SettingsIcon />
         </Button>
       </div>
