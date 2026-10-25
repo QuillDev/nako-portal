@@ -117,6 +117,7 @@ class FakeGateway:
         self.received = []
         self.answers = []
         self.yolo = set()
+        self.elsewhere = {}
         self.next_row = 1
         self.reply = "hello from hermes"
         self.ask_approval = False
@@ -166,6 +167,14 @@ class FakeGateway:
     async def new_thread(self, chat, title):
         sid = f"20261024_000000_{len(self.sessions):06x}"
         self.add_session(sid, title or "", chat=chat)
+        return sid
+
+    async def adopt(self, chat, sid):
+        if sid in self.sessions:
+            raise ValueError("That chat is already in the portal")
+        if sid not in self.elsewhere:
+            raise ValueError("No chat with that id")
+        self.sessions[sid] = {**self.elsewhere.pop(sid), "chat": chat}
         return sid
 
     async def inbound(self, chat, text, files):

@@ -1,6 +1,6 @@
 """The loopback API scripts on this machine use to start a chat the user can then steer."""
 
-from conftest import LOCAL_TOKEN
+from conftest import LOCAL_TOKEN, ORIGIN
 
 
 async def _start(world, payload, token=LOCAL_TOKEN):
@@ -61,3 +61,39 @@ async def test_follow_ups_need_the_token_too(world):
     refused = await world.http.post(str(world.local.make_url(f"/sessions/{sid}/messages")), json={"text": "hi"})
     assert refused.status == 401
     assert world.hermes.sessions[sid]["rows"] == []
+
+
+async def _handoff(world, sid, token=LOCAL_TOKEN):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return await world.http.post(str(world.local.make_url(f"/sessions/{sid}/handoff")), headers=headers)
+
+
+async def test_a_desktop_chat_handed_off_shows_in_the_portal_with_its_history(world):
+    await world.sign_up()
+    world.hermes.elsewhere["20261020_101010_aaaaaa"] = {
+        "id": "20261020_101010_aaaaaa", "title": "Trip plan", "rows": [{"role": "user", "text": "plan the trip", "row_id": 1, "timestamp": 1_700_000_000}],
+        "started_at": 1_700_000_000, "pinned": False, "archived": False,
+    }
+    moved = await _handoff(world, "20261020_101010_aaaaaa")
+    assert moved.status == 200, await moved.text()
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [row["title"] for row in listed] == ["Trip plan"]
+    opened = await (await world.http.get(world.url("/api/sessions/20261020_101010_aaaaaa"))).json()
+    assert [m["text"] for m in opened["messages"]] == ["plan the trip"]
+    sent = await world.http.post(world.url("/api/sessions/20261020_101010_aaaaaa/messages"), data={"text": "book the hotel"}, headers={"Origin": ORIGIN})
+    assert sent.status == 200, await sent.text()
+    assert world.hermes.received[-1][1] == "book the hotel"
+
+
+async def test_handing_off_an_unknown_or_portal_chat_is_refused(world):
+    sid = world.hermes.add_session("20261024_070707_abcdef", "already here")
+    for target in ("20261024_080808_000000", sid):
+        refused = await _handoff(world, target)
+        assert refused.status == 400
+    assert list(world.hermes.sessions) == [sid]
+
+
+async def test_handoff_needs_the_token(world):
+    world.hermes.elsewhere["20261020_101010_bbbbbb"] = {"id": "20261020_101010_bbbbbb", "title": "x", "rows": [], "started_at": 0, "pinned": False, "archived": False}
+    assert (await _handoff(world, "20261020_101010_bbbbbb", token=None)).status == 401
+    assert "20261020_101010_bbbbbb" not in world.hermes.sessions

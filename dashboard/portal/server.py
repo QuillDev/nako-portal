@@ -168,9 +168,14 @@ class Portal:
             hub = await self._hub()
             return web.json_response(await hub.send(self._session(request), text))
 
+        async def handoff(request):
+            hub = await self._hub()
+            return web.json_response(await hub.adopt(self._session(request)))
+
         app = web.Application(client_max_size=MAX_BODY, middlewares=[guard])
         app.router.add_post("/sessions", start)
         app.router.add_post("/sessions/{session}/messages", send)
+        app.router.add_post("/sessions/{session}/handoff", handoff)
         return app
 
     @web.middleware
