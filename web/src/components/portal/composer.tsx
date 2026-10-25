@@ -43,7 +43,7 @@ export function Composer({ portal, draftKey }: { portal: Portal; draftKey: strin
           {file => <PromptInputAttachment data={file} />}
         </PromptInputAttachments>
         <PromptInput
-          className="[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl"
+          className="[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card"
           maxFileSize={MAX_FILE}
           multiple
           onError={e => portal.setError(e.message)}

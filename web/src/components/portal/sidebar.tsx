@@ -1,4 +1,4 @@
-import { PlusIcon, SettingsIcon } from "lucide-react"
+import { ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
@@ -34,7 +34,7 @@ function groups(rows: SessionRow[]) {
 const DOT: Partial<Record<Status, string>> = { working: "bg-primary animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
 
 export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
-  const { go } = useDrawer()
+  const { go, phone, toggle } = useDrawer()
   const [filter, setFilter] = useState("")
   const rename = useRenameDialog(portal)
   const needle = filter.trim().toLowerCase()
@@ -42,7 +42,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
   const open = portal.route.view === "chat" ? portal.route.session : null
 
   return (
-    <aside className={cn("flex w-full flex-col border-r bg-sidebar md:w-72", className)}>
+    <aside className={cn("flex w-full flex-col border-r bg-sidebar", className)}>
       <div className="flex flex-col gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="flex items-center gap-2 pl-1">
           <img alt="" className="size-6 rounded-full" src="/icon-192.png" />
@@ -50,6 +50,11 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
           <Button aria-label="New chat" onClick={() => go("#/new")} size="icon" title="New chat" variant="ghost">
             <PlusIcon />
           </Button>
+          {!phone && (
+            <Button aria-label="Hide chats" className="-ml-1" onClick={toggle} size="icon" title="Hide chats (Ctrl+B)" variant="ghost">
+              <ChevronLeftIcon />
+            </Button>
+          )}
         </div>
         <Input aria-label="Search chats" onChange={e => setFilter(e.target.value)} placeholder="Search" type="search" value={filter} />
       </div>
