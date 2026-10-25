@@ -18,12 +18,18 @@ use tauri::async_runtime::JoinHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent};
+use tauri::ipc::CapabilityBuilder;
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::Notify;
 
 use origin::ServerOrigin;
 
 const MAIN: &str = "main";
+
+/// Tells every page (the connect page and the portal) to draw its own minimize/maximize/close
+/// buttons. Older apps never set it, so the portal shows none there.
+#[cfg(not(target_os = "macos"))]
+const WINDOW_CONTROLS: &str = "window.nakoWindow = { controls: true }";
 
 #[derive(Default)]
 struct Shell {
@@ -121,10 +127,26 @@ async fn connect(app: AppHandle, address: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The portal can move, resize and close its own window, nothing else: it draws the title bar.
+fn allow_window_controls(app: &AppHandle, origin: &ServerOrigin) {
+    let capability = CapabilityBuilder::new(format!("window-controls:{}", origin.as_str()))
+        .remote(format!("{}/*", origin.as_str()))
+        .window(MAIN)
+        .permission("core:window:allow-start-dragging")
+        .permission("core:window:allow-internal-toggle-maximize")
+        .permission("core:window:allow-minimize")
+        .permission("core:window:allow-toggle-maximize")
+        .permission("core:window:allow-close");
+    if let Err(error) = app.add_capability(capability) {
+        eprintln!("nako: no window controls for {}: {error}", origin.as_str());
+    }
+}
+
 fn open_portal(app: &AppHandle, origin: ServerOrigin) {
     let shell = app.state::<Shell>();
     let changed = shell.origin.lock().unwrap().replace(origin.clone()).as_ref() != Some(&origin);
     if changed || shell.listener.lock().unwrap().is_none() {
+        allow_window_controls(app, &origin);
         listen(app, origin.clone());
         update::watch(app.clone(), origin.clone());
     }
@@ -276,6 +298,9 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
     let builder = builder.user_agent(&format!("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NakoDesktop/{version}"));
     #[cfg(windows)]
     let builder = builder.user_agent(&format!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) NakoDesktop/{version}"));
+    // Windows and Linux drop the system title bar for the page's own controls (macOS keeps its native one).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.decorations(false).initialization_script(WINDOW_CONTROLS);
     let window = builder
         .title("Nako")
         .inner_size(width, height)
