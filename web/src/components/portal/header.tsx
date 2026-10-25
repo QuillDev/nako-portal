@@ -1,4 +1,4 @@
-import { ChevronRightIcon, MenuIcon, MinusIcon, SquareIcon, XIcon } from "lucide-react"
+import { ChevronRightIcon, MenuIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { hasWindowControls, windowAction } from "@/lib/desktop-window"
@@ -29,10 +29,10 @@ export function WindowControls() {
   return (
     <div className="ml-1 flex items-center">
       <Button aria-label="Minimize" className="text-muted-foreground" onClick={() => windowAction("minimize")} size="icon" title="Minimize" variant="ghost">
-        <MinusIcon />
+        <Glyph d="M0 5.5h10" />
       </Button>
       <Button aria-label="Maximize" className="text-muted-foreground" onClick={() => windowAction("toggle_maximize")} size="icon" title="Maximize" variant="ghost">
-        <SquareIcon className="size-3.5" />
+        <Glyph d="M.5.5h9v9h-9z" />
       </Button>
       <Button
         aria-label="Close"
@@ -42,8 +42,17 @@ export function WindowControls() {
         title="Close"
         variant="ghost"
       >
-        <XIcon />
+        <Glyph d="M.5.5l9 9M9.5.5l-9 9" />
       </Button>
     </div>
+  )
+}
+
+/** Thin 10px caption glyphs, drawn like the system's own so the three match in weight. */
+function Glyph({ d }: { d: string }) {
+  return (
+    <svg aria-hidden="true" className="size-2.5" fill="none" stroke="currentColor" strokeWidth="1" viewBox="0 0 10 10">
+      <path d={d} />
+    </svg>
   )
 }
