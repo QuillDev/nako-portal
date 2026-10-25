@@ -20,6 +20,8 @@ backend:
   sign_off(reply) -> str or None            a short line Nako says once a turn's reply is in
   sign_off_models() -> [{provider, label, models}]   what the sign-off can run on
   sign_off_model() -> {provider, model}     / set_sign_off_model(provider, model)
+  profiles() -> {profile, profiles}         the Hermes profile shown, and the ones served
+  use_profile(name) -> profiles()           show another profile's chats (ValueError if not served)
 """
 
 from __future__ import annotations

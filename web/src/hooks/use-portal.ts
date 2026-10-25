@@ -108,6 +108,11 @@ export function usePortal() {
           return
         case "alert":
           return
+        case "profile.changed":
+          // Another profile's chats: the open one isn't among them any more.
+          if (currentRef.current) navigate("#/")
+          loadSessions()
+          return
       }
       const open = currentRef.current
       if (!open || frame.session !== open.session) return

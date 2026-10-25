@@ -125,9 +125,21 @@ class FakeGateway:
         self.sign_off_route = {"provider": "auto", "model": ""}
         self.image_dir = Path(tempfile.mkdtemp())
         self.hub = None
+        # Hermes profiles the gateway serves; the portal shows one at a time.
+        self.profile_names = ["default", "work", "research"]
+        self.profile = "default"
 
-    def add_session(self, sid, title, chat=None, messages=()):
-        self.sessions[sid] = {"id": sid, "title": title, "chat": chat or f"chat-{sid}", "rows": [], "started_at": time.time(), "pinned": False, "archived": False}
+    def add_session(self, sid, title, chat=None, messages=(), profile=None):
+        self.sessions[sid] = {
+            "id": sid,
+            "title": title,
+            "chat": chat or f"chat-{sid}",
+            "rows": [],
+            "started_at": time.time(),
+            "pinned": False,
+            "archived": False,
+            "profile": profile or self.profile,
+        }
         for role, text in messages:
             self._row(sid, role, text)
         return sid
@@ -152,16 +164,29 @@ class FakeGateway:
         return [
             {"id": s["id"], "title": s["title"], "preview": _preview(s), "started_at": s["started_at"], "message_count": len(s["rows"]), "pinned": s["pinned"], "chat_id": s["chat"]}
             for s in self.sessions.values()
-            if not s["archived"]
+            if not s["archived"] and s["profile"] == self.profile
         ]
 
-    def thread(self, sid):
+    def _shown(self, sid):
         s = self.sessions.get(sid)
+        return s if s and s["profile"] == self.profile else None
+
+    def thread(self, sid):
+        s = self._shown(sid)
         return None if s is None else {"title": s["title"], "messages": list(s["rows"])}
 
     def chat_of(self, sid):
-        s = self.sessions.get(sid)
+        s = self._shown(sid)
         return s["chat"] if s else None
+
+    def profiles(self):
+        return {"profile": self.profile, "profiles": list(self.profile_names)}
+
+    def use_profile(self, name):
+        if name not in self.profile_names:
+            raise ValueError("That profile isn't served by this gateway")
+        self.profile = name
+        return self.profiles()
 
     def session_of(self, chat):
         return next((s["id"] for s in self.sessions.values() if s["chat"] == chat), None)
@@ -176,7 +201,7 @@ class FakeGateway:
             raise ValueError("That chat is already in the portal")
         if sid not in self.elsewhere:
             raise ValueError("No chat with that id")
-        self.sessions[sid] = {**self.elsewhere.pop(sid), "chat": chat}
+        self.sessions[sid] = {**self.elsewhere.pop(sid), "chat": chat, "profile": self.profile}
         return sid
 
     async def inbound(self, chat, text, files):

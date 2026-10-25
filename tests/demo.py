@@ -109,6 +109,10 @@ async def main(port):
         hermes._row(long, "tool", "", name="read_file", context=f"src/importer/stage_{turn}.ts", tool_call_id=f"l{turn}")
         body = " ".join(["The row parser and the batch writer disagree about blank lines, so this pass makes them share one reader."] * (1 + turn % 3))
         hermes._row(long, "assistant", f"**Step {turn}.** {body}")
+    # Another profile's own chats, shown after switching profiles in Settings.
+    hermes.add_session("20261024_100000_p00001", "Draft the onboarding email", messages=[("user", "write a short welcome email for new users")], profile="work")
+    hermes.add_session("20261024_093000_p00002", "Notifications", chat="inbox", profile="work")
+    hermes.add_session("20261023_100000_p00003", "Compare vector databases", profile="work")
     data = Path(tempfile.mkdtemp())
     store = Store(data / "portal.db")
     hub = Hub(Backend(hermes))

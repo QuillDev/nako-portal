@@ -68,4 +68,5 @@ export type Frame =
   | { kind: "request"; session: string; request: PortalRequest }
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }
+  | { kind: "profile.changed"; profile: string }
   | { kind: "event"; session: string; type: string; payload: Record<string, unknown> }

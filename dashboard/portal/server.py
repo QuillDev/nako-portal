@@ -77,6 +77,12 @@ class Portal:
         self.hub = hub
         self.store = store
         hub.sign_off_on = store.meta("signoff", "on") != "off"
+        saved = store.meta("profile", None)
+        if saved:
+            try:
+                hub.backend.use_profile(saved)
+            except Exception:
+                log.warning("portal: can't show saved profile %r; showing the default", saved, exc_info=True)
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         # Passkey ceremonies from the Android app carry its signing-key origin, not the site's.
         self.origins = {self.origin}
@@ -100,6 +106,8 @@ class Portal:
         r.add_post("/api/me/name", self.set_name)
         r.add_get("/api/signoff", self.sign_off)
         r.add_post("/api/signoff", self.set_sign_off)
+        r.add_get("/api/profile", self.profile)
+        r.add_post("/api/profile", self.set_profile)
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -287,6 +295,23 @@ class Portal:
                 raise web.HTTPBadRequest(text=json.dumps({"error": "That model isn't available"}), content_type="application/json")
             await asyncio.to_thread(self.hub.backend.set_sign_off_model, provider, model)
         return await self.sign_off(request)
+
+    async def profile(self, request):
+        """The Hermes profile the portal shows, and the ones it could."""
+        self._require(request)
+        return web.json_response(await asyncio.to_thread(self.hub.backend.profiles))
+
+    async def set_profile(self, request):
+        """Show another profile: every chat, history and new thread is that profile's from now on."""
+        self._require(request)
+        body = await request.json()
+        try:
+            shown = await asyncio.to_thread(self.hub.backend.use_profile, str(body.get("profile") or ""))
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+        self.store.set_meta("profile", shown["profile"])
+        await self.hub.broadcast({"kind": "profile.changed", "profile": shown["profile"]})
+        return web.json_response(shown)
 
     async def register_options(self, request):
         body = await request.json()
