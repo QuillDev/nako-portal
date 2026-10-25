@@ -54,9 +54,26 @@ async fn check(app: &AppHandle, origin: &ServerOrigin) -> Result<(), Box<dyn std
         let bytes = update.download(|_, _| {}, || {}).await?;
         *PENDING.lock().unwrap() = Some((update, bytes));
         let handle = app.clone();
-        app.run_on_main_thread(move || install_if_idle(&handle))?;
+        app.run_on_main_thread(move || {
+            announce(&handle);
+            install_if_idle(&handle);
+        })?;
     }
     Ok(())
+}
+
+/// Tells the portal page an update is ready, so it can offer a restart. Runs again on every
+/// portal page load, since a reload forgets it.
+pub fn announce(app: &AppHandle) {
+    let Some(version) = PENDING.lock().unwrap().as_ref().map(|(update, _)| update.version.clone()) else { return };
+    if let Some(window) = app.get_webview_window(crate::MAIN) {
+        let _ = window.eval(announcement(&version));
+    }
+}
+
+fn announcement(version: &str) -> String {
+    let detail = serde_json::json!({ "version": version });
+    format!("window.nakoUpdate = {detail}; window.dispatchEvent(new Event(\"nako-update\"))")
 }
 
 /// Installs a downloaded update and restarts into it, but never under someone using the window.
@@ -65,8 +82,16 @@ pub fn install_if_idle(app: &AppHandle) {
     if window.is_focused().unwrap_or(false) {
         return;
     }
+    install(app, !window.is_visible().unwrap_or(true));
+}
+
+/// The portal's update button: install now, focused or not, and come back with the window open.
+pub fn install_now(app: &AppHandle) {
+    install(app, false);
+}
+
+fn install(app: &AppHandle, hidden: bool) {
     let Some((update, bytes)) = PENDING.lock().unwrap().take() else { return };
-    let hidden = !window.is_visible().unwrap_or(true);
     // On Windows this runs the installer passively; it closes the app and starts the new version.
     if let Err(error) = update.install(&bytes) {
         eprintln!("nako: update failed: {error}");
@@ -92,4 +117,18 @@ fn relaunch(app: &AppHandle, hidden: bool) {
 #[cfg(not(target_os = "linux"))]
 fn relaunch(app: &AppHandle, _hidden: bool) {
     app.restart();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::announcement;
+
+    #[test]
+    fn announcement_hands_the_page_the_version_as_data() {
+        let script = announcement("1.2.3\"; alert(1); \"");
+        assert_eq!(
+            script,
+            r#"window.nakoUpdate = {"version":"1.2.3\"; alert(1); \""}; window.dispatchEvent(new Event("nako-update"))"#
+        );
+    }
 }
