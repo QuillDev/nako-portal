@@ -1,5 +1,6 @@
 import { CheckIcon, FileIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
 import { useState } from "react"
+import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning"
@@ -48,10 +49,11 @@ function liveSteps(tools: LiveTool[], messages: HistoryMessage[]): Step[] {
 }
 
 function Steps({ steps, live }: { steps: Step[]; live?: boolean }) {
+  const { stopScroll } = useStickToBottomContext()
   const label = `${steps.length} tool ${steps.length === 1 ? "call" : "calls"}`
   return (
     <ChainOfThought className="-my-2" defaultOpen={false}>
-      <ChainOfThoughtHeader className="w-fit">{live && steps.at(-1)?.state === "running" ? `${steps.at(-1)!.name}…` : label}</ChainOfThoughtHeader>
+      <ChainOfThoughtHeader className="w-fit" onClick={stopScroll}>{live && steps.at(-1)?.state === "running" ? `${steps.at(-1)!.name}…` : label}</ChainOfThoughtHeader>
       <ChainOfThoughtContent>
         {steps.map(s => (
           <ChainOfThoughtStep
@@ -132,12 +134,13 @@ function User({ session, text, images }: { session: string; text: string; images
 
 function Assistant({ session, text, reasoning, streaming }: { session: string; text: string; reasoning?: string; streaming?: boolean }) {
   const { body, files } = splitReply(text)
+  const { stopScroll } = useStickToBottomContext()
   return (
     <Message from="assistant">
       <MessageContent className="w-full">
         {reasoning && (
           <Reasoning defaultOpen={false} isStreaming={streaming && !body}>
-            <ReasoningTrigger />
+            <ReasoningTrigger onClick={stopScroll} />
             <ReasoningContent>{reasoning}</ReasoningContent>
           </Reasoning>
         )}
