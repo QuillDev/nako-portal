@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { cancelled, register } from "@/lib/passkeys"
-import { enablePush, pushState } from "@/lib/push"
+import { appAlerts, enablePush, openAppNotificationSettings, pushState } from "@/lib/push"
 import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
@@ -109,6 +109,13 @@ function Section({ title, defaultOpen = false, children }: { title: string; defa
 export function Settings({ portal }: { portal: Portal }) {
   const [passkeys, setPasskeys] = useState<Passkey[]>([])
   const [push, setPush] = useState(pushState())
+  const [app, setApp] = useState(appAlerts())
+  // Coming back from the phone's notification settings shows what was picked there.
+  useEffect(() => {
+    const reread = () => document.visibilityState === "visible" && setApp(appAlerts())
+    document.addEventListener("visibilitychange", reread)
+    return () => document.removeEventListener("visibilitychange", reread)
+  }, [])
   const [error, setError] = useState("")
   const theme = useTheme()
   const presence = usePresence()
@@ -153,24 +160,34 @@ export function Settings({ portal }: { portal: Portal }) {
           <SignOffSettings onError={setError} />
         </Section>
         <Section title="Notifications">
-          <Row label="Push alerts">
-            {push === "unsupported" || push === "blocked" ? (
-              <span className="text-muted-foreground text-xs">{PUSH_NOTE[push]}</span>
-            ) : (
-              <Switch
-                checked={push === "on"}
-                disabled={push === "on"}
-                label="Push alerts"
-                onCheckedChange={attempt(async () => {
-                  try {
-                    await enablePush()
-                  } finally {
-                    setPush(pushState())
-                  }
-                })}
-              />
-            )}
-          </Row>
+          {app ? (
+            <Row label="Alerts">
+              {app === "app" ? (
+                <span className="text-muted-foreground text-xs">handled by the app</span>
+              ) : (
+                <Switch checked={app === "on"} label="Alerts" onCheckedChange={openAppNotificationSettings} />
+              )}
+            </Row>
+          ) : (
+            <Row label="Push alerts">
+              {push === "unsupported" || push === "blocked" ? (
+                <span className="text-muted-foreground text-xs">{PUSH_NOTE[push]}</span>
+              ) : (
+                <Switch
+                  checked={push === "on"}
+                  disabled={push === "on"}
+                  label="Push alerts"
+                  onCheckedChange={attempt(async () => {
+                    try {
+                      await enablePush()
+                    } finally {
+                      setPush(pushState())
+                    }
+                  })}
+                />
+              )}
+            </Row>
+          )}
         </Section>
         <Section title="Passkeys">
           {passkeys.map(k => (
