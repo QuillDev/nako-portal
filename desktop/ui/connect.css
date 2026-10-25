@@ -5,7 +5,7 @@
   --muted: #b6a4b1;
   --primary: #ec4899;
   --bright: #f472b6;
-  --border: rgb(255 255 255 / 16%);
+  --input: rgb(255 255 255 / 10%);
   --error: #f87171;
 }
 * { box-sizing: border-box; }
@@ -25,25 +25,32 @@ h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
 form, #unreachable { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 p { margin: 0; color: var(--muted); }
 p.error { color: var(--error); }
-input {
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgb(255 255 255 / 4%);
-  color: var(--text);
+/* Same controls as the portal's own (shadcn Input and Button). */
+input, button {
+  height: 36px;
+  border-radius: 10px;
   font: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
 }
-input:focus-visible, button:focus-visible { outline: 2px solid var(--bright); outline-offset: 2px; }
+input {
+  padding: 0 12px;
+  border: 1px solid var(--input);
+  background: rgb(255 255 255 / 3%);
+  color: var(--text);
+}
+input::placeholder { color: var(--muted); }
 button {
-  padding: 10px 12px;
-  border: 0;
-  border-radius: 8px;
+  padding: 0 16px;
+  border: 1px solid transparent;
   background: var(--primary);
   color: white;
-  font: inherit;
   font-weight: 500;
   cursor: pointer;
 }
-button:disabled { opacity: 0.6; cursor: default; }
+button:hover { background: rgb(236 72 153 / 90%); }
+/* A soft ring that hugs the control instead of a second outline around it. */
+input:focus-visible, button:focus-visible { outline: none; border-color: var(--bright); box-shadow: 0 0 0 3px rgb(244 114 182 / 22%); }
+button:disabled { opacity: 0.5; cursor: default; }
 button.quiet { background: transparent; color: var(--muted); }
 button.quiet:hover { color: var(--text); }

@@ -1,6 +1,6 @@
 [package]
 name = "nako"
-version = "0.2.0"
+version = "0.2.1"
 description = "Nako Portal for the desktop"
 edition = "2021"
 publish = false
