@@ -123,6 +123,8 @@ class Hub:
                     "preview": row.get("preview") or "",
                     "started_at": row.get("started_at") or 0,
                     "source": row.get("source") or "",
+                    # The portal platform's one chat, where posts sent to the portal land (see __init__.py).
+                    "notifications": row.get("source") == "portal",
                     "pinned": session in pinned,
                     "status": self.status.get(session),
                 }

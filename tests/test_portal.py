@@ -265,14 +265,15 @@ async def test_cron_posts_read_as_nakos_messages_and_per_post_copies_stay_out_of
     inbox = world.hermes.add_session(
         "20261024_040404_dddddd",
         "notifications",
+        source="portal",
         messages=[("user", "[Cron delivery: build watch]\nci went red on main"), ("user", "[Cron delivery: news digest]\nfive links"), ("user", "which first?"), ("assistant", "the sorting paper")],
     )
     copy = world.hermes.add_session("20261024_050505_eeeeee", "", messages=[("user", "[Cron delivery: build watch]\nci went red on main")])
     chat = world.hermes.add_session("20261024_070707_aaaaaa", "", messages=[("user", "what is [Cron delivery: x] about")])
     await world.sign_up()
 
-    listed = [row["id"] for row in await (await world.http.get(world.url("/api/sessions"))).json()]
-    assert sorted(listed) == sorted([inbox, chat])
+    listed = {row["id"]: row["notifications"] for row in await (await world.http.get(world.url("/api/sessions"))).json()}
+    assert listed == {inbox: True, chat: False}
     assert copy in world.hermes.sessions
 
     opened = await (await world.http.get(world.url(f"/api/sessions/{inbox}"))).json()
