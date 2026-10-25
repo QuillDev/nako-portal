@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.IBinder
@@ -117,6 +118,8 @@ class AlertService : Service() {
         }
     }
 
+    private val avatar by lazy { BitmapFactory.decodeResource(resources, R.drawable.nako) }
+
     private fun show(origin: ServerOrigin, alert: Alert) {
         val open = Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
@@ -126,6 +129,8 @@ class AlertService : Service() {
         val tap = PendingIntent.getActivity(this, alert.session.hashCode(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(this, ALERTS)
             .setSmallIcon(R.drawable.ic_notification)
+            // Her colour sticker beside the text; the status bar can only show the white paw.
+            .setLargeIcon(avatar)
             .setContentTitle(alert.title)
             .setContentText(alert.body)
             // Expanded, the notification shows the whole reply preview, not one line of it.
