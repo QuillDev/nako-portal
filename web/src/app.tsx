@@ -1,4 +1,5 @@
 import { Chat } from "@/components/portal/chat"
+import { DesktopLink } from "@/components/portal/desktop-link"
 import { DrawerLayout } from "@/components/portal/drawer"
 import { Gate } from "@/components/portal/gate"
 import { Settings } from "@/components/portal/settings"
@@ -10,6 +11,7 @@ export function App() {
   const portal = usePortal()
   if (!portal.me) return null
   if (!portal.me.signed_in) return <Gate portal={portal} />
+  if (portal.route.view === "desktop") return <DesktopLink query={portal.route.query} />
   return (
     <TooltipProvider>
       <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>

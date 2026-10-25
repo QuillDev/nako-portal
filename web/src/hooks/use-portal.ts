@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
 import type { Frame, Live, LiveTool, Me, OpenSession, SessionRow } from "@/lib/types"
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -13,6 +13,7 @@ function parseRoute(hash: string): Route {
   if (chat) return { view: "chat", session: chat[1] }
   if (hash === "#/new") return { view: "new" }
   if (hash === "#/settings") return { view: "settings" }
+  if (hash.startsWith("#/desktop?")) return { view: "desktop", query: hash.slice("#/desktop?".length) }
   return { view: "list" }
 }
 

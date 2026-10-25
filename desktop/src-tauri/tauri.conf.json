@@ -1,0 +1,40 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nako",
+  "mainBinaryName": "nako",
+  "version": "0.1.0",
+  "identifier": "moe.nakode.portal",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "appimage",
+      "deb"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Nako Portal for the desktop",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1N0MwMzQzQUJENkM5MDAKUldRQXlkYXJRd044VmRKRFFxQk5teUpjL1VjMXlzTE9XM095c1ZQa1Q3bjNUR3loVUVjL21MT0oK",
+      "endpoints": []
+    }
+  }
+}
