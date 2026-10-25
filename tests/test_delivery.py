@@ -117,6 +117,13 @@ async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
 
     class Db:
         titles = {}
+        archived = set()
+
+        def get_session(self, sid):
+            return {"id": sid, "archived": int(sid in self.archived)}
+
+        def set_session_archived(self, sid, archived):
+            (self.archived.add if archived else self.archived.discard)(sid)
 
         def get_session_title(self, sid):
             return self.titles.get(sid)
@@ -139,4 +146,8 @@ async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
     (source,) = store.sessions
     assert dict(source)["platform"] == "platform:portal" and dict(source)["chat_id"] == "inbox"
     assert store._db.titles == {first: "renamed by hand"}
+    # Archived from another surface, it comes back the next time the portal reaches for it.
+    store._db.archived.add(first)
+    assert plugin._ensure_chat(store) == first
+    assert store._db.archived == set()
     assert plugin._ensure_chat(None) is None

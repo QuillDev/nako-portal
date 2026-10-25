@@ -199,6 +199,8 @@ class Hub:
         return {"ok": True}
 
     async def archive(self, session, archived=True):
+        if archived and await asyncio.to_thread(self.backend.chat_of, session) == INBOX:
+            raise ValueError("The Notifications chat can't be archived")
         await asyncio.to_thread(self.backend.set_archived, session, archived)
         await self.broadcast({"kind": "sessions.changed"})
         return {"ok": True}

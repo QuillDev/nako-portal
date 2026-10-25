@@ -79,6 +79,9 @@ def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE):
     db = getattr(session_store, "_db", None)
     if title and db is not None and not db.get_session_title(entry.session_id):
         db.set_session_title(entry.session_id, title)
+    if chat == HOME_CHANNEL and db is not None and (db.get_session(entry.session_id) or {}).get("archived"):
+        # An archived Notifications chat drops out of the sidebar list and its bell row goes dead.
+        db.set_session_archived(entry.session_id, False)
     return entry.session_id
 
 
