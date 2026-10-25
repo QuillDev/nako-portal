@@ -21,7 +21,7 @@ export function navigate(hash: string) {
   if (location.hash !== hash) location.hash = hash
 }
 
-const emptyLive = (): Live => ({ messages: [] })
+const emptyLive = (): Live => ({ messages: [], tools: [] })
 
 export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
@@ -125,7 +125,16 @@ export function usePortal() {
           setLive(l => {
             const base = l || emptyLive()
             const at = base.messages.findIndex(m => m.id === message.id)
-            return { messages: at < 0 ? [...base.messages, message] : base.messages.map((m, i) => (i === at ? message : m)) }
+            return { ...base, messages: at < 0 ? [...base.messages, message] : base.messages.map((m, i) => (i === at ? message : m)) }
+          })
+          break
+        }
+        case "tool": {
+          const tool = { id: String(p.id || ""), name: String(p.name || "tool"), context: String(p.context || ""), state: p.state === "running" ? "running" : p.state === "failed" ? "failed" : "done" } as const
+          setLive(l => {
+            const base = l || emptyLive()
+            const at = tool.id ? base.tools.findIndex(t => t.id === tool.id) : -1
+            return { ...base, tools: at < 0 ? [...base.tools, tool] : base.tools.map((t, i) => (i === at ? tool : t)) }
           })
           break
         }

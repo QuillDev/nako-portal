@@ -251,6 +251,13 @@ class Hub:
         elif outcome == "success":
             self.notify(session, title, _preview(self.last_text.pop(session, "")) or "done")
 
+    async def tool(self, session, call_id, name, context, state):
+        """A tool call starting ("running") or ending ("done"/"failed") in a running turn, for the
+        live view; the saved transcript draws the finished calls itself."""
+        if session not in self.running:
+            return
+        await self._event(session, "tool", {"id": call_id, "name": name, "context": context, "state": state})
+
     async def outgoing(self, chat, message_id, text):
         """A message the gateway sent or edited. Inside a turn it shows live until the reply is saved;
         outside one (a cron post, a message from another platform) it's a notification."""

@@ -38,20 +38,27 @@ class DemoGateway(FakeGateway):
             )
             await self.hub.ask(chat, {"id": "req-1", "method": method, "params": params, "private": {}})
             return
-        await self.hub.outgoing(chat, "progress", "💻 gh run view 123 --log-failed")
-        await asyncio.sleep(0.8)
-        self._row(sid, "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id=f"t{self.next_row}")
+        await asyncio.sleep(self.pause)
+        for name, context in (("terminal", "gh run list --branch main"), ("terminal", "gh run view 123 --log-failed"), ("search_files", "orders.spec.ts")):
+            call = f"t{self.next_row}"
+            await self.hub.tool(sid, call, name, context, "running")
+            await asyncio.sleep(self.pause)
+            await self.hub.tool(sid, call, name, context, "done")
+            self._row(sid, "tool", "", name=name, context=context, tool_call_id=call)
+        await asyncio.sleep(self.pause / 2)
         shown = ""
         for word in self.reply.split(" "):
             shown += word + " "
             await self.hub.outgoing(chat, "reply", shown.strip())
-            await asyncio.sleep(0.04)
+            await asyncio.sleep(self.pause / 25)
         self._row(sid, "assistant", self.reply)
         await self.hub.turn_finished(chat, "success")
 
 
 async def main(port):
     hermes = DemoGateway()
+    # Seconds per step of a demo turn; long enough to watch each state.
+    hermes.pause = float(os.environ.get("DEMO_PAUSE", "1"))
     hermes.reply = "Here's the plan:\n\n1. **Rebase** onto `main`\n2. Re-run CI\n\n```bash\ngit rebase origin/main\n```"
     hermes.add_session("20261024_090000_aaaaaa", "Fix the flaky CI shard", messages=[("user", "why is shard 3 failing?")])
     hermes._row("20261024_090000_aaaaaa", "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id="h1")

@@ -55,7 +55,10 @@ export type OpenSession = {
 // replaces its text), tool progress, a post. The transcript replaces it once saved.
 export type LiveMessage = { id: string; text: string }
 
-export type Live = { messages: LiveMessage[] }
+// A tool call in the running turn, as it starts and ends.
+export type LiveTool = { id: string; name: string; context: string; state: "running" | "done" | "failed" }
+
+export type Live = { messages: LiveMessage[]; tools: LiveTool[] }
 
 export type Passkey = { id: string; label: string; current?: boolean }
 

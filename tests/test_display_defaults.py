@@ -15,6 +15,9 @@ def load_plugin():
 
 
 class Ctx:
+    def register_hook(self, name, callback):
+        pass
+
     def register_platform(self, **entry):
         self.entry = entry
 
