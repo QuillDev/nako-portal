@@ -11,6 +11,7 @@ import asyncio
 import importlib
 import importlib.util
 import logging
+import secrets
 import sqlite3
 import sys
 import threading
@@ -156,11 +157,26 @@ class _Service:
             await runner.setup()
             await web.TCPSite(runner, "127.0.0.1", port).start()
             log.info("Nako portal serving %s on 127.0.0.1:%s", origin, port)
+            local = web.AppRunner(portal.local_app(_local_token(data)), access_log=None)
+            await local.setup()
+            await web.TCPSite(local, "127.0.0.1", port + 1).start()
+            (data / "local-url").write_text(f"http://127.0.0.1:{port + 1}\n")
             if not store.has_credentials():
                 (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
                 (data / "setup-link").chmod(0o600)
                 log.info("Nako portal has no passkey yet; a setup link is in %s", data / "setup-link")
             await asyncio.gather(hub.serve(), _forward_inbox(store, hub))
+
+
+def _local_token(data):
+    """The credential for the loopback API: kept across restarts so scripts need no refresh."""
+    path = data / "local-token"
+    if not path.exists():
+        data.mkdir(parents=True, exist_ok=True)
+        path.touch(mode=0o600)
+        path.write_text(secrets.token_urlsafe(32) + "\n")
+    path.chmod(0o600)
+    return path.read_text().strip()
 
 
 async def _forward_inbox(store, hub):

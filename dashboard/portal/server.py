@@ -111,6 +111,38 @@ class Portal:
         r.add_get("/{path:.*}", self.static)
         return app
 
+    def local_app(self, token):
+        """Starts chats for scripts on this machine (an agent handing work to a new thread).
+
+        Served on its own loopback port, never through the public origin, and every call
+        carries the token from a 0600 file only this account can read.
+        """
+        expected = f"Bearer {token}".encode()
+
+        @web.middleware
+        async def guard(request, handler):
+            if not secrets.compare_digest(request.headers.get("Authorization", "").encode(), expected):
+                return web.json_response({"error": "bad token"}, status=401)
+            try:
+                return await handler(request)
+            except (ValueError, RpcError) as error:
+                return web.json_response({"error": str(error)}, status=400)
+            except ConnectionError:
+                return web.json_response({"error": "Nako is offline right now"}, status=503)
+
+        async def start(request):
+            body = await request.json()
+            text = str(body.get("text") or "")
+            if not text.strip():
+                raise ValueError("Write something first")
+            hub = await self._hub()
+            started = await hub.create(text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")))
+            return web.json_response(started)
+
+        app = web.Application(client_max_size=MAX_BODY, middlewares=[guard])
+        app.router.add_post("/sessions", start)
+        return app
+
     @web.middleware
     async def _guard(self, request, handler):
         # Cross-site requests never reach an action: every write and the socket must come from our own page.
