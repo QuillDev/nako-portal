@@ -20,6 +20,7 @@ import mimetypes
 import secrets
 import sqlite3
 import sys
+import time
 import uuid
 from contextlib import closing
 from pathlib import Path
@@ -28,6 +29,8 @@ log = logging.getLogger("hermes.portal")
 PLUGIN = "nako-portal"
 HOME_CHANNEL = "inbox"
 NEW_THREAD = "new"
+# A chat whose newest row is mid-turn this recently may still be running on its old surface.
+BUSY_WINDOW = 15 * 60
 CHAT_TITLE = "Notifications"
 DEFAULT_PORT = 8797
 # The one person portal threads belong to; passkey sign-in already decided who that is.
@@ -163,6 +166,39 @@ class HermesBackend:
 
     async def new_thread(self, chat, title):
         return await asyncio.to_thread(_ensure_chat, self.store, chat, title)
+
+    async def adopt(self, chat, session):
+        return await asyncio.to_thread(self._adopt, chat, session)
+
+    def _adopt(self, chat, session):
+        """Move another surface's chat (a Desktop thread) into a new portal thread, keeping its id
+        and transcript: the same repoint Hermes's own /handoff does for a messaging platform."""
+        rows = self._read(
+            "SELECT source, ended_at, COALESCE(archived, 0) FROM sessions WHERE id=?", (session,)
+        )
+        if not rows:
+            raise ValueError("No chat with that id")
+        surface, _, archived = rows[0]
+        if surface == "portal":
+            raise ValueError("That chat is already in the portal")
+        if archived:
+            raise ValueError("That chat is archived")
+        newest = self._read(
+            "SELECT role, finish_reason, timestamp FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", (session,)
+        )
+        if newest:
+            role, finish, stamp = newest[0]
+            mid_turn = role in ("user", "tool") or finish == "tool_calls"
+            if mid_turn and (stamp or 0) > time.time() - BUSY_WINDOW:
+                raise ValueError("That chat is in the middle of a turn; hand it off once it finishes")
+        from gateway.config import Platform
+        from gateway.session import SessionSource
+
+        thread = SessionSource(platform=Platform("portal"), chat_id=chat, chat_name="Nako", chat_type="dm")
+        key = self.store.get_or_create_session(thread, touch_activity=False).session_key
+        if self.store.switch_session(key, session, preserve_prompt_pin=False) is None:
+            raise ValueError("Couldn't move that chat into the portal")
+        return session
 
     async def inbound(self, chat, text, files):
         from gateway.platforms.base import cache_document_from_bytes, cache_image_from_bytes

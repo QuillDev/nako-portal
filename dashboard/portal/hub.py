@@ -11,6 +11,7 @@ backend:
   thread(session) -> {title, messages}      transcript in Hermes's display projection
   chat_of(session) / session_of(chat) -> id or None
   new_thread(chat, title) -> session id     (async)
+  adopt(chat, session) -> session id        (async) move another surface's chat into a new thread
   inbound(chat, text, files)                (async) a message from the person, as the gateway sees it
   resolve(request, result)                  (async) answer an approval or question
   set_title / set_archived / set_pinned(session, value)
@@ -151,6 +152,13 @@ class Hub:
         submitted = await self.send(session, text, files)
         await self.broadcast({"kind": "sessions.changed"})
         return {"session": session, **submitted}
+
+    async def adopt(self, session):
+        """Hand a Desktop chat to the portal: it becomes a portal thread with its history intact."""
+        chat = uuid.uuid4().hex[:16]
+        adopted = await self.backend.adopt(chat, session)
+        await self.broadcast({"kind": "sessions.changed"})
+        return {"session": adopted}
 
     async def _chat(self, session):
         chat = await asyncio.to_thread(self.backend.chat_of, session)
