@@ -3,6 +3,7 @@ import { ChevronRightIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
@@ -24,6 +25,53 @@ export function Row({ label, children }: { label: React.ReactNode; children?: Re
       <span className="min-w-0">{label}</span>
       {children}
     </div>
+  )
+}
+
+// Pick one of a few short options, e.g. the theme.
+function Segmented<T extends string>({ options, value, onPick }: { options: readonly T[]; value: T; onPick: (option: T) => void }) {
+  return (
+    <div className="inline-flex gap-0.5 rounded-lg border bg-card p-0.5">
+      {options.map(option => (
+        <button
+          aria-pressed={value === option}
+          className="rounded-md px-2.5 py-1 text-muted-foreground text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-accent aria-pressed:text-foreground"
+          key={option}
+          onClick={() => onPick(option)}
+          type="button"
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+type Profiles = { profile: string; profiles: string[] }
+
+// Which Hermes profile the portal shows. Switching swaps every chat for that profile's.
+function ProfileRow({ onError }: { onError: (message: string) => void }) {
+  const [state, setState] = useState<Profiles | null>(null)
+  useEffect(() => void api<Profiles>("/api/profile").then(setState, e => onError((e as Error).message)), [onError])
+  if (!state || state.profiles.length < 2) return null
+  const pick = (profile: string) =>
+    profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, e => onError((e as Error).message))
+  return (
+    <Row label="Profile">
+      <Select onValueChange={pick} value={state.profile}>
+        <SelectTrigger aria-label="Profile" className="w-40" size="sm">
+          <SelectValue />
+        </SelectTrigger>
+        {/* Radix refocuses the trigger on close, which Chrome paints as a keyboard focus ring. */}
+        <SelectContent onCloseAutoFocus={e => e.preventDefault()}>
+          {state.profiles.map(profile => (
+            <SelectItem key={profile} value={profile}>
+              {profile}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Row>
   )
 }
 
@@ -64,19 +112,7 @@ export function Settings({ portal }: { portal: Portal }) {
       <section className="mx-auto w-full max-w-xl overflow-y-auto px-4 pb-6">
         <Section defaultOpen title="Appearance">
           <Row label="Theme">
-            <div className="inline-flex gap-0.5 rounded-lg border bg-card p-0.5">
-              {THEMES.map(t => (
-                <button
-                  aria-pressed={theme === t}
-                  className="rounded-md px-2.5 py-1 text-muted-foreground text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-accent aria-pressed:text-foreground"
-                  key={t}
-                  onClick={() => setTheme(t)}
-                  type="button"
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+            <Segmented onPick={setTheme} options={THEMES} value={theme} />
           </Row>
           <Row label="Your name">
             <Input
@@ -92,6 +128,7 @@ export function Settings({ portal }: { portal: Portal }) {
           </Row>
         </Section>
         <Section defaultOpen title="Nako">
+          <ProfileRow onError={setError} />
           <Row label="Sticker while she works">
             <Switch checked={presence} label="Sticker while she works" onCheckedChange={setPresence} />
           </Row>

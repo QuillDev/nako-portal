@@ -13,6 +13,7 @@ a new thread with the message as its first post, so another platform can open on
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import importlib
 import importlib.util
 import logging
@@ -33,6 +34,7 @@ NEW_THREAD = "new"
 BUSY_WINDOW = 15 * 60
 CHAT_TITLE = "Notifications"
 DEFAULT_PORT = 8797
+DEFAULT_PROFILE = "default"
 # The one person portal threads belong to; passkey sign-in already decided who that is.
 OWNER = "owner"
 INBOX_POLL = 2
@@ -66,17 +68,29 @@ def _deliver(chat_id, text):
         store.db.close()
 
 
-def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE):
+def _source(chat, profile=None, **fields):
+    """A portal thread as the gateway names it. A named profile namespaces the thread's key and
+    runs its turns in that profile's home; None is the default profile, keyed as it always was."""
+    from gateway.config import Platform
+    from gateway.session import SessionSource
+
+    return SessionSource(platform=Platform("portal"), chat_id=chat, chat_type="dm", profile=_named(profile), **fields)
+
+
+def _named(profile):
+    return None if not profile or profile == DEFAULT_PROFILE else profile
+
+
+def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE, profile=None):
     """The gateway session for one portal thread, created now if it doesn't exist. Cron's mirror only
     appends to a session that already exists, so the Notifications thread must be there first."""
     if session_store is None:
         return None
-    from gateway.config import Platform
-    from gateway.session import SessionSource
-
-    source = SessionSource(platform=Platform("portal"), chat_id=chat, chat_name="Nako", chat_type="dm")
+    source = _source(chat, profile, chat_name="Nako")
     entry = session_store.get_or_create_session(source, touch_activity=False)
-    db = getattr(session_store, "_db", None)
+    # The thread's own profile store, whichever profile the caller is scoped to.
+    owner = getattr(session_store, "_db_for_key", None)
+    db = owner(entry.session_key) if owner else getattr(session_store, "_db", None)
     if title and db is not None and not db.get_session_title(entry.session_id):
         db.set_session_title(entry.session_id, title)
     if chat == HOME_CHANNEL and db is not None and (db.get_session(entry.session_id) or {}).get("archived"):
@@ -115,11 +129,18 @@ def _local_token(data):
 
 
 class HermesBackend:
-    """The hub's view of Hermes: the gateway's session store and this adapter's inbound path."""
+    """The hub's view of Hermes: the gateway's session store and this adapter's inbound path.
+
+    The portal shows one profile at a time (Settings). Its chats, history and new threads all
+    come from that profile's own home and state.db, and its turns run as that profile, so
+    switching is a clean change of everything the portal shows."""
 
     def __init__(self, adapter, home):
         self.adapter = adapter
-        self.state = home / "state.db"
+        self.root = home
+        self.profile = DEFAULT_PROFILE
+        # chat -> the profile its thread lives in, so a reply goes back to the right one.
+        self.owner = {}
 
     @property
     def store(self):
@@ -129,9 +150,66 @@ class HermesBackend:
     def db(self):
         return self.store._db
 
-    def _read(self, sql, args=()):
-        with closing(sqlite3.connect(f"file:{self.state}?mode=ro", uri=True, timeout=10)) as db:
+    # Profiles
+
+    def homes(self):
+        """The profiles this gateway serves, by name. Without multiplexing it serves only its own."""
+        try:
+            from hermes_cli.config import load_config
+            from hermes_cli.profiles import profiles_to_serve
+
+            multiplex = bool((load_config().get("gateway") or {}).get("multiplex_profiles"))
+            served = dict(profiles_to_serve(multiplex=multiplex)) if multiplex else {}
+        except Exception:
+            log.warning("portal: could not list served profiles", exc_info=True)
+            served = {}
+        return {DEFAULT_PROFILE: self.root, **{k: Path(v) for k, v in served.items() if k != DEFAULT_PROFILE}}
+
+    def profiles(self):
+        return {"profile": self.profile, "profiles": list(self.homes())}
+
+    def use_profile(self, name):
+        if name not in self.homes():
+            raise ValueError("That profile isn't served by this gateway")
+        self.profile = name
+        _ensure_chat(self.store, HOME_CHANNEL, CHAT_TITLE, name)
+        return self.profiles()
+
+    def _home(self, profile=None):
+        return self.homes().get(profile or self.profile, self.root)
+
+    def _scoped(self, fn, *args, profile=None):
+        """Run ``fn`` with Hermes pointed at one profile's home, so the store reads its state.db.
+        Reach ``self.db`` inside ``fn``: it resolves to the profile's store only once scoped."""
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        token = set_hermes_home_override(str(self._home(profile)))
+        try:
+            return fn(*args)
+        finally:
+            reset_hermes_home_override(token)
+
+    def _read(self, sql, args=(), profile=None):
+        state = self._home(profile) / "state.db"
+        if not state.exists():
+            return []
+        with closing(sqlite3.connect(f"file:{state}?mode=ro", uri=True, timeout=10)) as db:
             return db.execute(sql, args).fetchall()
+
+    def _origin(self):
+        """The profile whose work is calling in: a turn or cron run is scoped to its profile's
+        home; a request from the web app isn't scoped and means the profile on screen."""
+        from hermes_constants import get_hermes_home_override
+
+        override = get_hermes_home_override()
+        if override:
+            here = Path(override).resolve()
+            for name, home in self.homes().items():
+                if Path(home).resolve() == here:
+                    return name
+        return self.profile
+
+    # Chats
 
     def sessions(self):
         live = {
@@ -140,7 +218,9 @@ class HermesBackend:
                 "SELECT id, chat_id, pinned FROM sessions WHERE source='portal' AND ended_at IS NULL AND COALESCE(archived, 0)=0"
             )
         }
-        rows = self.db.list_sessions_rich(source="portal", limit=300, order_by_last_active=True, compact_rows=True, include_pinned=True)
+        rows = self._scoped(
+            lambda: self.db.list_sessions_rich(source="portal", limit=300, order_by_last_active=True, compact_rows=True, include_pinned=True)
+        )
         out = []
         for row in rows:
             if row["id"] in live:
@@ -149,26 +229,45 @@ class HermesBackend:
         return out
 
     def thread(self, session):
-        from hermes_constants import get_hermes_home
         from tui_gateway.server import _history_to_messages  # bound copy; the session_history original lacks server globals
 
         if not self._read("SELECT 1 FROM sessions WHERE id=? AND source='portal'", (session,)):
             return None
-        history = self.db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
-        return {"title": self.db.get_session_title(session) or "", "messages": _history_to_messages(history, profile_home=get_hermes_home())}
+        home = self._home()
+
+        def read():
+            history = self.db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
+            return {"title": self.db.get_session_title(session) or "", "messages": _history_to_messages(history, profile_home=home)}
+
+        return self._scoped(read)
 
     def chat_of(self, session):
         rows = self._read("SELECT chat_id FROM sessions WHERE id=? AND source='portal'", (session,))
-        return rows[0][0] if rows and rows[0][0] else None
+        chat = rows[0][0] if rows and rows[0][0] else None
+        if chat:
+            self.owner[chat] = self.profile
+        return chat
 
     def session_of(self, chat):
-        rows = self._read(
-            "SELECT id FROM sessions WHERE source='portal' AND chat_id=? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1", (chat,)
-        )
-        return rows[0][0] if rows else None
+        """The open thread for a chat: in the calling profile first, then any other (a turn that
+        started before a switch still finds its thread)."""
+        first = self._origin()
+        for profile in [first, *(p for p in self.homes() if p != first)]:
+            rows = self._read(
+                "SELECT id FROM sessions WHERE source='portal' AND chat_id=? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
+                (chat,),
+                profile,
+            )
+            if rows:
+                return rows[0][0]
+        return None
+
+    def ensure_chat(self, chat, title=None):
+        return _ensure_chat(self.store, chat, title, self.profile)
 
     async def new_thread(self, chat, title):
-        return await asyncio.to_thread(_ensure_chat, self.store, chat, title)
+        self.owner[chat] = self.profile
+        return await asyncio.to_thread(self.ensure_chat, chat, title)
 
     async def adopt(self, chat, session):
         return await asyncio.to_thread(self._adopt, chat, session)
@@ -194,13 +293,15 @@ class HermesBackend:
             mid_turn = role in ("user", "tool") or finish == "tool_calls"
             if mid_turn and (stamp or 0) > time.time() - BUSY_WINDOW:
                 raise ValueError("That chat is in the middle of a turn; hand it off once it finishes")
-        from gateway.config import Platform
-        from gateway.session import SessionSource
 
-        thread = SessionSource(platform=Platform("portal"), chat_id=chat, chat_name="Nako", chat_type="dm")
-        key = self.store.get_or_create_session(thread, touch_activity=False).session_key
-        if self.store.switch_session(key, session, preserve_prompt_pin=False) is None:
+        def repoint():
+            thread = _source(chat, self.profile, chat_name="Nako")
+            key = self.store.get_or_create_session(thread, touch_activity=False).session_key
+            return self.store.switch_session(key, session, preserve_prompt_pin=False)
+
+        if self._scoped(repoint) is None:
             raise ValueError("Couldn't move that chat into the portal")
+        self.owner[chat] = self.profile
         return session
 
     async def inbound(self, chat, text, files):
@@ -221,6 +322,7 @@ class HermesBackend:
         if text.startswith("/"):
             kind = MessageType.COMMAND
         source = self.adapter.build_source(chat_id=chat, chat_name="Nako", chat_type="dm", user_id=OWNER, user_name="you")
+        source = dataclasses.replace(source, profile=_named(self.owner.get(chat, self.profile)))
         event = MessageEvent(text=text, message_type=kind, source=source, message_id=uuid.uuid4().hex, media_urls=paths, media_types=kinds)
         await self.adapter.handle_message(event)
 
@@ -236,13 +338,13 @@ class HermesBackend:
             resolve_gateway_clarify(private["clarify_id"], next(iter(result["answers"].values()), None) or "")
 
     def set_title(self, session, title):
-        self.db.set_session_title(session, title)
+        self._scoped(lambda: self.db.set_session_title(session, title))
 
     def set_archived(self, session, archived):
-        self.db.set_session_archived(session, archived)
+        self._scoped(lambda: self.db.set_session_archived(session, archived))
 
     def set_pinned(self, session, pinned):
-        self.db.set_session_pinned(session, pinned)
+        self._scoped(lambda: self.db.set_session_pinned(session, pinned))
 
     def sign_off(self, reply):
         """A few proud words about what the turn did, from a small fast model. The model is
@@ -282,12 +384,10 @@ class HermesBackend:
         set_config_value("auxiliary.portal_signoff.model", model)
 
     def set_yolo(self, chat):
-        from gateway.config import Platform
-        from gateway.session import SessionSource
         from tools.approval import enable_session_yolo
 
-        source = SessionSource(platform=Platform("portal"), chat_id=chat, chat_type="dm")
-        enable_session_yolo(self.store.get_or_create_session(source, touch_activity=False).session_key)
+        source = _source(chat, self.profile)
+        enable_session_yolo(self._scoped(lambda: self.store.get_or_create_session(source, touch_activity=False).session_key))
 
     def commands(self):
         from agent.skill_commands import get_interactive_skill_commands
@@ -404,7 +504,9 @@ def _adapter(config):
                 self._tasks.append(loop.create_task(_forward_inbox(store, self)))
                 _LIVE_TOOLS.update(hub=self.hub, loop=loop)
                 log.info("Nako portal serving %s on 127.0.0.1:%s", origin, port)
-            await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE)
+            # Every served profile gets its Notifications thread, so its cron posts have one to land in.
+            for profile in await asyncio.to_thread(self.hub.backend.homes):
+                await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE, profile)
             self._mark_connected()
             return True
 
@@ -418,9 +520,13 @@ def _adapter(config):
             self._tasks, self._runners, self._http, self.hub = [], [], None, None
             self._mark_disconnected()
 
-        def _chat(self, chat, title=None):
+        def _chat(self, chat, title=None, profile=None):
+            """A thread in ``profile``; by default the one whose work is sending (a cron run or
+            turn), else the profile the portal shows."""
             try:
-                return _ensure_chat(getattr(self, "_session_store", None), chat, title)
+                if profile is None and self.hub is not None:
+                    profile = self.hub.backend._origin()
+                return _ensure_chat(getattr(self, "_session_store", None), chat, title, profile)
             except Exception:
                 log.exception("portal: could not open thread %s", chat)
                 return None
