@@ -18,7 +18,7 @@ HOME_CHANNEL = "inbox"
 
 
 def _store_module():
-    name = "hermes_portal_store"
+    name = "nako_portal_store"
     if name in sys.modules:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, Path(__file__).parent / "dashboard" / "portal" / "store.py")
@@ -31,7 +31,7 @@ def _store_module():
 def _deliver(chat_id, text):
     from hermes_constants import get_hermes_home
 
-    store = _store_module().Store(get_hermes_home() / "hermes-portal" / "portal.db")
+    store = _store_module().Store(get_hermes_home() / "nako-portal" / "portal.db")
     try:
         return store.deliver(str(chat_id or HOME_CHANNEL), str(text))
     finally:

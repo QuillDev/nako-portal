@@ -30,13 +30,13 @@ class ReleaseDownloadTest {
     fun tearDown() = server.close()
 
     private fun release(sha: String = sha256) =
-        AndroidRelease(versionCode = 9, versionName = "0.1.9", sha256 = sha, sizeBytes = apk.size.toLong(), apkUrl = "/android/hermes.apk")
+        AndroidRelease(versionCode = 9, versionName = "0.1.9", sha256 = sha, sizeBytes = apk.size.toLong(), apkUrl = "/android/nako.apk")
 
     @Test
     fun readsThePublishedReleaseWithTheSessionCookie() {
         server.enqueue(
             MockResponse.Builder()
-                .body("""{"versionCode":9,"versionName":"0.1.9","sha256":"$sha256","sizeBytes":200000,"apkUrl":"/android/hermes.apk"}""")
+                .body("""{"versionCode":9,"versionName":"0.1.9","sha256":"$sha256","sizeBytes":200000,"apkUrl":"/android/nako.apk"}""")
                 .build(),
         )
 
@@ -56,18 +56,18 @@ class ReleaseDownloadTest {
     @Test
     fun keepsADownloadThatMatchesTheManifest() {
         server.enqueue(MockResponse.Builder().body(Buffer().write(apk)).build())
-        val destination = folder.root.resolve("hermes.apk")
+        val destination = folder.root.resolve("nako.apk")
 
         downloadRelease(origin, "__Host-portal=abc", release(), destination)
 
         assertArrayEquals(apk, destination.readBytes())
-        assertEquals("/android/hermes.apk", server.takeRequest().url.encodedPath)
+        assertEquals("/android/nako.apk", server.takeRequest().url.encodedPath)
     }
 
     @Test
     fun discardsADownloadThatDoesNotMatch() {
         server.enqueue(MockResponse.Builder().body(Buffer().write(apk)).build())
-        val destination = folder.root.resolve("hermes.apk")
+        val destination = folder.root.resolve("nako.apk")
 
         assertThrows(ReleaseVerificationException::class.java) {
             downloadRelease(origin, null, release(sha = "0".repeat(64)), destination)

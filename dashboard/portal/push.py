@@ -121,7 +121,7 @@ class Pusher:
                     elif response.status < 300:
                         delivered += 1
                     else:
-                        log.warning("Hermes portal push got %s from %s", response.status, urlparse(endpoint).netloc)
+                        log.warning("Nako portal push got %s from %s", response.status, urlparse(endpoint).netloc)
             except Exception as error:
-                log.warning("Hermes portal push failed: %s", type(error).__name__)
+                log.warning("Nako portal push failed: %s", type(error).__name__)
         return delivered

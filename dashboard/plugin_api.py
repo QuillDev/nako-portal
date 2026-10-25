@@ -37,7 +37,7 @@ Store = importlib.import_module(_package + ".store").Store
 push = importlib.import_module(_package + ".push")
 
 log = logging.getLogger("hermes.portal")
-PLUGIN = "hermes-portal"
+PLUGIN = "nako-portal"
 DEFAULT_PORT = 8797
 INBOX_POLL = 2
 WEB_ROOT = Path(__file__).parent / "web"
@@ -50,14 +50,14 @@ def _settings():
     config = load_config()
     plugins = config.get("plugins", {})
     if PLUGIN not in plugins.get("enabled", []):
-        raise RuntimeError("Enable the hermes-portal plugin first")
+        raise RuntimeError("Enable the nako-portal plugin first")
     home = get_hermes_home().resolve()
     if named_profile_home(home) is not None:
-        raise RuntimeError("Hermes portal runs for the default profile only")
+        raise RuntimeError("Nako portal runs for the default profile only")
     entry = plugins.get("entries", {}).get(PLUGIN, {}).get("settings", {})
     origin = str(entry.get("origin") or "").strip()
     if not origin.startswith("https://"):
-        raise RuntimeError("Set plugins.entries.hermes-portal.settings.origin to the portal's https URL")
+        raise RuntimeError("Set plugins.entries.nako-portal.settings.origin to the portal's https URL")
     android = {
         "android_release_dir": entry.get("android_release_dir") or None,
         "android_cert_sha256": entry.get("android_cert_sha256") or None,
@@ -110,7 +110,7 @@ class _Service:
         with self.lock:
             if self.thread is not None and self.thread.is_alive():
                 return
-            self.thread = threading.Thread(target=self._run, name="hermes-portal", daemon=True)
+            self.thread = threading.Thread(target=self._run, name="nako-portal", daemon=True)
             self.thread.start()
 
     def _run(self):
@@ -124,7 +124,7 @@ class _Service:
             loop.run_until_complete(self._main(app))
         except Exception as error:
             self.error = f"{type(error).__name__}: {error}"
-            log.exception("Hermes portal stopped")
+            log.exception("Nako portal stopped")
 
     async def _configured(self):
         while True:
@@ -132,7 +132,7 @@ class _Service:
                 settings = _settings()
             except RuntimeError as error:
                 self.error = str(error)
-                log.warning("Hermes portal waiting: %s", self.error)
+                log.warning("Nako portal waiting: %s", self.error)
                 await asyncio.sleep(30)
                 continue
             self.error = None
@@ -140,7 +140,7 @@ class _Service:
 
     async def _main(self, app):
         home, origin, port, contact, android = await self._configured()
-        data = home / "hermes-portal"
+        data = home / "nako-portal"
         store = Store(data / "portal.db")
         vapid = push.Vapid(data / "vapid.pem", contact)
         async with aiohttp.ClientSession() as http:
@@ -155,11 +155,11 @@ class _Service:
             runner = web.AppRunner(portal.app(), access_log=None)
             await runner.setup()
             await web.TCPSite(runner, "127.0.0.1", port).start()
-            log.info("Hermes portal serving %s on 127.0.0.1:%s", origin, port)
+            log.info("Nako portal serving %s on 127.0.0.1:%s", origin, port)
             if not store.has_credentials():
                 (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
                 (data / "setup-link").chmod(0o600)
-                log.info("Hermes portal has no passkey yet; a setup link is in %s", data / "setup-link")
+                log.info("Nako portal has no passkey yet; a setup link is in %s", data / "setup-link")
             await asyncio.gather(hub.serve(), _forward_inbox(store, hub))
 
 

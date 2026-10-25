@@ -182,7 +182,7 @@ class Hub:
                     "source": "desktop",
                     "title": title or _title_from(text),
                     "close_on_disconnect": False,
-                    "idempotency_key": f"hermes-portal:{uuid.uuid4().hex}",
+                    "idempotency_key": f"nako-portal:{uuid.uuid4().hex}",
                 }
             ),
         )
@@ -307,7 +307,7 @@ class Hub:
         if self._requests_for(runtime):
             return
         await self._set_status(session, FAILED if outcome == "error" else DONE)
-        title = self.titles.get(session) or "hermes"
+        title = self.titles.get(session) or "Nako"
         if outcome == "error":
             self.notify(session, title, "hit an error")
         elif session in self.from_portal and outcome == "complete":
@@ -324,7 +324,7 @@ class Hub:
         await self._set_status(session, NEEDS_YOU)
         await self._publish(session, {"kind": "request", "request": _request_view(frame)})
         what = {"approval": "needs your ok", "clarify": "has a question"}.get(frame.get("method"), "needs the desktop app")
-        self.notify(session, self.titles.get(session) or "hermes", what)
+        self.notify(session, self.titles.get(session) or "Nako", what)
 
     async def _settle(self, rid):
         frame = self.requests.pop(rid, None)
@@ -359,7 +359,7 @@ class Hub:
                 raise
             except Exception as error:
                 self.last_error = str(error) if isinstance(error, (RpcError, ValueError)) else type(error).__name__
-                log.warning("Hermes portal lost the backend: %s", self.last_error)
+                log.warning("Nako portal lost the backend: %s", self.last_error)
             finally:
                 if self.connected:
                     self.connected = False

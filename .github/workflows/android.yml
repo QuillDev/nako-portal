@@ -85,13 +85,13 @@ jobs:
       - name: Describe release
         run: |
           mkdir -p "$RUNNER_TEMP/release"
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/release/hermes.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/release/nako.apk"
           cd "$RUNNER_TEMP/release"
           jq -n \
             --argjson versionCode "$PORTAL_ANDROID_VERSION_CODE" \
             --arg versionName "$PORTAL_ANDROID_VERSION_NAME" \
-            --arg sha256 "$(sha256sum hermes.apk | cut -d' ' -f1)" \
-            --argjson sizeBytes "$(stat -c %s hermes.apk)" \
+            --arg sha256 "$(sha256sum nako.apk | cut -d' ' -f1)" \
+            --argjson sizeBytes "$(stat -c %s nako.apk)" \
             '{versionCode: $versionCode, versionName: $versionName, sha256: $sha256, sizeBytes: $sizeBytes}' \
             > android-release.json
           cat android-release.json
@@ -100,5 +100,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$TAG" \
-            "$RUNNER_TEMP/release/hermes.apk" "$RUNNER_TEMP/release/android-release.json" \
+            "$RUNNER_TEMP/release/nako.apk" "$RUNNER_TEMP/release/android-release.json" \
             --repo "$GITHUB_REPOSITORY" --clobber
