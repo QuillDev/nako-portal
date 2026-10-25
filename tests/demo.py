@@ -19,7 +19,13 @@ from portal.store import Store  # noqa: E402
 
 class DemoHermes(FakeHermes):
     """Turns that look like real ones: reasoning, tool calls and a reply streamed in pieces.
-    A message mentioning "delete" asks for approval; one with "ask" asks a question."""
+    A message mentioning "delete" asks for approval; one with "ask" asks a question.
+    History reads take a moment, like a long transcript on a real machine."""
+
+    async def handle(self, method, params):
+        if method == "session.history":
+            await asyncio.sleep(0.6)
+        return await super().handle(method, params)
 
     async def _turn(self, sid, text):
         await self.emit(sid, "message.start")
@@ -69,6 +75,12 @@ async def main(port):
     )
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
+    long = hermes.add_session("20261023_060000_eeeeee", "Untangle the importer")
+    for turn in range(1, 81):
+        hermes._row(long, "user", f"step {turn}: what's next for the importer?")
+        hermes._row(long, "tool", "", name="read_file", context=f"src/importer/stage_{turn}.ts", tool_call_id=f"l{turn}")
+        body = " ".join(["The row parser and the batch writer disagree about blank lines, so this pass makes them share one reader."] * (1 + turn % 3))
+        hermes._row(long, "assistant", f"**Step {turn}.** {body}")
     backend = TestServer(hermes.app())
     await backend.start_server()
     data = Path(tempfile.mkdtemp())

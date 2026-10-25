@@ -37,7 +37,7 @@ export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [route, setRoute] = useState<Route>(() => parseRoute(location.hash))
-  const [current, setCurrent] = useState<(OpenSession & { loading: boolean }) | null>(null)
+  const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [connected, setConnected] = useState(true)
   const [error, setError] = useState("")
@@ -56,13 +56,34 @@ export function usePortal() {
     }
   }, [])
 
+  // Rereads the open chat from where its loaded pages start, so older pages already on screen stay.
   const refresh = useCallback(async (session: string) => {
+    const open = currentRef.current
+    const since = open?.session === session && !open.loading ? `?since=${open.start}` : ""
     try {
-      const opened = await api<OpenSession>(sessionPath(session))
-      if (currentRef.current?.session !== session) return
-      setCurrent({ ...opened, loading: false })
+      const opened = await api<OpenSession>(sessionPath(session) + since)
+      setCurrent(c => {
+        if (c?.session !== session) return c
+        // An older page that landed while this was in flight sits before opened.start.
+        const kept = !c.loading && c.start < opened.start ? c.messages.slice(0, opened.start - c.start) : []
+        return { ...opened, start: opened.start - kept.length, messages: [...kept, ...opened.messages], loading: false, loadingOlder: c.loadingOlder }
+      })
       if (!opened.running) setLive(null)
     } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [])
+
+  const loadOlder = useCallback(async () => {
+    const open = currentRef.current
+    if (!open || open.loading || open.loadingOlder || open.start === 0) return
+    const { session, start } = open
+    setCurrent(c => (c?.session === session ? { ...c, loadingOlder: true } : c))
+    try {
+      const older = await api<OpenSession>(sessionPath(session, `?before=${start}`))
+      setCurrent(c => (c?.session === session && c.start === start ? { ...c, start: older.start, messages: [...older.messages, ...c.messages], loadingOlder: false } : c))
+    } catch (e) {
+      setCurrent(c => (c?.session === session ? { ...c, loadingOlder: false } : c))
       setError((e as Error).message)
     }
   }, [])
@@ -204,7 +225,7 @@ export function usePortal() {
     }
     if (currentRef.current?.session === routedSession) return
     const title = sessions.find(s => s.id === routedSession)?.title || ""
-    setCurrent({ session: routedSession, title, messages: [], requests: [], running: false, loading: true })
+    setCurrent({ session: routedSession, title, messages: [], start: 0, requests: [], running: false, loading: true, loadingOlder: false })
     setLive(null)
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ watch: routedSession }))
     refresh(routedSession)
@@ -291,7 +312,7 @@ export function usePortal() {
     [act, loadSessions],
   )
 
-  return { me, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive }
+  return { me, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder }
 }
 
 export type Portal = ReturnType<typeof usePortal>

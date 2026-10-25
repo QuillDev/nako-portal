@@ -32,6 +32,8 @@ export type OpenSession = {
   session: string
   title: string
   messages: HistoryMessage[]
+  // Where messages[0] sits in the whole transcript; above 0, older pages are left to load.
+  start: number
   running: boolean
   status?: Status | null
   requests: PortalRequest[]

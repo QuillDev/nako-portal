@@ -214,6 +214,53 @@ async def test_images_shown_in_a_chat_are_viewable_but_nothing_else_is(world, tm
         assert (name, status(refused)) == (name, 404)
 
 
+async def test_a_long_chat_opens_on_its_latest_turns_and_pages_back_through_the_rest(world, tmp_path):
+    chart = tmp_path / "chart.png"
+    chart.write_bytes(b"x")
+    sid = world.hermes.add_session("20261024_070707_aaaaaa", "long one")
+    world.hermes._row(sid, "assistant", f"first chart MEDIA:{chart}")
+    for turn in range(40):
+        world.hermes._row(sid, "user", f"ask {turn}")
+        world.hermes._row(sid, "tool", "", name="terminal", context=f"run {turn}a", tool_call_id=f"{turn}a")
+        world.hermes._row(sid, "tool", "", name="terminal", context=f"run {turn}b", tool_call_id=f"{turn}b")
+        world.hermes._row(sid, "assistant", f"answer {turn}")
+    await world.sign_up()
+
+    async def read(**query):
+        response = await world.http.get(world.url(f"/api/sessions/{sid}"), params=query)
+        assert response.status == 200
+        return await response.json()
+
+    def said(messages):
+        return [m["text"] if m["role"] != "tool" else m["context"] for m in messages]
+
+    # Opening shows the last 30 prompts and replies (turns 25-39) with their tool calls.
+    latest = await read()
+    assert said(latest["messages"])[:4] == ["ask 25", "run 25a", "run 25b", "answer 25"]
+    assert said(latest["messages"])[-1] == "answer 39"
+    assert len(latest["messages"]) == 15 * 4
+
+    # Scrolling up reads the page right before it, and the one before that reaches the start.
+    older = await read(before=latest["start"])
+    assert said(older["messages"])[0] == "ask 10" and said(older["messages"])[-1] == "answer 24"
+    oldest = await read(before=older["start"])
+    assert oldest["start"] == 0
+    assert said(oldest["messages"])[0] == f"first chart MEDIA:{chart}"
+    assert said(oldest["messages"])[-1] == "answer 9"
+
+    # Refreshing what's on screen returns everything from where the open page starts.
+    world.hermes._row(sid, "tool", "", name="terminal", context="run late", tool_call_id="late")
+    world.hermes._row(sid, "assistant", "late answer")
+    refreshed = await read(since=latest["start"])
+    assert said(refreshed["messages"])[-3:] == ["answer 39", "run late", "late answer"]
+    assert refreshed["start"] == latest["start"]
+
+    # A file delivered long before the open page still opens from the chat.
+    shown = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(chart)})
+    assert shown.status == 200
+    assert (await world.http.get(world.url(f"/api/sessions/{sid}"), params={"before": "-1"})).status == 400
+
+
 async def test_pins_and_archives_reach_desktop(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()
