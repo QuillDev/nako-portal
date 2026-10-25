@@ -261,42 +261,27 @@ async def test_a_long_chat_opens_on_its_latest_turns_and_pages_back_through_the_
     assert (await world.http.get(world.url(f"/api/sessions/{sid}"), params={"before": "-1"})).status == 400
 
 
-async def test_cron_posts_read_as_one_chat_that_replies_from_the_newest_post(world):
-    older = world.hermes.add_session("20261024_040404_dddddd", "", messages=[("user", "[Cron delivery: build watch]\nci went red on main")])
-    answered = world.hermes.add_session(
-        "20261024_050505_eeeeee",
-        "Fix the red build",
-        messages=[("user", "[Cron delivery: build watch]\nci is red again"), ("user", "on it?"), ("assistant", "yes")],
+async def test_cron_posts_read_as_nakos_messages_and_per_post_copies_stay_out_of_the_list(world):
+    inbox = world.hermes.add_session(
+        "20261024_040404_dddddd",
+        "notifications",
+        messages=[("user", "[Cron delivery: build watch]\nci went red on main"), ("user", "[Cron delivery: news digest]\nfive links"), ("user", "which first?"), ("assistant", "the sorting paper")],
     )
-    newest = world.hermes.add_session("20261024_060606_ffffff", "", messages=[("user", "[Cron delivery: news digest]\nfive links")])
+    copy = world.hermes.add_session("20261024_050505_eeeeee", "", messages=[("user", "[Cron delivery: build watch]\nci went red on main")])
     chat = world.hermes.add_session("20261024_070707_aaaaaa", "", messages=[("user", "what is [Cron delivery: x] about")])
     await world.sign_up()
 
-    listed = {row["id"]: row["notification"] for row in await (await world.http.get(world.url("/api/sessions"))).json()}
-    assert listed == {older: "build watch", answered: "build watch", newest: "news digest", chat: None}
+    listed = [row["id"] for row in await (await world.http.get(world.url("/api/sessions"))).json()]
+    assert sorted(listed) == sorted([inbox, chat])
+    assert copy in world.hermes.sessions
 
-    async def notifications():
-        opened = await (await world.http.get(world.url("/api/sessions/notifications"))).json()
-        return [(m["role"], m.get("label"), m["text"]) for m in opened["messages"]]
-
-    assert await notifications() == [
+    opened = await (await world.http.get(world.url(f"/api/sessions/{inbox}"))).json()
+    assert [(m["role"], m.get("label"), m["text"]) for m in opened["messages"]] == [
         ("assistant", "build watch", "ci went red on main"),
-        ("assistant", "build watch", "ci is red again"),
-        ("user", None, "on it?"),
-        ("assistant", None, "yes"),
         ("assistant", "news digest", "five links"),
+        ("user", None, "which first?"),
+        ("assistant", None, "the sorting paper"),
     ]
-
-    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
-    await ws.send_json({"watch": "notifications"})
-    await asyncio.sleep(0.05)
-    sent = await world.http.post(world.url("/api/sessions/notifications/messages"), data={"text": "open the first one"}, headers={"Origin": ORIGIN})
-    assert sent.status == 200
-    done = await next_message(ws, lambda m: m.get("type") == "message.complete")
-    assert done["session"] == "notifications"
-    assert [row["text"] for row in world.hermes.sessions[newest]["rows"]][-2:] == ["open the first one", world.hermes.reply]
-    assert (await notifications())[-2:] == [("user", None, "open the first one"), ("assistant", None, world.hermes.reply)]
-    await ws.close()
 
 
 async def test_pins_and_archives_reach_desktop(world):

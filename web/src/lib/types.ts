@@ -4,22 +4,16 @@ export type SessionRow = {
   id: string
   title: string
   started_at: number
-  preview?: string
-  // The cron job, when the chat is only cron posts nobody has answered yet.
-  notification?: string | null
   pinned?: boolean
   status?: Status | null
 }
-
-// The one chat every cron post lands in; the server reads it from those posts' own sessions.
-export const NOTIFICATIONS = "notifications"
 
 export type Status = "working" | "needs you" | "done" | "failed"
 
 export type HistoryMessage =
   // images: local previews for a turn that is still being sent
   | { role: "user"; text: string; row_id?: string | number; images?: string[] }
-  // label: the cron job that posted it, in the notifications chat
+  // label: the cron job that posted it, when it's a cron post
   | { role: "assistant"; text: string; reasoning?: string; label?: string; row_id?: string | number }
   | { role: "tool"; name: string; context?: string; args?: Record<string, unknown>; tool_call_id?: string }
 

@@ -1,1 +1,0 @@
-export{i as Mermaid}from"./index-CWGCFkr3.js";
