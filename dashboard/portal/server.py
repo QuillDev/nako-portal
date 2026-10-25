@@ -109,6 +109,8 @@ class Portal:
         r.add_get("/api/sessions/{session}", self.open)
         r.add_post("/api/sessions/{session}/messages", self.send)
         r.add_post("/api/sessions/{session}/stop", self.stop)
+        r.add_post("/api/sessions/{session}/command", self.command)
+        r.add_get("/api/commands", self.commands)
         r.add_post("/api/sessions/{session}/archive", self.archive)
         r.add_post("/api/sessions/{session}/pin", self.pin)
         r.add_post("/api/sessions/{session}/title", self.title)
@@ -410,6 +412,17 @@ class Portal:
         hub = await self._hub()
         text, files = await self._message(request)
         return web.json_response(await hub.send(self._session(request), text, files))
+
+    async def commands(self, request):
+        self._require(request)
+        hub = await self._hub()
+        return web.json_response(await hub.commands())
+
+    async def command(self, request):
+        self._require(request)
+        hub = await self._hub()
+        body = await request.json()
+        return web.json_response(await hub.command(self._session(request), str(body.get("text") or "")))
 
     async def stop(self, request):
         self._require(request)

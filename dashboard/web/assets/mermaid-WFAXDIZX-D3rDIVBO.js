@@ -1,1 +1,0 @@
-export{i as Mermaid}from"./index-Bo9s4q83.js";

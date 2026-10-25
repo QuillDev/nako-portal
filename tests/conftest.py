@@ -112,6 +112,7 @@ class FakeHermes:
     """Sessions, transcripts, turns and approvals, served over the backend's JSON-RPC shape."""
 
     def __init__(self):
+        self.slash = []
         self.sessions = {}
         self.sockets = []
         self.answers = []
@@ -189,6 +190,24 @@ class FakeHermes:
         if method == "session.history":
             rows = self.sessions[self.stored(params["session_id"])]["rows"]
             return {"count": len(rows), "messages": rows}
+        if method == "commands.catalog":
+            # Hermes's shape: [name, description] pairs, a `desktop` reason for commands no app runs, skills by name.
+            pairs = [["/status", "Show session status"], ["/goal", "Set a standing goal"], ["/undo", "Undo the last turn"], ["/new", "Start a new chat"], ["/clear", "Clear the screen"], ["/work", "Do focused work"]]
+            return {"pairs": pairs, "commands": {"/clear": {"desktop": "terminal"}, "/status": {"desktop": None}}, "skills": {"/work": {"usage": 3}}}
+        if method == "slash.exec":
+            self.slash.append(params["command"])
+            name, _, arg = params["command"].partition(" ")
+            if name == "status":
+                return {"output": f"session {self.stored(params['session_id'])}"}
+            if name == "goal":
+                return {"type": "send", "message": arg, "notice": f"goal set: {arg}"}
+            if name == "undo":
+                return {"type": "prefill", "message": "the message you sent last"}
+            raise KeyError(f"slash worker: unknown command /{name}")
+        if method == "command.dispatch":
+            if params["name"] == "work":
+                return {"type": "skill", "name": "work", "message": f"[work skill] {params['arg']}", "display": f"/work {params['arg']}"}
+            raise KeyError("not a quick/plugin/skill command")
         if method == "session.status":
             return {"running": False}
         if method == "image.attach_bytes":

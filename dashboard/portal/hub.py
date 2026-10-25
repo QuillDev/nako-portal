@@ -35,6 +35,16 @@ PREVIEW_CHARS = 280
 # Hermes labels every cron post it mirrors into a chat with this. Posts to the portal land in its one
 # notifications chat; posts to other platforms also seed a session per post, which the list leaves out.
 CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
+# Commands Desktop runs with its own UI (pickers, new chats, themes, the pet), and terminal-only ones
+# the catalog still lists (TUI display toggles, local files); the portal has none of it.
+PORTAL_UNSUPPORTED = {
+    "/new", "/branch", "/resume", "/sessions", "/profile", "/skin", "/wake", "/handoff", "/browser",
+    "/journey", "/pet", "/hatch", "/model", "/title", "/help", "/compress", "/btw", "/bg", "/yolo", "/reasoning",
+    "/density", "/details", "/logs", "/mouse", "/palette", "/prompt", "/worktree", "/export", "/import",
+    "/battery", "/timestamps", "/focus", "/subscription",
+}
+# A command can alias another; this many hops is plenty and stops a loop.
+ALIAS_HOPS = 3
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 
@@ -219,6 +229,61 @@ class Hub:
         status = result.get("status") or "streaming"
         await self._set_status(session, WORKING)
         return {"status": status, "row_id": result.get("user_row_id")}
+
+    # Slash commands, the way Desktop runs them: `slash.exec`, falling back to `command.dispatch`.
+
+    async def commands(self):
+        """Every command a portal chat can run, for the composer's `/` menu."""
+        catalog = await self.rpc.call("commands.catalog", self._scoped({}))
+        meta = catalog.get("commands") or {}
+        skills = catalog.get("skills") or {}
+        listed, seen = [], set()
+        for name, description in catalog.get("pairs") or []:
+            # A `desktop` reason (terminal, messaging, settings…) means no app surface runs it.
+            if name in seen or name in PORTAL_UNSUPPORTED or (meta.get(name) or {}).get("desktop"):
+                continue
+            seen.add(name)
+            listed.append({"name": name, "description": description, "skill": name in skills})
+        return listed
+
+    async def command(self, session, text, hops=0):
+        """Run one `/name arg` line in a chat. Returns `output` to show, and `prefill` for the
+        composer; a command that becomes a prompt (a skill, /goal…) is sent as a turn."""
+        line = text.strip().lstrip("/")
+        name, _, arg = line.partition(" ")
+        name, arg = name.lower(), arg.strip()
+        if not name:
+            raise ValueError("Type a command after /")
+        if f"/{name}" in PORTAL_UNSUPPORTED:
+            raise ValueError(f"/{name} isn't available in the portal")
+        if name == "stop":
+            await self.interrupt(session)
+            return {"output": "stopped"}
+        runtime = await self.attach(session)
+        try:
+            result = await self.rpc.call("slash.exec", {"session_id": runtime, "command": line})
+        except RpcError as exec_error:
+            try:
+                result = await self.rpc.call("command.dispatch", {"session_id": runtime, "name": name, "arg": arg})
+            except RpcError as dispatch_error:
+                # "not a quick/plugin/skill command" only says the fallback had nothing; the exec error is the real one.
+                if re.search(r"not a quick/plugin/(?:bundle/)?skill command", str(dispatch_error), re.I):
+                    raise ValueError(f"/{name} failed: {exec_error}") from None
+                raise ValueError(str(dispatch_error)) from None
+        kind = result.get("type")
+        if kind in (None, "exec", "plugin"):
+            output = result.get("output") or f"/{name}: no output"
+            return {"output": f"warning: {result['warning']}\n{output}" if result.get("warning") else output}
+        if kind == "alias" and hops < ALIAS_HOPS:
+            return await self.command(session, f"/{result.get('target', '')} {arg}", hops + 1)
+        notice = (result.get("notice") or "").strip() or None
+        message = (result.get("message") or "").strip()
+        if kind == "prefill":
+            return {"output": notice, "prefill": message}
+        if not message:
+            raise ValueError(f"/{name}: empty message")
+        await self.send(session, message)
+        return {"output": notice, "sent": True}
 
     async def _attach_file(self, runtime, upload):
         data = upload["data"]
