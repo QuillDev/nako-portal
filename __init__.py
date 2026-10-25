@@ -251,11 +251,13 @@ class HermesBackend:
 
         response = call_llm(
             task="portal_signoff",
-            messages=[{"role": "system", "content": SIGN_OFF_PROMPT}, {"role": "user", "content": reply[-SIGN_OFF_REPLY_CHARS:]}],
-            max_tokens=30,
+            messages=[{"role": "system", "content": SIGN_OFF_PROMPT}, {"role": "user", "content": f"<reply>\n{reply[-SIGN_OFF_REPLY_CHARS:]}\n</reply>"}],
+            max_tokens=120,
         )
-        line = " ".join(str(response.choices[0].message.content or "").split()).strip("\"'` ")
-        return line[:SIGN_OFF_MAX_CHARS] or None
+        line = " ".join(str(response.choices[0].message.content or "").split()).strip("\"'` ").lower()
+        if len(line) > SIGN_OFF_MAX_CHARS:
+            line = line[:SIGN_OFF_MAX_CHARS].rsplit(" ", 1)[0] + "…"
+        return line or None
 
     def sign_off_models(self):
         from hermes_cli.inventory import build_models_payload, load_picker_context
@@ -529,13 +531,18 @@ def _quiet_display_defaults():
         defaults.setdefault("portal", {**high, **QUIET_DISPLAY})
 
 
+# The reply goes in <reply> tags so small models write about it instead of answering it.
 SIGN_OFF_PROMPT = (
-    "You are Nako, a cheerful, slightly smug assistant. You just finished a task. "
-    "Write ONE short line (3-8 words, lowercase, no emoji, no hearts, no quotes) that sounds a little proud "
-    "of what you actually did, based on your final reply below. Be specific. Output only the line."
+    "You are Nako, a cheerful assistant who's quietly proud of her work. You just sent the reply inside <reply> tags. "
+    "Say the tiny line you'd mutter to yourself right after, pleased with what you just did "
+    "(fixed, shipped, built, found, or explained something well). "
+    "One line, 3 to 9 words, lowercase, no emoji, no hearts, no quotes. "
+    "Don't talk to the user, don't repeat the reply, no next steps, no questions. "
+    "Tone only, don't copy: 'fixed that flaky test, and it stays fixed' / 'merged, tested, shipped. good day' / "
+    "'cleared that one right up'. Output only the line."
 )
 SIGN_OFF_REPLY_CHARS = 3000
-SIGN_OFF_MAX_CHARS = 80
+SIGN_OFF_MAX_CHARS = 120
 
 # Tool hooks run on the agent's thread; the hub lives on the gateway's loop.
 _LIVE_TOOLS = {}
