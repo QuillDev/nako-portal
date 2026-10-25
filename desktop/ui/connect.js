@@ -20,14 +20,14 @@ function unreachable(origin, error) {
 }
 
 async function connect(address) {
-  for (const button of document.querySelectorAll("button")) button.disabled = true
+  for (const button of document.querySelectorAll("main button")) button.disabled = true
   try {
     await invoke("connect", { address })
   } catch (error) {
     if ($("unreachable").hidden) ask(null, String(error))
     else unreachable(address, String(error))
   } finally {
-    for (const button of document.querySelectorAll("button")) button.disabled = false
+    for (const button of document.querySelectorAll("main button")) button.disabled = false
   }
 }
 
@@ -35,6 +35,13 @@ $("ask").addEventListener("submit", event => {
   event.preventDefault()
   connect($("address").value)
 })
+
+if (window.nakoWindow?.controls) {
+  $("titlebar").hidden = false
+  for (const button of document.querySelectorAll("[data-window]")) {
+    button.onclick = () => invoke(`plugin:window|${button.dataset.window}`, { label: "main" })
+  }
+}
 
 const change = new URLSearchParams(location.search).has("change")
 const state = await invoke("start", { change })

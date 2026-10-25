@@ -92,6 +92,11 @@
     @apply bg-background text-foreground antialiased;
     overscroll-behavior: none;
   }
+  /* Thin, quiet scrollbars instead of the system's boxed ones with arrows. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
 }
 
 @keyframes shimmer {

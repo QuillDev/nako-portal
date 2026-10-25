@@ -54,3 +54,9 @@ input:focus-visible, button:focus-visible { outline: none; border-color: var(--b
 button:disabled { opacity: 0.5; cursor: default; }
 button.quiet { background: transparent; color: var(--muted); }
 button.quiet:hover { color: var(--text); }
+/* The app's own title bar on Windows and Linux: a drag strip with window buttons on the right. */
+#titlebar { position: fixed; inset: 0 0 auto 0; height: 40px; display: flex; justify-content: flex-end; align-items: center; gap: 2px; padding: 0 6px; }
+#titlebar button { width: 32px; height: 28px; padding: 0; display: grid; place-items: center; border-radius: 8px; background: transparent; color: var(--muted); }
+#titlebar button:hover { background: rgb(255 255 255 / 7%); color: var(--text); }
+#titlebar button.close:hover { background: #e81123; color: white; }
+#titlebar svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
