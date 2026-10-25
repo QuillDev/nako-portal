@@ -788,6 +788,9 @@ def register(ctx):
         pii_safe=True,
         platform_hint=(
             "You are chatting in the user's private Nako app. It renders markdown. "
-            "Each portal chat is its own thread; send_message to portal:new starts a new one."
+            "Each portal chat is its own thread; send_message to portal:new starts a new one. "
+            "End every reply with <signoff>...</signoff> on its own line: a 3-9 word lowercase aside, "
+            "quietly proud of the specific thing you just did this turn (not a summary, not addressed "
+            "to the user, no emoji). The app shows it beside you and hides the tag."
         ),
     )

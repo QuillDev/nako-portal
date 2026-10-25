@@ -119,3 +119,46 @@ async def test_the_sign_off_can_be_turned_off_and_moved_to_another_model_from_se
     assert world.store.meta("signoff") == "off"
     assert (await (await world.http.get(world.url("/api/signoff"))).json())["on"] is False
     await ws.close()
+
+
+async def test_nakos_own_sign_off_is_shown_beside_her_and_hidden_from_the_reply(world):
+    sid = world.hermes.add_session("20261025_121212_eeeeee", "fix", messages=[("user", "fix the importer")])
+    world.hermes.reply = "fixed the blank-line bug in the importer.\n\n<signoff>one reader for both, finally</signoff>"
+    world.hermes.sign_off_error = AssertionError("the small model must not run when she wrote her own")
+    await world.sign_up()
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": sid})
+    await asyncio.sleep(0.05)
+
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+    live = await next_message(ws, lambda m: m.get("type") == "gateway.message")
+    assert live["payload"]["text"] == "fixed the blank-line bug in the importer."
+    said = await next_message(ws, lambda m: m.get("type") == "signoff")
+    assert said["payload"]["text"] == "one reader for both, finally"
+    await ws.close()
+
+    opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    assert opened["messages"][-1]["text"] == "fixed the blank-line bug in the importer."
+    assert world.alerts[-1][2] == "fixed the blank-line bug in the importer."
+
+
+def test_a_sign_off_still_streaming_in_never_shows():
+    from portal.hub import split_sign_off
+
+    for partial in ("done.\n<", "done.\n<sign", "done.\n<signoff>", "done.\n<signoff>quietly pro"):
+        assert split_sign_off(partial) == ("done.", None)
+    assert split_sign_off("a < b and c") == ("a < b and c", None)
+
+
+async def test_the_sign_off_is_about_the_saved_reply_even_when_its_send_lands_late(world):
+    sid = world.hermes.add_session("20261025_131313_ffffff", "late", messages=[("user", "earlier"), ("assistant", "an older reply")])
+    world.hermes.reply = "the new reply"
+    world.hermes.send_late = True
+    await world.sign_up()
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": sid})
+    await asyncio.sleep(0.05)
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+    said = await next_message(ws, lambda m: m.get("type") == "signoff")
+    assert said["payload"]["text"] == "proud of: the new reply"
+    await ws.close()
