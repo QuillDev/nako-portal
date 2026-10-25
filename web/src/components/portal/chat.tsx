@@ -28,6 +28,7 @@ function ChatMenu({ portal }: { portal: Portal }) {
         <DropdownMenuContent align="end">
           {sessionActions(portal, c.session, () => rename.start(c.session)).map(a => (
             <DropdownMenuItem key={a.label} onSelect={a.run}>
+              <a.icon className="size-4 text-muted-foreground" />
               {a.label}
             </DropdownMenuItem>
           ))}
