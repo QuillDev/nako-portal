@@ -366,14 +366,51 @@ class HermesBackend:
         return line or None
 
     def sign_off_models(self):
-        from hermes_cli.inventory import build_models_payload, load_picker_context
+        return _model_providers()
 
-        payload = build_models_payload(load_picker_context(), non_blocking_catalogs=True)
-        return [
-            {"provider": str(row["slug"]), "label": str(row.get("name") or row["slug"]), "models": [str(m) for m in row.get("models") or []]}
-            for row in payload.get("providers", [])
-            if row.get("slug")
-        ]
+    # The shown profile's own model: what its turns run on (config.yaml `model:`).
+
+    def _profile_scope(self):
+        """Config, credentials and paths of the shown profile, the way a turn there sees them."""
+        from gateway.run import _profile_runtime_scope
+
+        return _profile_runtime_scope(Path(self._home()))
+
+    def models(self):
+        with self._profile_scope():
+            return _model_providers()
+
+    def model(self):
+        from hermes_cli.config import load_config
+
+        with self._profile_scope():
+            chosen = load_config().get("model") or {}
+        if not isinstance(chosen, dict):
+            return {"provider": "", "model": str(chosen)}
+        return {"provider": str(chosen.get("provider") or ""), "model": str(chosen.get("default") or chosen.get("model") or "")}
+
+    def set_model(self, provider, model):
+        """Switch the shown profile's model the way `/model <model> --provider <p> --global` does:
+        Hermes validates the pick and rewrites the endpoint keys that go with it."""
+        from hermes_cli.config import get_compatible_custom_providers, load_config
+        from hermes_cli.model_switch import persist_model_selection, switch_model
+
+        with self._profile_scope():
+            config = load_config()
+            current = config.get("model") if isinstance(config.get("model"), dict) else {}
+            result = switch_model(
+                raw_input=model,
+                explicit_provider=provider,
+                is_global=True,
+                current_provider=str(current.get("provider") or ""),
+                current_model=str(current.get("default") or ""),
+                current_base_url=str(current.get("base_url") or ""),
+                user_providers=config.get("providers") if isinstance(config.get("providers"), dict) else {},
+                custom_providers=get_compatible_custom_providers(config),
+            )
+            if not result.success:
+                raise ValueError(result.error_message or "That model can't be used")
+            persist_model_selection(result)
 
     def sign_off_model(self):
         from hermes_cli.config import load_config
@@ -435,6 +472,18 @@ def _fallback_toolsets(home=None):
     finally:
         if token is not None:
             reset_hermes_home_override(token)
+
+
+def _model_providers():
+    """Models Hermes can run on with the credentials in scope, grouped by provider."""
+    from hermes_cli.inventory import build_models_payload, load_picker_context
+
+    payload = build_models_payload(load_picker_context(), non_blocking_catalogs=True)
+    return [
+        {"provider": str(row["slug"]), "label": str(row.get("name") or row["slug"]), "models": [str(m) for m in row.get("models") or []]}
+        for row in payload.get("providers", [])
+        if row.get("slug")
+    ]
 
 
 async def _listen(runner, port):

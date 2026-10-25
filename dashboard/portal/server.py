@@ -108,6 +108,8 @@ class Portal:
         r.add_post("/api/signoff", self.set_sign_off)
         r.add_get("/api/profile", self.profile)
         r.add_post("/api/profile", self.set_profile)
+        r.add_get("/api/model", self.model)
+        r.add_post("/api/model", self.set_model)
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -312,6 +314,25 @@ class Portal:
         self.store.set_meta("profile", shown["profile"])
         await self.hub.broadcast({"kind": "profile.changed", "profile": shown["profile"]})
         return web.json_response(shown)
+
+    async def model(self, request):
+        """The model the shown profile's turns run on, and the ones it could."""
+        self._require(request)
+        backend = self.hub.backend
+        current, providers = await asyncio.gather(asyncio.to_thread(backend.model), asyncio.to_thread(backend.models))
+        return web.json_response({**current, "providers": providers})
+
+    async def set_model(self, request):
+        self._require(request)
+        body = await request.json()
+        provider, model = str(body.get("provider") or ""), str(body.get("model") or "")
+        if not provider or not model:
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a model"}), content_type="application/json")
+        try:
+            await asyncio.to_thread(self.hub.backend.set_model, provider, model)
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+        return await self.model(request)
 
     async def register_options(self, request):
         body = await request.json()

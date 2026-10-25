@@ -74,3 +74,35 @@ async def test_switching_needs_a_signed_in_person(world):
         refused = await stranger.post(world.url("/api/profile"), json={"profile": "work"}, headers={"Origin": ORIGIN})
         assert refused.status == 401
     assert world.hermes.profile == "default"
+
+
+async def test_each_profile_keeps_its_own_model(world):
+    await world.sign_up()
+    picked = await world.post("/api/model", {"provider": "big", "model": "large"})
+    assert picked.status == 200
+    assert {k: (await picked.json())[k] for k in ("provider", "model")} == {"provider": "big", "model": "large"}
+
+    await world.post("/api/profile", {"profile": "work"})
+    work = await (await world.http.get(world.url("/api/model"))).json()
+    assert (work["provider"], work["model"]) == ("fast", "tiny")
+    assert work["providers"][1]["models"] == ["large"]
+
+    await world.post("/api/profile", {"profile": "default"})
+    back = await (await world.http.get(world.url("/api/model"))).json()
+    assert (back["provider"], back["model"]) == ("big", "large")
+
+
+async def test_a_model_hermes_refuses_changes_nothing(world):
+    await world.sign_up()
+    refused = await world.post("/api/model", {"provider": "fast", "model": "imaginary"})
+    assert refused.status == 400
+    assert "not found" in (await refused.json())["error"]
+    current = await (await world.http.get(world.url("/api/model"))).json()
+    assert (current["provider"], current["model"]) == ("fast", "tiny")
+
+
+async def test_changing_a_model_needs_a_signed_in_person(world):
+    async with aiohttp.ClientSession() as stranger:
+        refused = await stranger.post(world.url("/api/model"), json={"provider": "big", "model": "large"}, headers={"Origin": ORIGIN})
+        assert refused.status == 401
+    assert world.hermes.profile_models == {}
