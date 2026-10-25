@@ -17,10 +17,45 @@ from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
 
 
+class DemoHermes(FakeHermes):
+    """Turns that look like real ones: reasoning, tool calls and a reply streamed in pieces.
+    A message mentioning "delete" asks for approval; one with "ask" asks a question."""
+
+    async def _turn(self, sid, text):
+        await self.emit(sid, "message.start")
+        for piece in ["Looking at ", "the shard logs ", "first."]:
+            await self.emit(sid, "reasoning.delta", {"text": piece})
+            await asyncio.sleep(0.3)
+        method = "approval" if "delete" in text else "clarify" if "ask" in text else None
+        if method:
+            params = (
+                {"command": "rm -rf build", "description": "delete the build folder", "choices": ["once", "session", "deny"]}
+                if method == "approval"
+                else {"questions": [{"qid": "q1", "question": "Which branch?", "choices": ["main", "develop"]}]}
+            )
+            frame = {"jsonrpc": "2.0", "id": "req-1", "method": method, "params": {"session_id": self.runtime(sid), "request_id": "req-1", **params}}
+            for ws in list(self.sockets):
+                await ws.send_json(frame)
+            return
+        for i, (name, context) in enumerate([("terminal", "gh run view 123 --log-failed"), ("read_file", "tests/e2e/orders.spec.ts")]):
+            await self.emit(sid, "tool.start", {"tool_id": f"t{i}", "name": name, "context": context})
+            await asyncio.sleep(0.8)
+            self._row(sid, "tool", "", name=name, context=context, tool_call_id=f"t{i}")
+            await self.emit(sid, "tool.complete", {"tool_id": f"t{i}", "name": name, "summary": "done in 0.8s"})
+        for word in self.reply.split(" "):
+            await self.emit(sid, "message.delta", {"text": word + " "})
+            await asyncio.sleep(0.04)
+        self._row(sid, "assistant", self.reply, reasoning="Looking at the shard logs first.")
+        await self.emit(sid, "message.complete", {"status": "complete", "text": self.reply})
+
+
 async def main(port):
-    hermes = FakeHermes()
+    hermes = DemoHermes()
     hermes.reply = "Here's the plan:\n\n1. **Rebase** onto `main`\n2. Re-run CI\n\n```bash\ngit rebase origin/main\n```"
-    hermes.add_session("20261024_090000_aaaaaa", "Fix the flaky CI shard", messages=[("user", "why is shard 3 failing?"), ("assistant", "The `orders` e2e test races the seed script. I'd add a wait on the seed job.")])
+    hermes.add_session("20261024_090000_aaaaaa", "Fix the flaky CI shard", messages=[("user", "why is shard 3 failing?")])
+    hermes._row("20261024_090000_aaaaaa", "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id="h1")
+    hermes._row("20261024_090000_aaaaaa", "tool", "", name="search_files", context="seed.ts", tool_call_id="h2")
+    hermes._row("20261024_090000_aaaaaa", "assistant", "The `orders` e2e test races the seed script. I'd add a wait on the seed job:\n\n| shard | status |\n| --- | --- |\n| 1 | passing |\n| 3 | flaky |", reasoning="Shard 3 runs orders.spec.ts, which reads seeded rows.")
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
     backend = TestServer(hermes.app())

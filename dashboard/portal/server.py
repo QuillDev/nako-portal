@@ -26,9 +26,11 @@ MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 ANDROID_APK_PATH = "/android/hermes.apk"
 ANDROID_PACKAGE = "moe.nakode.hermes"
+# Scripts stay 'self' only. Inline styles are allowed because the UI components set them
+# (Radix's scroll area, Shiki's token colors); blob: lets the composer read picked files.
 CSP = (
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; "
-    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+    "connect-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 )
 
 
