@@ -285,7 +285,7 @@ export function usePortal() {
     (session: string) =>
       act(async () => {
         await api(sessionPath(session, "/archive"), { method: "POST", body: { archived: true } })
-        navigate("#/")
+        if (currentRef.current?.session === session) navigate("#/")
         await loadSessions()
       }),
     [act, loadSessions],

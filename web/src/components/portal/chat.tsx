@@ -1,21 +1,17 @@
 import { MoreHorizontalIcon } from "lucide-react"
-import { useState } from "react"
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
 import { Requests } from "./requests"
+import { sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
 
 function ChatMenu({ portal }: { portal: Portal }) {
   const c = portal.current!
-  const pinned = Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)
-  const [renaming, setRenaming] = useState(false)
-  const [title, setTitle] = useState("")
+  const rename = useRenameDialog(portal)
   return (
     <>
       <DropdownMenu>
@@ -25,38 +21,14 @@ function ChatMenu({ portal }: { portal: Portal }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem
-            onSelect={() => {
-              setTitle(c.title)
-              setRenaming(true)
-            }}
-          >
-            Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => portal.pin(c.session, !pinned)}>{pinned ? "Unpin" : "Pin"}</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => portal.archive(c.session)}>Archive</DropdownMenuItem>
+          {sessionActions(portal, c.session, () => rename.start(c.session)).map(a => (
+            <DropdownMenuItem key={a.label} onSelect={a.run}>
+              {a.label}
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <Dialog onOpenChange={setRenaming} open={renaming}>
-        <DialogContent>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={e => {
-              e.preventDefault()
-              if (title.trim()) portal.rename(c.session, title.trim())
-              setRenaming(false)
-            }}
-          >
-            <DialogHeader>
-              <DialogTitle>Rename chat</DialogTitle>
-            </DialogHeader>
-            <Input aria-label="Title" autoFocus onChange={e => setTitle(e.target.value)} value={title} />
-            <DialogFooter>
-              <Button type="submit">Save</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {rename.dialog}
     </>
   )
 }
