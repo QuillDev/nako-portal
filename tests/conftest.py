@@ -122,6 +122,8 @@ class FakeGateway:
         self.reply = "hello from hermes"
         self.ask_approval = False
         self.sign_off_error = None
+        # The adapter's final send can reach the hub after the turn has ended.
+        self.send_late = False
         self.sign_off_route = {"provider": "auto", "model": ""}
         self.image_dir = Path(tempfile.mkdtemp())
         self.hub = None
@@ -234,7 +236,8 @@ class FakeGateway:
             request = {"id": "req-1", "method": "approval", "params": {"command": "rm -rf build", "description": "delete build", "choices": ["once", "session", "deny"]}, "private": {"session_key": f"key-{chat}"}}
             await self.hub.ask(chat, request)
             return
-        await self.hub.outgoing(chat, "reply-1", self.reply)
+        if not self.send_late:
+            await self.hub.outgoing(chat, "reply-1", self.reply)
         self._row(sid, "assistant", self.reply)
         await self.hub.turn_finished(chat, "success")
 

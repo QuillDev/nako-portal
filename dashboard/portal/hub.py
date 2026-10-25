@@ -51,6 +51,10 @@ INBOX = "inbox"
 CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
+# Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
+# beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
+SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
+SIGN_OFF_OPEN = re.compile(r"\s*(?:<signoff>[^<]*|<(?:s(?:i(?:g(?:n(?:o(?:f(?:f)?)?)?)?)?)?)?)$", re.I)
 # A post outside a turn is mirrored into the transcript just after the send returns.
 MIRROR_SETTLE = 1.0
 
@@ -167,7 +171,7 @@ class Hub:
         return {
             "session": session,
             "title": self.titles[session],
-            "messages": [_as_notification(m) for m in thread["messages"] if _is_shown(m)],
+            "messages": [_without_sign_off(_as_notification(m)) for m in thread["messages"] if _is_shown(m)],
             "running": session in self.running,
             "status": self.status.get(session),
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
@@ -281,19 +285,29 @@ class Hub:
             self.notify(session, title, "hit an error")
         elif outcome == "success":
             self.notify(session, title, _preview(reply) or "done")
-            if reply.strip() and self.sign_off_on:
+            if self.sign_off_on:
                 asyncio.get_running_loop().create_task(self._sign_off(session, reply))
 
-    async def _sign_off(self, session, reply):
-        """Nako's one-liner about the turn that just ended, for the chat's sticker. Best effort:
-        without one the chat says a plain "done"."""
+    async def _sign_off(self, session, sent):
+        """Nako's one-liner about the turn that just ended, for the chat's sticker. Her own line
+        from the saved reply when she wrote one; otherwise a small model writes it from the reply.
+        Best effort: without one the chat says a plain "done"."""
         try:
-            line = await asyncio.to_thread(self.backend.sign_off, reply)
+            reply = await asyncio.to_thread(self._last_reply, session) or sent
+            clean, line = split_sign_off(reply)
+            if not line and clean.strip():
+                line = await asyncio.to_thread(self.backend.sign_off, clean)
         except Exception:
             log.debug("portal sign-off failed", exc_info=True)
             return
         if line and session not in self.running:
             await self._event(session, "signoff", {"text": line})
+
+    def _last_reply(self, session):
+        """The turn's reply as saved, not as last streamed: the final send can land after the turn ends."""
+        thread = self.backend.thread(session) or {}
+        last = (thread.get("messages") or [])[-1:]
+        return last[0].get("text") or "" if last and last[0].get("role") == "assistant" else ""
 
     async def tool(self, session, call_id, name, context, state):
         """A tool call starting ("running") or ending ("done"/"failed") in a running turn, for the
@@ -309,7 +323,7 @@ class Hub:
         if session is None:
             return
         self.last_text[session] = text
-        await self._event(session, "gateway.message", {"id": message_id, "text": text})
+        await self._event(session, "gateway.message", {"id": message_id, "text": split_sign_off(text)[0]})
         if session in self.running:
             return
         self.notify(session, self.titles.get(session) or "Nako", _preview(text) or "new message")
@@ -374,8 +388,24 @@ def _request_view(request):
     return {"id": request["id"], "method": request["method"], "params": request["params"], "answerable": request["method"] in ANSWERABLE}
 
 
+def split_sign_off(text):
+    """A reply without its sign-off tag (or the start of one still streaming), and the line."""
+    text = str(text or "")
+    found = SIGN_OFF_TAG.findall(text)
+    clean = SIGN_OFF_OPEN.sub("", SIGN_OFF_TAG.sub("\n\n", text)).strip()
+    line = " ".join(found[-1].split()).strip("\"'` ") if found else ""
+    return clean, line[:80] or None
+
+
+def _without_sign_off(message):
+    if message.get("role") != "assistant" or not message.get("text"):
+        return message
+    return {**message, "text": split_sign_off(message["text"])[0]}
+
+
 def _preview(text, limit=PREVIEW_CHARS):
     """The start of a reply as one plain line for a notification: no MEDIA tags or markdown marks."""
+    text = split_sign_off(text)[0]
     plain = re.sub(r"[`*_#>|]+", "", " ".join(MEDIA.sub("", str(text or "")).splitlines()))
     plain = re.sub(r"\s+([,.;:)])", r"\1", plain)
     plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
