@@ -1,9 +1,10 @@
-import { BellIcon, ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
+import { ArrowDownToLineIcon, BellIcon, ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
+import { installDesktopUpdate, useDesktopUpdate } from "@/lib/desktop-update"
 import type { SessionRow, Status } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useDrawer } from "./drawer"
@@ -37,6 +38,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
   const { go, phone, toggle } = useDrawer()
   const [filter, setFilter] = useState("")
   const rename = useRenameDialog(portal)
+  const update = useDesktopUpdate()
   const needle = filter.trim().toLowerCase()
   const rows = portal.sessions.filter(s => !s.notifications && (!needle || s.title.toLowerCase().includes(needle)))
   const inbox = portal.sessions.find(s => s.notifications)
@@ -108,9 +110,23 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
       </nav>
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <span className="px-2 text-muted-foreground text-xs">{portal.connected ? "" : "nako is offline"}</span>
-        <Button aria-label="Settings" onClick={() => go("#/settings")} size="icon" title="Settings" variant="ghost">
-          <SettingsIcon />
-        </Button>
+        <div className="flex items-center">
+          {update && (
+            <Button
+              aria-label={`Restart to update to ${update}`}
+              className="text-primary hover:text-primary"
+              onClick={installDesktopUpdate}
+              size="icon"
+              title={`Restart to update to ${update}`}
+              variant="ghost"
+            >
+              <ArrowDownToLineIcon />
+            </Button>
+          )}
+          <Button aria-label="Settings" onClick={() => go("#/settings")} size="icon" title="Settings" variant="ghost">
+            <SettingsIcon />
+          </Button>
+        </div>
       </div>
       {rename.dialog}
     </aside>

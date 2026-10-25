@@ -191,6 +191,11 @@ fn navigation_allowed(app: &AppHandle, url: &Url) -> bool {
         sign_in(app, origin);
         return false;
     }
+    // The portal's update button, shown once an update is downloaded.
+    if url.path() == "/desktop/update" {
+        update::install_now(app);
+        return false;
+    }
     true
 }
 
@@ -292,6 +297,7 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
             let on_portal = app.state::<Shell>().origin().is_some_and(|o| o.opens_in_app(payload.url()));
             if payload.event() == PageLoadEvent::Finished && on_portal {
                 app.state::<Shell>().wake.notify_one();
+                update::announce(app);
             }
         })
         .on_download(|webview, event| {
