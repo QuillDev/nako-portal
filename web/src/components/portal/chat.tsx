@@ -109,6 +109,35 @@ function OlderTurns({ portal }: { portal: Portal }) {
   )
 }
 
+// Keeps a chat that was at the bottom there, without animating, when the layout around it changes
+// rather than the conversation: the scroller getting shorter (Nako's bubble growing under it) or the
+// text rewrapping to a new width (the sidebar opening or closing). StickToBottom only follows content
+// growth, smoothly, so the first left the last lines hidden under the bubble and the second scrolled
+// the chat up and back down.
+function KeepBottom() {
+  const { scrollRef, contentRef, isAtBottom } = useStickToBottomContext()
+  // StickToBottom's own view of it, which stays true while it eases toward new content.
+  const following = useRef(isAtBottom)
+  following.current = isAtBottom
+  useEffect(() => {
+    const root = scrollRef.current
+    const content = contentRef.current
+    if (!root || !content) return
+    let height = root.clientHeight
+    let width = content.clientWidth
+    const observer = new ResizeObserver(() => {
+      const moved = root.clientHeight !== height || content.clientWidth !== width
+      height = root.clientHeight
+      width = content.clientWidth
+      if (moved && following.current) root.scrollTop = root.scrollHeight
+    })
+    observer.observe(root)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [scrollRef, contentRef])
+  return null
+}
+
 function partOfDay(hour: number) {
   return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
 }
@@ -159,6 +188,7 @@ export function Chat({ portal }: { portal: Portal }) {
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {c.loading && <TurnSkeletons count={3} />}
           {!c.loading && <OlderTurns portal={portal} />}
+          {!c.loading && <KeepBottom />}
           {!c.loading && <Transcript
               live={portal.live}
               messages={c.messages}
