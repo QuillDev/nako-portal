@@ -56,6 +56,7 @@ pub async fn listen(origin: ServerOrigin, cookie: impl Fn() -> Option<String>, w
         headers.insert("Origin", from);
         match tokio_tungstenite::connect_async(request).await {
             Ok((mut socket, _)) => {
+                eprintln!("nako: listening for alerts");
                 attempt = 0;
                 while let Some(Ok(message)) = socket.next().await {
                     if let Message::Text(text) = message {
@@ -66,11 +67,12 @@ pub async fn listen(origin: ServerOrigin, cookie: impl Fn() -> Option<String>, w
                 }
             }
             Err(Error::Http(response)) if matches!(response.status().as_u16(), 401 | 403) => {
+                eprintln!("nako: alerts need a sign-in");
                 // Signed out (cookie expired or passkey removed): wait for the next sign-in.
                 wake.notified().await;
                 continue;
             }
-            Err(_) => {}
+            Err(error) => eprintln!("nako: alert socket: {error}"),
         }
         tokio::select! {
             _ = tokio::time::sleep(backoff(attempt)) => {}

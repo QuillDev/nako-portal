@@ -107,21 +107,42 @@ async def test_the_desktop_app_updates_from_the_release_the_server_publishes(wor
     url = lambda path: str(server.make_url(path))  # noqa: E731
     await world.sign_up()
 
+    def publish(manifest):
+        (tmp_path / "desktop-release.json").write_text(json.dumps(manifest))
+
     assert (await world.http.get(url("/api/desktop/release"))).status == 404
-    image = b"\x7fELF fake appimage"
-    (tmp_path / "nako.AppImage").write_bytes(image)
-    manifest = {"version": "0.2.0", "signature": "dW50cnVzdGVkIGNvbW1lbnQ=", "sizeBytes": len(image) + 1}
-    (tmp_path / "desktop-release.json").write_text(json.dumps(manifest))
-    # A manifest that doesn't match the file, or isn't a version the updater understands, isn't offered.
-    assert (await world.http.get(url("/api/desktop/release"))).status == 404
-    (tmp_path / "desktop-release.json").write_text(json.dumps({**manifest, "sizeBytes": len(image), "version": "latest"}))
+    linux, windows = b"\x7fELF fake appimage", b"MZ fake installer"
+    (tmp_path / "nako.AppImage").write_bytes(linux)
+    (tmp_path / "nako-setup.exe").write_bytes(windows)
+    (tmp_path / "secret.txt").write_text("not a release file")
+    platforms = {
+        "linux-x86_64": {"file": "nako.AppImage", "signature": "c2lnLWxpbnV4", "sizeBytes": len(linux)},
+        "windows-x86_64": {"file": "nako-setup.exe", "signature": "c2lnLXdpbmRvd3M=", "sizeBytes": len(windows) + 1},
+    }
+    # A version the updater can't compare is no release at all.
+    publish({"version": "latest", "platforms": platforms})
     assert (await world.http.get(url("/api/desktop/release"))).status == 404
 
-    (tmp_path / "desktop-release.json").write_text(json.dumps({**manifest, "sizeBytes": len(image)}))
+    # A platform whose file doesn't match its manifest is left out; the others are still offered.
+    publish({"version": "0.2.0", "platforms": platforms})
     release = await (await world.http.get(url("/api/desktop/release"))).json()
-    assert release["version"] == "0.2.0"
-    assert release["platforms"]["linux-x86_64"] == {"url": f"{ORIGIN}/desktop/nako.AppImage", "signature": manifest["signature"]}
-    assert await (await world.http.get(url("/desktop/nako.AppImage"))).read() == image
+    assert release == {"version": "0.2.0", "platforms": {"linux-x86_64": {"url": f"{ORIGIN}/desktop/nako.AppImage", "signature": "c2lnLWxpbnV4"}}}
+    assert (await world.http.get(url("/desktop/nako-setup.exe"))).status == 404
+
+    platforms["windows-x86_64"]["sizeBytes"] = len(windows)
+    # Entries naming paths or other files are ignored.
+    platforms["darwin-aarch64"] = {"file": "../portal/portal.db", "signature": "eA==", "sizeBytes": 1}
+    platforms["linux-aarch64"] = {"file": "secret.txt", "signature": "eA==", "sizeBytes": len("not a release file")}
+    publish({"version": "0.2.0", "platforms": platforms})
+    release = await (await world.http.get(url("/api/desktop/release"))).json()
+    assert release["platforms"] == {
+        "linux-x86_64": {"url": f"{ORIGIN}/desktop/nako.AppImage", "signature": "c2lnLWxpbnV4"},
+        "windows-x86_64": {"url": f"{ORIGIN}/desktop/nako-setup.exe", "signature": "c2lnLXdpbmRvd3M="},
+    }
+    assert await (await world.http.get(url("/desktop/nako.AppImage"))).read() == linux
+    assert await (await world.http.get(url("/desktop/nako-setup.exe"))).read() == windows
+    for other in ("secret.txt", "desktop-release.json", "..%2Fportal%2Fportal.db"):
+        assert (await world.http.get(url(f"/desktop/{other}"))).status == 404
 
     # Only for the signed-in owner.
     assert (await app.get(url("/api/desktop/release"))).status == 401
