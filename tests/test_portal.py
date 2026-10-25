@@ -109,6 +109,44 @@ async def test_a_message_goes_to_the_gateway_and_its_reply_streams_back(world):
     await ws.close()
 
 
+async def test_no_alert_for_a_chat_open_in_front_of_you(world):
+    sid = world.hermes.add_session("20261024_030303_cccccc", "ci")
+    other = world.hermes.add_session("20261024_040404_dddddd", "plans")
+    await world.sign_up()
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+
+    async def reply_in(session):
+        await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+        await next_message(ws, lambda m: m.get("session") == session and m.get("type") == "message.complete")
+
+    await ws.send_json({"watch": sid, "looking": True})
+    await asyncio.sleep(0.05)
+    await reply_in(sid)
+    assert world.alerts == []
+
+    # Looking away from the page brings alerts back.
+    await ws.send_json({"looking": False})
+    await asyncio.sleep(0.05)
+    await reply_in(sid)
+    assert [alert[0] for alert in world.alerts] == [sid]
+
+    # So does a reply in a chat you aren't showing, even with the page in front of you.
+    await ws.send_json({"watch": other, "looking": True})
+    await asyncio.sleep(0.05)
+    await reply_in(sid)
+    assert [alert[0] for alert in world.alerts] == [sid, sid]
+
+    # Closing the page closes its view too.
+    await ws.close()
+    await asyncio.sleep(0.05)
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": other})
+    await asyncio.sleep(0.05)
+    await reply_in(other)
+    assert [alert[0] for alert in world.alerts] == [sid, sid, other]
+    await ws.close()
+
+
 async def test_a_new_portal_chat_is_a_new_gateway_thread(world):
     await world.sign_up()
     created = await world.http.post(world.url("/api/sessions"), data={"text": "plan my week"}, headers={"Origin": ORIGIN})

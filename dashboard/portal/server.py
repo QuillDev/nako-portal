@@ -647,9 +647,14 @@ class Portal:
                     data = json.loads(message.data)
                 except ValueError:
                     continue
-                session = str(data.get("watch") or "")
-                if SESSION_ID.match(session):
-                    self.hub.watch(client, session)
+                if not isinstance(data, dict):
+                    continue
+                if "watch" in data:
+                    session = str(data["watch"] or "")
+                    # No chat open (the new-chat screen) clears what this socket shows.
+                    self.hub.watch(client, session if SESSION_ID.match(session) else None)
+                if isinstance(data.get("looking"), bool):
+                    self.hub.look(client, data["looking"])
         finally:
             self.hub.leave(client)
         return ws

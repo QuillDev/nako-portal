@@ -56,6 +56,9 @@ class Hub:
         self.alert = alert or (lambda session, title, text: None)
         self.clients = set()
         self.subscribers = {}
+        # The chat each socket shows, and the sockets whose page is on screen and focused.
+        self.viewing = {}
+        self.looking = set()
         self.status = {}
         self.requests = {}
         self.running = set()
@@ -66,7 +69,10 @@ class Hub:
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
-        how the Android app hears about it without Google's push service."""
+        how the Android app hears about it without Google's push service. Nothing goes out while
+        the chat is open in front of you on some device: you're already reading it."""
+        if self.seen(session):
+            return
         self.alert(session, title, text)
         frame = {"kind": "alert", "title": title, "body": text, "session": session}
         asyncio.get_running_loop().create_task(self.broadcast(frame))
@@ -78,11 +84,27 @@ class Hub:
 
     def leave(self, client):
         self.clients.discard(client)
+        self.viewing.pop(client, None)
+        self.looking.discard(client)
         for watchers in self.subscribers.values():
             watchers.discard(client)
 
     def watch(self, client, session):
+        if session is None:
+            self.viewing.pop(client, None)
+            return
         self.subscribers.setdefault(session, set()).add(client)
+        self.viewing[client] = session
+
+    def look(self, client, looking):
+        """The page on this socket came on screen and into focus, or left it."""
+        if looking:
+            self.looking.add(client)
+        else:
+            self.looking.discard(client)
+
+    def seen(self, session):
+        return any(self.viewing.get(client) == session for client in self.looking)
 
     async def _send(self, clients, message):
         for client in list(clients):
