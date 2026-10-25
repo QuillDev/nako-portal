@@ -59,4 +59,4 @@ button.quiet:hover { color: var(--text); }
 #titlebar button { width: 32px; height: 28px; padding: 0; display: grid; place-items: center; border-radius: 8px; background: transparent; color: var(--muted); }
 #titlebar button:hover { background: rgb(255 255 255 / 7%); color: var(--text); }
 #titlebar button.close:hover { background: #e81123; color: white; }
-#titlebar svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#titlebar svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
