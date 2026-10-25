@@ -1,6 +1,6 @@
-package moe.nakode.hermes.notify
+package moe.nakode.portal.notify
 
-import moe.nakode.hermes.shell.ServerOrigin
+import moe.nakode.portal.shell.ServerOrigin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

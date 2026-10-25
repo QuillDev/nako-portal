@@ -1,4 +1,4 @@
-package moe.nakode.hermes.update
+package moe.nakode.portal.update
 
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer

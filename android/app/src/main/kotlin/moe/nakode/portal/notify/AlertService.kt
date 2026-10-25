@@ -1,4 +1,4 @@
-package moe.nakode.hermes.notify
+package moe.nakode.portal.notify
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -15,9 +15,9 @@ import android.webkit.CookieManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import moe.nakode.hermes.R
-import moe.nakode.hermes.shell.MainActivity
-import moe.nakode.hermes.shell.ServerOrigin
+import moe.nakode.portal.R
+import moe.nakode.portal.shell.MainActivity
+import moe.nakode.portal.shell.ServerOrigin
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -53,7 +53,7 @@ class AlertService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val ongoing = NotificationCompat.Builder(this, QUIET)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Listening for Hermes")
+            .setContentTitle("Listening for Nako")
             .setContentIntent(open)
             .setOngoing(true)
             .setSilent(true)
@@ -149,7 +149,7 @@ class AlertService : Service() {
 
         fun channels(context: Context) {
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel(ALERTS, "Hermes alerts", NotificationManager.IMPORTANCE_HIGH))
+            manager.createNotificationChannel(NotificationChannel(ALERTS, "Nako alerts", NotificationManager.IMPORTANCE_HIGH))
             manager.createNotificationChannel(
                 NotificationChannel(QUIET, "Connection", NotificationManager.IMPORTANCE_MIN).apply {
                     description = "Shown while the app listens for alerts. Safe to hide."

@@ -1,4 +1,4 @@
-package moe.nakode.hermes.shell
+package moe.nakode.portal.shell
 
 import java.net.URI
 

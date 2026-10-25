@@ -29,7 +29,7 @@ function groups(rows: SessionRow[]) {
   return out
 }
 
-const DOT: Partial<Record<Status, string>> = { working: "bg-blue-500 animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
+const DOT: Partial<Record<Status, string>> = { working: "bg-primary animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
 
 export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
   const { go } = useDrawer()
@@ -66,7 +66,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         ))}
       </nav>
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <span className="px-2 text-muted-foreground text-xs">{portal.connected ? "" : "hermes is offline"}</span>
+        <span className="px-2 text-muted-foreground text-xs">{portal.connected ? "" : "nako is offline"}</span>
         <Button aria-label="Settings" onClick={() => go("#/settings")} size="icon" title="Settings" variant="ghost">
           <SettingsIcon />
         </Button>

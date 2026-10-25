@@ -1,4 +1,4 @@
-package moe.nakode.hermes.update
+package moe.nakode.portal.update
 
 import android.app.Activity
 import android.app.AlertDialog
@@ -11,7 +11,7 @@ import android.provider.Settings
 import android.util.Log
 import android.webkit.CookieManager
 import androidx.core.net.toUri
-import moe.nakode.hermes.shell.ServerOrigin
+import moe.nakode.portal.shell.ServerOrigin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -62,8 +62,8 @@ class AppUpdater(private val context: Context) {
         }
         askedForPermission = true
         AlertDialog.Builder(activity)
-            .setTitle("Hermes ${release.versionName} is available")
-            .setMessage("Allow Hermes to install its own updates.")
+            .setTitle("Nako ${release.versionName} is available")
+            .setMessage("Allow Nako to install its own updates.")
             .setPositiveButton("Allow") { _, _ ->
                 lastCheck = 0
                 activity.startActivity(
@@ -100,7 +100,7 @@ class AppUpdater(private val context: Context) {
     }
 
     companion object {
-        const val RELEASE_PACKAGE = "moe.nakode.hermes"
+        const val RELEASE_PACKAGE = "moe.nakode.portal"
         private const val TAG = "HermesUpdate"
         private const val CHECK_INTERVAL_MS = 30 * 60 * 1000L
     }

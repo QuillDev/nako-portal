@@ -1,4 +1,4 @@
-package moe.nakode.hermes.notify
+package moe.nakode.portal.notify
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

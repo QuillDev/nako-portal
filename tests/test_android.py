@@ -36,7 +36,7 @@ async def test_the_android_app_signs_in_with_a_passkey_bound_to_its_signing_key(
     url = lambda path: str(server.make_url(path))  # noqa: E731
     try:
         links = await (await world.http.get(url("/.well-known/assetlinks.json"))).json()
-        assert links[0]["target"] == {"namespace": "android_app", "package_name": "moe.nakode.hermes", "sha256_cert_fingerprints": [CERT]}
+        assert links[0]["target"] == {"namespace": "android_app", "package_name": "moe.nakode.portal", "sha256_cert_fingerprints": [CERT]}
         assert "delegate_permission/common.get_login_creds" in links[0]["relation"]
 
         app_origin = "android:apk-key-hash:" + webauthn.b64url(bytes.fromhex(CERT.replace(":", "")))

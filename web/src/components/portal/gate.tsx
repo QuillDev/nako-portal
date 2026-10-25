@@ -25,7 +25,8 @@ export function Gate({ portal }: { portal: Portal }) {
 
   return (
     <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
-      <h1 className="font-semibold text-2xl">Hermes</h1>
+      <img alt="" className="size-24 rounded-full ring-2 ring-primary ring-offset-4 ring-offset-background" src="/icon-192.png" />
+      <h1 className="font-semibold text-2xl tracking-tight">Nako</h1>
       <p className="text-muted-foreground text-sm">{setup ? "Create a passkey on this device. It is the only way in." : "Sign in with your passkey."}</p>
       <Button disabled={busy} onClick={go}>
         {setup ? "Create passkey" : "Sign in"}

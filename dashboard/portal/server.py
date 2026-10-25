@@ -25,7 +25,7 @@ MAX_FILE = 25 * 1024 * 1024
 MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 ANDROID_APK_PATH = "/android/hermes.apk"
-ANDROID_PACKAGE = "moe.nakode.hermes"
+ANDROID_PACKAGE = "moe.nakode.portal"
 # Scripts stay 'self' only. Inline styles are allowed because the UI components set them
 # (Radix's scroll area, Shiki's token colors); blob: lets the composer read picked files.
 CSP = (
@@ -42,7 +42,7 @@ class Portal:
         *,
         origin,
         web_root,
-        rp_name="Hermes Portal",
+        rp_name="Nako",
         vapid=None,
         android_release_dir=None,
         android_cert_sha256=None,
@@ -118,7 +118,7 @@ class Portal:
         except (ValueError, RpcError) as error:
             response = web.json_response({"error": str(error)}, status=400)
         except ConnectionError:
-            response = web.json_response({"error": "Hermes is offline right now"}, status=503)
+            response = web.json_response({"error": "Nako is offline right now"}, status=503)
         self._secure(request, response)
         return response
 
@@ -199,7 +199,7 @@ class Portal:
                 "publicKey": {
                     "challenge": webauthn.b64url(challenge),
                     "rp": {"id": self.rp_id, "name": self.rp_name},
-                    "user": {"id": user_id, "name": "owner", "displayName": "Hermes Portal"},
+                    "user": {"id": user_id, "name": "owner", "displayName": "Nako"},
                     "pubKeyCredParams": [{"type": "public-key", "alg": webauthn.ES256}, {"type": "public-key", "alg": webauthn.RS256}],
                     "authenticatorSelection": {"residentKey": "required", "userVerification": "required"},
                     "attestation": "none",

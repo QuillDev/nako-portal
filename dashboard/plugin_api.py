@@ -174,7 +174,7 @@ async def _forward_inbox(store, hub):
         fresh = [row for row in reversed(store.inbox(50)) if row["id"] > last]
         for row in fresh:
             first = (row["text"].strip().splitlines() or [""])[0][:180]
-            hub.notify(None, "Hermes", first)
+            hub.notify(None, "Nako", first)
             last = row["id"]
         if fresh:
             store.set_meta("inbox_pushed", last)

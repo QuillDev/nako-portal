@@ -11,11 +11,11 @@ val releaseVersionName = providers.environmentVariable("PORTAL_ANDROID_VERSION_N
 val keystorePath = providers.environmentVariable("PORTAL_ANDROID_KEYSTORE").orNull
 
 android {
-    namespace = "moe.nakode.hermes"
+    namespace = "moe.nakode.portal"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "moe.nakode.hermes"
+        applicationId = "moe.nakode.portal"
         minSdk = 29
         targetSdk = 37
         versionCode = releaseVersionCode
