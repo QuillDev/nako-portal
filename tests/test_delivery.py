@@ -101,3 +101,42 @@ async def test_cron_deliveries_to_the_portal_platform_land_in_its_inbox(tmp_path
     rows = Store(home / "nako-portal" / "portal.db").inbox()
     assert [(r["chat"], r["text"]) for r in rows] == [("inbox", "daily digest: 3 new emails")]
     await asyncio.sleep(0)
+
+
+async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
+    # Hermes's cron mirror appends each post to the open gateway session for portal:inbox, so
+    # that session must exist before the first post, and every post must find the same one.
+    gateway, config, session = (type(sys)(name) for name in ("gateway", "gateway.config", "gateway.session"))
+    config.Platform = lambda name: f"platform:{name}"
+    session.SessionSource = lambda **fields: tuple(sorted(fields.items()))
+    for module in (gateway, config, session):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    spec = importlib.util.spec_from_file_location("nako_portal_plugin_chat", ROOT / "__init__.py")
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+
+    class Db:
+        titles = {}
+
+        def get_session_title(self, sid):
+            return self.titles.get(sid)
+
+        def set_session_title(self, sid, title):
+            self.titles[sid] = title
+
+    class Store:
+        _db = Db()
+        sessions = {}
+
+        def get_or_create_session(self, source, touch_activity=True):
+            entry = self.sessions.setdefault(source, type("Entry", (), {"session_id": f"s{len(self.sessions)}"})())
+            return entry
+
+    store = Store()
+    first = plugin._ensure_chat(store)
+    store._db.titles[first] = "renamed by hand"
+    assert plugin._ensure_chat(store) == first
+    (source,) = store.sessions
+    assert dict(source)["platform"] == "platform:portal" and dict(source)["chat_id"] == "inbox"
+    assert store._db.titles == {first: "renamed by hand"}
+    assert plugin._ensure_chat(None) is None

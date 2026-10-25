@@ -4,6 +4,10 @@ Conversations themselves don't pass through here: the backend half mirrors
 Desktop sessions directly. This adapter is how the rest of Hermes *sends* to
 the portal: cron deliveries (`deliver=portal`) and `send_message` land in the
 portal's inbox on this machine, and the backend turns each into a push alert.
+
+Like a Discord DM, the portal has one chat those posts belong to. The adapter
+keeps a gateway session open for it, so Hermes's cron mirror appends every post
+there and a reply from the portal has all of them in context.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from pathlib import Path
 
 log = logging.getLogger("hermes.portal")
 HOME_CHANNEL = "inbox"
+CHAT_TITLE = "notifications"
 
 
 def _store_module():
@@ -36,6 +41,22 @@ def _deliver(chat_id, text):
         return store.deliver(str(chat_id or HOME_CHANNEL), str(text))
     finally:
         store.db.close()
+
+
+def _ensure_chat(session_store):
+    """The portal's one chat, created on first use. Cron's mirror only appends to a session that
+    already exists for portal:inbox, so without it every post would reach the inbox and no chat."""
+    if session_store is None:
+        return None
+    from gateway.config import Platform
+    from gateway.session import SessionSource
+
+    source = SessionSource(platform=Platform("portal"), chat_id=HOME_CHANNEL, chat_name="Nako", chat_type="dm")
+    entry = session_store.get_or_create_session(source, touch_activity=False)
+    db = getattr(session_store, "_db", None)
+    if db is not None and not db.get_session_title(entry.session_id):
+        db.set_session_title(entry.session_id, CHAT_TITLE)
+    return entry.session_id
 
 
 def _check():
@@ -68,7 +89,15 @@ def _adapter(config):
 
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             self._mark_connected()
+            self._chat()
             return True
+
+        def _chat(self):
+            try:
+                return _ensure_chat(getattr(self, "_session_store", None))
+            except Exception:
+                log.exception("portal: could not open the notifications chat")
+                return None
 
         async def disconnect(self) -> None:
             self._mark_disconnected()
@@ -77,6 +106,7 @@ def _adapter(config):
             import asyncio
 
             row = await asyncio.to_thread(_deliver, chat_id, content)
+            self._chat()
             return SendResult(success=True, message_id=str(row))
 
         async def send_typing(self, chat_id, metadata=None):
