@@ -86,7 +86,7 @@ function Picture({ src, name }: { src: string; name: string }) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <button aria-label={`Open ${name}`} className="w-fit cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring" type="button">
+        <button aria-label={`Open ${name}`} className="w-fit cursor-zoom-in rounded-md outline-none" type="button">
           <img alt={name} className="max-h-80 max-w-full rounded-md border object-contain" loading="lazy" onError={() => setBroken(true)} src={src} />
         </button>
       </DialogTrigger>
