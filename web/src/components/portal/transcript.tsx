@@ -22,7 +22,19 @@ type Block =
 // A command's output, placed after the message it followed (`at` counts from messages[0]).
 export type Note = { at: number; text: string; key: string }
 
-function blocks(messages: HistoryMessage[], notes: Note[] = []): Block[] {
+// Whether an assistant row is the reply that ended its turn: nothing she did follows it before the
+// next prompt. Rows a tool call or another message came after were her working along the way.
+function endsTurn(messages: HistoryMessage[], i: number) {
+  for (const m of messages.slice(i + 1)) {
+    if (m.role === "user") return true
+    if (m.role === "tool" || m.text.trim()) return false
+  }
+  return true
+}
+
+// quiet: Nako's presence shows the work as it happens, so the chat keeps only prompts and the
+// replies that ended each turn (and posts), not tool calls, thoughts or messages along the way.
+function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): Block[] {
   const out: Block[] = []
   let steps: Step[] = []
   const flush = () => {
@@ -38,13 +50,15 @@ function blocks(messages: HistoryMessage[], notes: Note[] = []): Block[] {
   messages.forEach((m, i) => {
     notesAt(i)
     if (m.role === "tool") {
+      if (quiet) return
       steps.push({ key: m.tool_call_id || String(i), name: m.name || "tool", context: oneLine(m.context), state: "done" })
       return
     }
     if (m.role === "assistant" && !m.text.trim() && !m.reasoning) return
+    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !endsTurn(messages, i)))) return
     flush()
     const key = String(m.row_id ?? i)
-    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: m.reasoning, label: m.label })
+    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
   })
   notesAt(messages.length)
   flush()
@@ -201,10 +215,12 @@ export function Transcript({
   live,
   running,
   notes,
-  working = true,
-}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; working?: boolean }) {
-  const shown = blocks(messages, notes)
-  const pending = live?.messages.filter(m => m.text.trim()) ?? []
+  quiet = false,
+}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; quiet?: boolean }) {
+  const shown = blocks(messages, notes, quiet)
+  const written = live?.messages.filter(m => m.text.trim()) ?? []
+  // Quiet: only text she's written since her last tool call, which may be the reply.
+  const pending = quiet ? written.filter(m => (m.after ?? 0) >= (live?.tools.length ?? 0)).slice(-1) : written
   return (
     <>
       {shown.map(b =>
@@ -221,7 +237,7 @@ export function Transcript({
       {pending.map((m, i) => (
         <Assistant key={m.id} session={session} streaming={running && i === pending.length - 1} text={m.text} />
       ))}
-      {working && running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
+      {!quiet && running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
     </>
   )
 }
