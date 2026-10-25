@@ -76,6 +76,7 @@ class Portal:
             raise ValueError("origin must be an http(s) URL")
         self.hub = hub
         self.store = store
+        hub.sign_off_on = store.meta("signoff", "on") != "off"
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         # Passkey ceremonies from the Android app carry its signing-key origin, not the site's.
         self.origins = {self.origin}
@@ -97,6 +98,8 @@ class Portal:
         r = app.router
         r.add_get("/api/me", self.me)
         r.add_post("/api/me/name", self.set_name)
+        r.add_get("/api/signoff", self.sign_off)
+        r.add_post("/api/signoff", self.set_sign_off)
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -263,6 +266,27 @@ class Portal:
         name = " ".join(str(body.get("name") or "").split())[:40]
         self.store.set_meta("name", name)
         return web.json_response({"name": name})
+
+    async def sign_off(self, request):
+        """Settings for Nako's line after a turn: on or off, the model it uses, the models it could."""
+        self._require(request)
+        backend = self.hub.backend
+        current, providers = await asyncio.gather(asyncio.to_thread(backend.sign_off_model), asyncio.to_thread(backend.sign_off_models))
+        return web.json_response({"on": self.hub.sign_off_on, **current, "providers": providers})
+
+    async def set_sign_off(self, request):
+        self._require(request)
+        body = await request.json()
+        if "on" in body:
+            self.hub.sign_off_on = bool(body["on"])
+            self.store.set_meta("signoff", "on" if self.hub.sign_off_on else "off")
+        if body.get("model"):
+            provider, model = str(body.get("provider") or ""), str(body["model"])
+            offered = await asyncio.to_thread(self.hub.backend.sign_off_models)
+            if not any(p["provider"] == provider and model in p["models"] for p in offered):
+                raise web.HTTPBadRequest(text=json.dumps({"error": "That model isn't available"}), content_type="application/json")
+            await asyncio.to_thread(self.hub.backend.set_sign_off_model, provider, model)
+        return await self.sign_off(request)
 
     async def register_options(self, request):
         body = await request.json()

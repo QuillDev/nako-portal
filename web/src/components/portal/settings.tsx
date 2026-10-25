@@ -9,6 +9,7 @@ import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
+import { SignOffSettings } from "./sign-off-settings"
 
 const THEMES: Theme[] = ["system", "light", "dark"]
 
@@ -55,11 +56,6 @@ export function Settings({ portal }: { portal: Portal }) {
             ))}
           </div>
         </Row>
-        <Row label="Nako's sticker while she works">
-          <Button aria-pressed={presence} onClick={() => setPresence(!presence)} size="sm" variant="ghost">
-            {presence ? "on" : "off"}
-          </Button>
-        </Row>
         <Row label="Your name">
           <Input
             aria-label="Your name"
@@ -72,6 +68,13 @@ export function Settings({ portal }: { portal: Portal }) {
             placeholder="for the greeting"
           />
         </Row>
+        <h3 className="pt-4 pb-1 font-medium text-muted-foreground text-xs">Nako</h3>
+        <Row label="Sticker while she works">
+          <Button aria-pressed={presence} onClick={() => setPresence(!presence)} size="sm" variant="ghost">
+            {presence ? "on" : "off"}
+          </Button>
+        </Row>
+        <SignOffSettings onError={setError} Row={Row} />
         <h3 className="pt-4 pb-1 font-medium text-muted-foreground text-xs">Passkeys</h3>
         {passkeys.map(k => (
           <Row key={k.id} label={`${k.label}${k.current ? " (this device)" : ""}`}>

@@ -17,6 +17,9 @@ backend:
   set_title / set_archived / set_pinned(session, value)
   set_yolo(chat)                            approvals off for one thread
   commands() -> [{name, description, skill}]
+  sign_off(reply) -> str or None            a short line Nako says once a turn's reply is in
+  sign_off_models() -> [{provider, label, models}]   what the sign-off can run on
+  sign_off_model() -> {provider, model}     / set_sign_off_model(provider, model)
 """
 
 from __future__ import annotations
@@ -66,6 +69,8 @@ class Hub:
         self.last_text = {}
         # In-process with the gateway, so the portal is up whenever this hub is.
         self.connected = True
+        # Whether a finished turn gets Nako's sign-off line (Settings; the server keeps it).
+        self.sign_off_on = True
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -268,10 +273,24 @@ class Hub:
             await self._set_status(session, FAILED if failed else DONE)
         await self._event(session, "message.complete", {"status": "error" if failed else "complete"})
         title = self.titles.get(session) or "Nako"
+        reply = self.last_text.pop(session, "")
         if failed:
             self.notify(session, title, "hit an error")
         elif outcome == "success":
-            self.notify(session, title, _preview(self.last_text.pop(session, "")) or "done")
+            self.notify(session, title, _preview(reply) or "done")
+            if reply.strip() and self.sign_off_on:
+                asyncio.get_running_loop().create_task(self._sign_off(session, reply))
+
+    async def _sign_off(self, session, reply):
+        """Nako's one-liner about the turn that just ended, for the chat's sticker. Best effort:
+        without one the chat says a plain "done"."""
+        try:
+            line = await asyncio.to_thread(self.backend.sign_off, reply)
+        except Exception:
+            log.debug("portal sign-off failed", exc_info=True)
+            return
+        if line and session not in self.running:
+            await self._event(session, "signoff", {"text": line})
 
     async def tool(self, session, call_id, name, context, state):
         """A tool call starting ("running") or ending ("done"/"failed") in a running turn, for the

@@ -64,3 +64,58 @@ async def test_tool_calls_in_a_running_turn_reach_the_open_chat_live(world):
         stray = None
     assert stray is None
     await ws.close()
+
+
+async def test_a_finished_reply_gets_nakos_sign_off_and_a_failed_one_is_just_skipped(world):
+    sid = world.hermes.add_session("20261025_111111_dddddd", "rename", messages=[("user", "rename the job")])
+    await world.sign_up()
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": sid})
+    await asyncio.sleep(0.05)
+
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+    await next_message(ws, lambda m: m.get("type") == "message.complete")
+    said = await next_message(ws, lambda m: m.get("type") == "signoff")
+    assert (said["session"], said["payload"]["text"]) == (sid, "proud of: hello from hermes")
+
+    # The model being down costs only the line; the turn still finishes and nothing else is sent.
+    world.hermes.sign_off_error = RuntimeError("provider down")
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "again"}, headers={"Origin": ORIGIN})
+    await next_message(ws, lambda m: m.get("type") == "message.complete")
+    try:
+        stray = await next_message(ws, lambda m: m.get("type") == "signoff", timeout=0.3)
+    except asyncio.TimeoutError:
+        stray = None
+    assert stray is None
+    await ws.close()
+
+
+async def test_the_sign_off_can_be_turned_off_and_moved_to_another_model_from_settings(world):
+    sid = world.hermes.add_session("20261025_121212_eeeeee", "rename", messages=[("user", "rename the job")])
+    await world.sign_up()
+    shown = await (await world.http.get(world.url("/api/signoff"))).json()
+    assert (shown["on"], shown["provider"], shown["model"]) == (True, "auto", "")
+    assert shown["providers"] == [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}]
+
+    picked = await world.post("/api/signoff", {"provider": "fast", "model": "small"})
+    assert (await picked.json())["model"] == "small"
+    assert world.hermes.sign_off_route == {"provider": "fast", "model": "small"}
+    refused = await world.post("/api/signoff", {"provider": "fast", "model": "huge"})
+    assert refused.status == 400
+    assert world.hermes.sign_off_route == {"provider": "fast", "model": "small"}
+
+    await world.post("/api/signoff", {"on": False})
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": sid})
+    await asyncio.sleep(0.05)
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+    await next_message(ws, lambda m: m.get("type") == "message.complete")
+    try:
+        stray = await next_message(ws, lambda m: m.get("type") == "signoff", timeout=0.3)
+    except asyncio.TimeoutError:
+        stray = None
+    assert stray is None
+    # Off stays off for every device and across restarts: the server keeps it.
+    assert world.store.meta("signoff") == "off"
+    assert (await (await world.http.get(world.url("/api/signoff"))).json())["on"] is False
+    await ws.close()

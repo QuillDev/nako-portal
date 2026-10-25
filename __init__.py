@@ -244,6 +244,41 @@ class HermesBackend:
     def set_pinned(self, session, pinned):
         self.db.set_session_pinned(session, pinned)
 
+    def sign_off(self, reply):
+        """A few proud words about what the turn did, from a small fast model. The model is
+        config.yaml's `auxiliary.portal_signoff` (provider/model/reasoning_effort/timeout)."""
+        from agent.auxiliary_client import call_llm
+
+        response = call_llm(
+            task="portal_signoff",
+            messages=[{"role": "system", "content": SIGN_OFF_PROMPT}, {"role": "user", "content": reply[-SIGN_OFF_REPLY_CHARS:]}],
+            max_tokens=30,
+        )
+        line = " ".join(str(response.choices[0].message.content or "").split()).strip("\"'` ")
+        return line[:SIGN_OFF_MAX_CHARS] or None
+
+    def sign_off_models(self):
+        from hermes_cli.inventory import build_models_payload, load_picker_context
+
+        payload = build_models_payload(load_picker_context(), non_blocking_catalogs=True)
+        return [
+            {"provider": str(row["slug"]), "label": str(row.get("name") or row["slug"]), "models": [str(m) for m in row.get("models") or []]}
+            for row in payload.get("providers", [])
+            if row.get("slug")
+        ]
+
+    def sign_off_model(self):
+        from hermes_cli.config import load_config
+
+        task = (load_config().get("auxiliary") or {}).get("portal_signoff") or {}
+        return {"provider": str(task.get("provider") or "auto"), "model": str(task.get("model") or "")}
+
+    def set_sign_off_model(self, provider, model):
+        from hermes_cli.config import set_config_value
+
+        set_config_value("auxiliary.portal_signoff.provider", provider)
+        set_config_value("auxiliary.portal_signoff.model", model)
+
     def set_yolo(self, chat):
         from gateway.config import Platform
         from gateway.session import SessionSource
@@ -494,6 +529,14 @@ def _quiet_display_defaults():
         defaults.setdefault("portal", {**high, **QUIET_DISPLAY})
 
 
+SIGN_OFF_PROMPT = (
+    "You are Nako, a cheerful, slightly smug assistant. You just finished a task. "
+    "Write ONE short line (3-8 words, lowercase, no emoji, no hearts, no quotes) that sounds a little proud "
+    "of what you actually did, based on your final reply below. Be specific. Output only the line."
+)
+SIGN_OFF_REPLY_CHARS = 3000
+SIGN_OFF_MAX_CHARS = 80
+
 # Tool hooks run on the agent's thread; the hub lives on the gateway's loop.
 _LIVE_TOOLS = {}
 
@@ -525,6 +568,14 @@ def register(ctx):
     # Live tool calls for the chat's activity view (the gateway's own text breadcrumbs are off).
     ctx.register_hook("pre_tool_call", _forward_tool("running"))
     ctx.register_hook("post_tool_call", _forward_tool(None))
+    # Its own model slot, so Desktop's Models page and the portal's Settings can pick it.
+    if hasattr(ctx, "register_auxiliary_task"):
+        ctx.register_auxiliary_task(
+            "portal_signoff",
+            display_name="Nako's sign-off",
+            description="The few words Nako says in the portal when a turn ends. A small fast model is plenty.",
+            defaults={"timeout": 15},
+        )
     ctx.register_platform(
         name="portal",
         label="Nako",
