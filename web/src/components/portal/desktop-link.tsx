@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
+import { AuthButton, AuthScreen } from "@/components/portal/auth-screen"
 import { navigate } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 
@@ -27,19 +27,13 @@ export function DesktopLink({ query }: { query: string }) {
   }
 
   return (
-    <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
-      <img alt="" className="size-24 rounded-full ring-2 ring-primary ring-offset-4 ring-offset-background" src="/icon-192.png" />
-      <h1 className="font-semibold text-2xl tracking-tight">Sign in the desktop app?</h1>
-      <p className="text-muted-foreground text-sm">Only if you just asked the Nako app on this computer to sign in.</p>
-      <div className="flex gap-2">
-        <Button disabled={busy || !valid} onClick={approve}>
-          Sign in
-        </Button>
-        <Button onClick={() => navigate("#/")} variant="ghost">
-          Cancel
-        </Button>
-      </div>
-      {error && <p className="text-destructive text-sm">{error}</p>}
-    </div>
+    <AuthScreen error={error} note="Only if you just asked the Nako app on this computer to sign in." title="Sign in the desktop app?">
+      <AuthButton disabled={busy || !valid} onClick={approve}>
+        Sign in
+      </AuthButton>
+      <AuthButton onClick={() => navigate("#/")} variant="ghost">
+        Cancel
+      </AuthButton>
+    </AuthScreen>
   )
 }
