@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nako</title>
+    <link rel="stylesheet" href="connect.css" />
+    <script type="module" src="connect.js"></script>
+  </head>
+  <body>
+    <main hidden>
+      <img alt="" src="nako.png" />
+      <h1>Nako</h1>
+      <form id="ask" hidden>
+        <p id="message">Portal address</p>
+        <input id="address" autocomplete="url" placeholder="portal.example.com" spellcheck="false" />
+        <button type="submit">Connect</button>
+      </form>
+      <div id="unreachable" hidden>
+        <p id="reason"></p>
+        <button id="retry" type="button">Retry</button>
+        <button id="change" class="quiet" type="button">Change address</button>
+      </div>
+    </main>
+  </body>
+</html>

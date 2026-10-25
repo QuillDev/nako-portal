@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -27,6 +29,11 @@ MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 ANDROID_APK_PATH = "/android/nako.apk"
 ANDROID_PACKAGE = "moe.nakode.portal"
+DESKTOP_APP_PATH = "/desktop/nako.AppImage"
+# How long the desktop app has to collect a sign-in the browser approved.
+HANDOFF_TTL = 120
+PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 # Scripts stay 'self' only. Inline styles are allowed because the UI components set them
 # (Radix's scroll area, Shiki's token colors); blob: lets the composer read picked files.
 CSP = (
@@ -53,12 +60,16 @@ class Portal:
         vapid=None,
         android_release_dir=None,
         android_cert_sha256=None,
+        desktop_release_dir=None,
         clock=time.time,
     ):
         self.vapid = vapid
         self.android_release_dir = Path(android_release_dir) if android_release_dir else None
         # The release key's SHA-256 fingerprint; lets the Android app use passkeys for this site.
         self.android_cert_sha256 = android_cert_sha256
+        self.desktop_release_dir = Path(desktop_release_dir) if desktop_release_dir else None
+        # Desktop sign-ins the browser approved, waiting for the app: code -> challenge, passkey, expiry.
+        self.handoffs = {}
         parsed = urlparse(origin)
         if parsed.scheme not in {"https", "http"} or not parsed.hostname:
             raise ValueError("origin must be an http(s) URL")
@@ -107,6 +118,10 @@ class Portal:
         r.add_get("/api/android/release", self.android_release)
         r.add_get(ANDROID_APK_PATH, self.android_apk)
         r.add_get("/.well-known/assetlinks.json", self.assetlinks)
+        r.add_post("/api/desktop/link", self.desktop_link)
+        r.add_get("/api/desktop/session", self.desktop_session)
+        r.add_get("/api/desktop/release", self.desktop_release)
+        r.add_get(DESKTOP_APP_PATH, self.desktop_app)
         r.add_get("/ws", self.socket)
         r.add_get("/{path:.*}", self.static)
         return app
@@ -500,6 +515,75 @@ class Portal:
             "target": {"namespace": "android_app", "package_name": ANDROID_PACKAGE, "sha256_cert_fingerprints": [self.android_cert_sha256]},
         }
         return web.json_response([statement])
+
+    # Desktop app. Its webview can't use passkeys (WebKitGTK has no WebAuthn), so the browser signs
+    # in and hands the session over: the app sends the browser here with a PKCE challenge and a
+    # loopback port, the signed-in page approves and passes a one-time code to the loopback, and
+    # the app's webview trades the code plus its secret verifier for its own login cookie.
+
+    async def desktop_link(self, request):
+        credential = self._require(request)
+        body = await request.json()
+        challenge = str(body.get("challenge") or "")
+        if not PKCE_CHALLENGE.match(challenge):
+            raise ValueError("That sign-in request is malformed")
+        now = self.clock()
+        for key in [k for k, v in self.handoffs.items() if v["expires"] < now]:
+            self.handoffs.pop(key, None)
+        code = secrets.token_urlsafe(32)
+        self.handoffs[code] = {"challenge": challenge, "credential": credential, "expires": now + HANDOFF_TTL}
+        return web.json_response({"code": code})
+
+    async def desktop_session(self, request):
+        entry = self.handoffs.pop(request.query.get("code", ""), None)
+        verifier = request.query.get("verifier", "").encode()
+        proof = webauthn.b64url(hashlib.sha256(verifier).digest())
+        valid = (
+            entry is not None
+            and entry["expires"] >= self.clock()
+            and hmac.compare_digest(proof, entry["challenge"])
+            and self.store.credential(entry["credential"]) is not None
+        )
+        if not valid:
+            return web.Response(status=303, headers={"Location": "/#signin=failed"})
+        response = web.Response(status=303, headers={"Location": "/"})
+        self._set_login(response, entry["credential"])
+        return response
+
+    def _published_desktop(self):
+        if self.desktop_release_dir is None:
+            return None
+        try:
+            manifest = json.loads((self.desktop_release_dir / "desktop-release.json").read_text())
+            image = self.desktop_release_dir / "nako.AppImage"
+            version, signature, size = manifest["version"], manifest["signature"], manifest["sizeBytes"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        valid = (
+            isinstance(version, str) and VERSION.match(version)
+            and isinstance(signature, str) and signature
+            and isinstance(size, int) and image.is_file() and image.stat().st_size == size
+        )
+        if not valid:
+            return None
+        # Tauri's updater format; it checks the signature against the key built into the app.
+        return {"version": version, "platforms": {"linux-x86_64": {"url": self.origin + DESKTOP_APP_PATH, "signature": signature}}}
+
+    async def desktop_release(self, request):
+        self._require(request)
+        release = self._published_desktop()
+        if release is None:
+            raise web.HTTPNotFound()
+        return web.json_response(release)
+
+    async def desktop_app(self, request):
+        self._require(request)
+        if self._published_desktop() is None:
+            raise web.HTTPNotFound()
+        return web.FileResponse(
+            self.desktop_release_dir / "nako.AppImage",
+            headers={"Content-Type": "application/octet-stream", "Cache-Control": "no-store"},
+        )
 
     async def socket(self, request):
         self._require(request)

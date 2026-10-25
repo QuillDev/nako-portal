@@ -1,6 +1,7 @@
 """Runs the portal against the fake backend for a browser walk-through: python tests/demo.py <port>."""
 
 import asyncio
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -88,7 +89,8 @@ async def main(port):
     async with aiohttp.ClientSession() as http:
         hub = Hub(Rpc(http, str(backend.make_url("/api/ws"))), pins=Pins())
         origin = f"http://localhost:{port}"
-        portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web")
+        # NAKO_DESKTOP_RELEASE_DIR serves a desktop build for trying the app's self-update.
+        portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web", desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"))
         runner = web.AppRunner(portal.app())
         await runner.setup()
         await web.TCPSite(runner, "127.0.0.1", port).start()
