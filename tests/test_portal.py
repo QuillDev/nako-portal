@@ -300,6 +300,36 @@ async def test_the_notifications_chat_is_unread_until_opened_and_again_after_a_n
     assert await unread() == {inbox: True, chat: False}
 
 
+async def test_slash_commands_run_like_desktop_and_list_only_what_the_portal_can_run(world):
+    sid = world.hermes.add_session("20261024_020202_bbbbbb", "fix the build", messages=[("user", "hi"), ("assistant", "hello")])
+    await world.sign_up()
+
+    listed = await (await world.http.get(world.url("/api/commands"))).json()
+    assert [(c["name"], c["skill"]) for c in listed] == [("/status", False), ("/goal", False), ("/undo", False), ("/work", True)]
+
+    async def run(text):
+        response = await world.post(f"/api/sessions/{sid}/command", {"text": text})
+        return response.status, await response.json()
+
+    # Output-only commands come back to show; nothing enters the transcript.
+    assert await run("/status") == (200, {"output": f"session {sid}"})
+    # A command that becomes a prompt starts a turn with what Hermes expanded it to.
+    assert await run("/goal ship it") == (200, {"output": "goal set: ship it", "sent": True})
+    # The slash worker doesn't know skills; command.dispatch does, as in Desktop.
+    assert await run("/work fix the leak") == (200, {"output": None, "sent": True})
+    await asyncio.sleep(0.05)
+    user_turns = [row["text"] for row in world.hermes.sessions[sid]["rows"] if row["role"] == "user"]
+    assert user_turns[-2:] == ["ship it", "[work skill] fix the leak"]
+    # /undo hands its text back for the composer instead of sending it.
+    assert await run("/undo") == (200, {"output": None, "prefill": "the message you sent last"})
+    # Desktop-only and unknown commands say so instead of reaching the model.
+    status, body = await run("/new")
+    assert status == 400 and "isn't available in the portal" in body["error"]
+    status, body = await run("/nope")
+    assert status == 400 and "unknown command /nope" in body["error"]
+    assert world.hermes.slash == ["status", "goal ship it", "work fix the leak", "undo", "nope"]
+
+
 async def test_pins_and_archives_reach_desktop(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()

@@ -2,7 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
-import type { Frame, Live, LiveTool, Me, OpenSession, SessionRow } from "@/lib/types"
+import type { Command, CommandNote, Frame, Live, LiveTool, Me, OpenSession, SessionRow } from "@/lib/types"
 
 export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
@@ -42,6 +42,8 @@ export function usePortal() {
   const [live, setLive] = useState<Live | null>(null)
   const [connected, setConnected] = useState(true)
   const [error, setError] = useState("")
+  const [commands, setCommands] = useState<Command[]>([])
+  const [notes, setNotes] = useState<CommandNote[]>([])
 
   const currentRef = useRef(current)
   currentRef.current = current
@@ -199,6 +201,7 @@ export function usePortal() {
     if (!who.signed_in) return
     connect()
     await loadSessions()
+    api<Command[]>("/api/commands").then(setCommands, () => {})
   }, [connect, loadSessions])
 
   useEffect(() => {
@@ -318,7 +321,34 @@ export function usePortal() {
     [act, loadSessions],
   )
 
-  return { me, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder }
+  // `/name arg` in an open chat. Output shows in the chat; `prefill` text goes back to the composer.
+  const command = useCallback(
+    async (text: string): Promise<string | undefined> => {
+      const open = currentRef.current
+      if (!open) {
+        setError("Open a chat to run commands")
+        return
+      }
+      setError("")
+      const note = (body: string) =>
+        setNotes(n => [...n, { session: open.session, at: open.start + open.messages.length, text: body, key: `note-${Date.now()}-${n.length}` }])
+      try {
+        const done = await api<{ output?: string | null; prefill?: string; sent?: boolean }>(sessionPath(open.session, "/command"), { method: "POST", body: { text } })
+        note(done.output ? `${text.trim()}\n${done.output}` : text.trim())
+        if (done.sent) {
+          setCurrent(c => (c?.session === open.session ? { ...c, running: true } : c))
+          setLive(l => l || emptyLive())
+          refresh(open.session)
+        }
+        return done.prefill
+      } catch (e) {
+        note(`${text.trim()}\n${(e as Error).message}`)
+      }
+    },
+    [refresh],
+  )
+
+  return { me, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, commands, command, notes }
 }
 
 export type Portal = ReturnType<typeof usePortal>

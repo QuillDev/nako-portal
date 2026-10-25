@@ -16,15 +16,26 @@ type Block =
   | { kind: "user"; key: string; text: string; images?: string[] }
   | { kind: "assistant"; key: string; text: string; reasoning?: string; label?: string }
   | { kind: "tools"; key: string; steps: Step[] }
+  | { kind: "note"; key: string; text: string }
 
-function blocks(messages: HistoryMessage[]): Block[] {
+// A command's output, placed after the message it followed (`at` counts from messages[0]).
+export type Note = { at: number; text: string; key: string }
+
+function blocks(messages: HistoryMessage[], notes: Note[] = []): Block[] {
   const out: Block[] = []
   let steps: Step[] = []
   const flush = () => {
     if (steps.length) out.push({ kind: "tools", key: `tools-${out.length}`, steps })
     steps = []
   }
+  const notesAt = (i: number) => {
+    const here = notes.filter(n => (i < messages.length ? n.at === i : n.at >= i))
+    if (!here.length) return
+    flush()
+    for (const n of here) out.push({ kind: "note", key: n.key, text: n.text })
+  }
   messages.forEach((m, i) => {
+    notesAt(i)
     if (m.role === "tool") {
       steps.push({ key: m.tool_call_id || String(i), name: m.name || "tool", context: oneLine(m.context), state: "done" })
       return
@@ -34,8 +45,20 @@ function blocks(messages: HistoryMessage[]): Block[] {
     const key = String(m.row_id ?? i)
     out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: m.reasoning, label: m.label })
   })
+  notesAt(messages.length)
   flush()
   return out
+}
+
+// Shown in the chat like Desktop's command lines: the invocation, then what it printed.
+function CommandNote({ text }: { text: string }) {
+  const [invocation, ...output] = text.split("\n")
+  return (
+    <div className="flex flex-col gap-1 text-muted-foreground text-xs">
+      <span className="font-medium text-foreground">{invocation}</span>
+      {output.length > 0 && <pre className="whitespace-pre-wrap break-words font-sans text-sm">{output.join("\n")}</pre>}
+    </div>
+  )
 }
 
 function oneLine(text?: string) {
@@ -156,8 +179,14 @@ function Assistant({ session, text, reasoning, label, streaming }: { session: st
   )
 }
 
-export function Transcript({ session, messages, live, running }: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean }) {
-  const shown = blocks(messages)
+export function Transcript({
+  session,
+  messages,
+  live,
+  running,
+  notes,
+}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[] }) {
+  const shown = blocks(messages, notes)
   let steps = running && live ? liveSteps(live.tools, messages) : []
   // The saved run at the end belongs to the running turn, so the live calls continue it as one group.
   const last = shown.at(-1)
@@ -172,6 +201,8 @@ export function Transcript({ session, messages, live, running }: { session: stri
           <User images={b.images} key={b.key} session={session} text={b.text} />
         ) : b.kind === "assistant" ? (
           <Assistant key={b.key} label={b.label} reasoning={b.reasoning} session={session} text={b.text} />
+        ) : b.kind === "note" ? (
+          <CommandNote key={b.key} text={b.text} />
         ) : (
           <Steps key={b.key} steps={b.steps} />
         ),

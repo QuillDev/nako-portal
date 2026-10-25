@@ -12,6 +12,13 @@ export type SessionRow = {
   status?: Status | null
 }
 
+// A slash command a portal chat can run (`/api/commands`).
+export type Command = { name: string; description: string; skill: boolean }
+
+// What a command printed, shown in the chat where it ran. Only this browser keeps it, like Desktop.
+// `at` is the transcript index it follows.
+export type CommandNote = { session: string; at: number; text: string; key: string }
+
 export type Status = "working" | "needs you" | "done" | "failed"
 
 export type HistoryMessage =

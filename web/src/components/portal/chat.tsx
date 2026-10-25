@@ -144,7 +144,13 @@ export function Chat({ portal }: { portal: Portal }) {
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {c.loading && <TurnSkeletons count={3} />}
           {!c.loading && <OlderTurns portal={portal} />}
-          {!c.loading && <Transcript live={portal.live} messages={c.messages} running={c.running} session={c.session} />}
+          {!c.loading && <Transcript
+              live={portal.live}
+              messages={c.messages}
+              notes={portal.notes.filter(n => n.session === c.session && n.at >= c.start).map(n => ({ ...n, at: n.at - c.start }))}
+              running={c.running}
+              session={c.session}
+            />}
           <Requests answer={portal.answer} requests={c.requests} />
           {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
         </ConversationContent>
