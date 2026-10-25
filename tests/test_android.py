@@ -20,7 +20,7 @@ async def test_the_app_hears_alerts_on_its_socket_without_watching_a_chat(world)
     await world.http.get(world.url(f"/api/sessions/{sid}"))
     await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "ship"}, headers={"Origin": ORIGIN})
     alert = await next_message(phone, lambda m: m.get("kind") == "alert")
-    assert (alert["title"], alert["body"], alert["session"]) == ("deploy", "done", sid)
+    assert (alert["title"], alert["body"], alert["session"]) == ("deploy", "hello from hermes", sid)
     await phone.close()
 
     # A socket that isn't signed in hears nothing.
