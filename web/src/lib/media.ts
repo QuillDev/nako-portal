@@ -50,9 +50,19 @@ export function splitReply(text: string) {
 }
 
 /** A user turn without Hermes's image hints and placeholders, and the images they name. */
+// An image turn is stored as [your text, image parts..., turn context]. Flattened, the image
+// parts become hints plus one placeholder each, so whatever follows the last placeholder is
+// context Hermes added for the model (plugin notes, memory recall), not something you typed.
+function withoutTurnContext(text: string) {
+  const placeholders = [...text.matchAll(PLACEHOLDER)]
+  const last = placeholders.at(-1)
+  return last ? text.slice(0, last.index + last[0].length) : text
+}
+
 export function splitUserTurn(text: string) {
   const found = find(text, USER_IMAGE, g => g.hint || g.ref).filter(f => isImage(f.path))
   if (!found.length) return { body: text, images: [] as string[] }
-  const body = cut(text, found).replace(PLACEHOLDER, "").replace(/\n{3,}/g, "\n\n").trim()
+  const typed = withoutTurnContext(text)
+  const body = cut(typed, found.filter(f => f.end <= typed.length)).replace(PLACEHOLDER, "").replace(/\n{3,}/g, "\n\n").trim()
   return { body, images: [...new Set(found.map(f => f.path))] }
 }
