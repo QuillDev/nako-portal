@@ -261,6 +261,29 @@ async def test_a_long_chat_opens_on_its_latest_turns_and_pages_back_through_the_
     assert (await world.http.get(world.url(f"/api/sessions/{sid}"), params={"before": "-1"})).status == 400
 
 
+async def test_cron_posts_nobody_answered_are_listed_as_notifications(world):
+    alert = world.hermes.add_session("20261024_040404_dddddd", "", messages=[("user", "[Cron delivery: build watch]\nci went red on main")])
+    long_name = world.hermes.add_session(
+        "20261024_050505_eeeeee", "", messages=[("user", "[Cron delivery: a job with a really long descriptive name]\nbody")]
+    )
+    answered = world.hermes.add_session(
+        "20261024_060606_ffffff",
+        "Fix the red build",
+        messages=[("user", "[Cron delivery: build watch]\nci went red on main"), ("user", "on it?"), ("assistant", "yes")],
+    )
+    chat = world.hermes.add_session("20261024_070707_aaaaaa", "", messages=[("user", "what is [Cron delivery: x] about")])
+    await world.sign_up()
+
+    listed = {row["id"]: row for row in await (await world.http.get(world.url("/api/sessions"))).json()}
+    assert listed[alert]["notification"] == "build watch"
+    assert listed[long_name]["notification"] == "a job with a really long descriptive name"
+    assert listed[answered]["notification"] is None
+    assert listed[chat]["notification"] is None
+
+    opened = await (await world.http.get(world.url(f"/api/sessions/{alert}"))).json()
+    assert opened["title"] == "build watch"
+
+
 async def test_pins_and_archives_reach_desktop(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()

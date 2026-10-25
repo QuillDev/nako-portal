@@ -169,7 +169,11 @@ class FakeHermes:
         if method in {"client.capabilities", "gateway.ping"}:
             return {}
         if method == "session.list":
-            rows = [{"id": s["id"], "title": s["title"], "source": s["source"], "started_at": s["started_at"], "preview": ""} for s in self.sessions.values() if not s.get("archived")]
+            rows = [
+                {"id": s["id"], "title": s["title"], "source": s["source"], "started_at": s["started_at"], "preview": _preview(s)}
+                for s in self.sessions.values()
+                if not s.get("archived")
+            ]
             return {"sessions": rows}
         if method == "session.resume":
             sid = params["session_id"]
@@ -313,3 +317,10 @@ async def next_message(ws, predicate, timeout=5):
                 return message
 
     return await asyncio.wait_for(wait(), timeout)
+
+
+def _preview(session):
+    """Hermes's list preview: the first user message on one line, cut at 60 characters."""
+    first = next((row["text"] for row in session["rows"] if row["role"] == "user"), "")
+    text = first.strip().replace("\n", " ")
+    return text[:60] + "..." if len(text) > 60 else text

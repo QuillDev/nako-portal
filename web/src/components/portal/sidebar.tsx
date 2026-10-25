@@ -1,5 +1,5 @@
-import { ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
-import { useState } from "react"
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, SettingsIcon } from "lucide-react"
+import { type ReactNode, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
@@ -31,6 +31,9 @@ function groups(rows: SessionRow[]) {
   return out
 }
 
+// What a cron post says, without its "[Cron delivery: job]" label.
+const body = (preview = "") => preview.replace(/^\[Cron delivery:[^\]]*\]?\s*/, "")
+
 const DOT: Partial<Record<Status, string>> = { working: "bg-primary animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
 
 export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
@@ -38,8 +41,38 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
   const [filter, setFilter] = useState("")
   const rename = useRenameDialog(portal)
   const needle = filter.trim().toLowerCase()
-  const rows = portal.sessions.filter(s => !needle || s.title.toLowerCase().includes(needle))
+  const matches = portal.sessions.filter(s => !needle || [s.title, s.notification ?? ""].some(t => t.toLowerCase().includes(needle)))
+  const rows = matches.filter(s => !s.notification)
+  const alerts = matches.filter(s => s.notification)
   const open = portal.route.view === "chat" ? portal.route.session : null
+  const [alertsOpen, setAlertsOpen] = useState(() => localStorage.getItem("sidebar:notifications") === "open")
+  const showAlerts = alertsOpen || Boolean(needle) || alerts.some(s => s.id === open)
+  const toggleAlerts = () => {
+    localStorage.setItem("sidebar:notifications", showAlerts ? "closed" : "open")
+    setAlertsOpen(!showAlerts)
+  }
+
+  const item = (s: SessionRow, label: ReactNode) => (
+    <ContextMenu key={s.id}>
+      <ContextMenuTrigger asChild>
+        <button
+          className={cn("flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent", open === s.id && "bg-accent")}
+          onClick={() => go(`#/c/${s.id}`)}
+          type="button"
+        >
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {s.status && DOT[s.status] && <span className={cn("size-2 shrink-0 rounded-full", DOT[s.status])} title={s.status} />}
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {sessionActions(portal, s.id, () => rename.start(s.id)).map(a => (
+          <ContextMenuItem key={a.label} onSelect={a.run}>
+            {a.label}
+          </ContextMenuItem>
+        ))}
+      </ContextMenuContent>
+    </ContextMenu>
+  )
 
   return (
     <aside className={cn("flex w-full flex-col border-r bg-sidebar", className)}>
@@ -59,31 +92,33 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         <Input aria-label="Search chats" onChange={e => setFilter(e.target.value)} placeholder="Search" type="search" value={filter} />
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {rows.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
+        {alerts.length > 0 && (
+          <div>
+            <button
+              aria-expanded={showAlerts}
+              className="flex w-full items-center gap-1 rounded-md px-2 pt-3 pb-1 text-left text-muted-foreground text-xs hover:text-foreground"
+              onClick={toggleAlerts}
+              type="button"
+            >
+              <span className="flex-1">notifications</span>
+              <ChevronRightIcon className={cn("size-3.5 transition-transform", showAlerts && "rotate-90")} />
+            </button>
+            {showAlerts &&
+              alerts.map(s =>
+                item(
+                  s,
+                  <>
+                    {s.notification} <span className="text-muted-foreground">{body(s.preview)}</span>
+                  </>,
+                ),
+              )}
+          </div>
+        )}
+        {rows.length === 0 && alerts.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
         {groups(rows).map(([label, items]) => (
           <div key={label}>
             <p className="px-2 pt-3 pb-1 text-muted-foreground text-xs">{label}</p>
-            {items.map(s => (
-              <ContextMenu key={s.id}>
-                <ContextMenuTrigger asChild>
-                  <button
-                    className={cn("flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent", open === s.id && "bg-accent")}
-                    onClick={() => go(`#/c/${s.id}`)}
-                    type="button"
-                  >
-                    <span className="min-w-0 flex-1 truncate">{s.title}</span>
-                    {s.status && DOT[s.status] && <span className={cn("size-2 shrink-0 rounded-full", DOT[s.status])} title={s.status} />}
-                  </button>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  {sessionActions(portal, s.id, () => rename.start(s.id)).map(a => (
-                    <ContextMenuItem key={a.label} onSelect={a.run}>
-                      {a.label}
-                    </ContextMenuItem>
-                  ))}
-                </ContextMenuContent>
-              </ContextMenu>
-            ))}
+            {items.map(s => item(s, s.title))}
           </div>
         ))}
       </nav>

@@ -4,6 +4,9 @@ export type SessionRow = {
   id: string
   title: string
   started_at: number
+  preview?: string
+  // The cron job, when the chat is only cron posts nobody has answered yet.
+  notification?: string | null
   pinned?: boolean
   status?: Status | null
 }
