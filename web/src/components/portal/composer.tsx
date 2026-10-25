@@ -37,8 +37,9 @@ function AttachButton() {
 const TALL = {
   group: "[&>[data-slot=input-group]]:grid [&>[data-slot=input-group]]:grid-cols-[auto_1fr_auto] [&>[data-slot=input-group]]:rounded-[22px] [&>[data-slot=input-group]]:p-1.5",
   text: "col-span-3 row-start-1 min-h-14 px-2.5 pt-3 pb-1",
-  start: "col-start-1 row-start-2 p-0",
-  end: "col-start-3 row-start-2 p-0",
+  // The addons' negative side margins suit the inline pill; in the grid they push the buttons onto the border.
+  start: "col-start-1 row-start-2 p-0 has-[>button]:ml-0",
+  end: "col-start-3 row-start-2 p-0 has-[>button]:mr-0",
 }
 
 // onTyping: whether the box holds text, as the person types and once a message goes out.

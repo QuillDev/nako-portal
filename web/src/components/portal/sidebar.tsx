@@ -57,6 +57,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
       <ContextMenuContent>
         {sessionActions(portal, s.id, () => rename.start(s.id)).map(a => (
           <ContextMenuItem key={a.label} onSelect={a.run}>
+            <a.icon className="size-4 text-muted-foreground" />
             {a.label}
           </ContextMenuItem>
         ))}

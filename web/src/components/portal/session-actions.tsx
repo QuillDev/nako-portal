@@ -1,19 +1,20 @@
 // Rename, pin and archive for one chat: the open chat's ⋯ menu and the list's
 // right-click / long-press menu offer the same actions.
+import { ArchiveIcon, type LucideIcon, PencilIcon, PinIcon, PinOffIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
 
-export type SessionAction = { label: string; run: () => void }
+export type SessionAction = { label: string; icon: LucideIcon; run: () => void }
 
 export function sessionActions(portal: Portal, session: string, rename: () => void): SessionAction[] {
   const pinned = Boolean(portal.sessions.find(s => s.id === session)?.pinned)
   return [
-    { label: "Rename", run: rename },
-    { label: pinned ? "Unpin" : "Pin", run: () => portal.pin(session, !pinned) },
-    { label: "Archive", run: () => portal.archive(session) },
+    { label: "Rename", icon: PencilIcon, run: rename },
+    { label: pinned ? "Unpin" : "Pin", icon: pinned ? PinOffIcon : PinIcon, run: () => portal.pin(session, !pinned) },
+    { label: "Archive", icon: ArchiveIcon, run: () => portal.archive(session) },
   ]
 }
 
