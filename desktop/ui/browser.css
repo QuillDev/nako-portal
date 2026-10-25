@@ -1,0 +1,33 @@
+/* The portal's own palette, following the system like the portal does by default. */
+:root {
+  color-scheme: dark;
+  --background: #09090b;
+  --text: #ececef;
+  --muted: #8e8e99;
+  --hover: #18181c;
+  --border: rgb(255 255 255 / 7%);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --background: #fbfbfc;
+    --text: #18181b;
+    --muted: #6b6b76;
+    --hover: #ededf0;
+    --border: rgb(0 0 0 / 8%);
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--background); color: var(--text); font: 13px Inter, system-ui, sans-serif; user-select: none; }
+/* The pane's toolbar is also the window's title bar while the pane is open. */
+header { height: 40px; display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); }
+button { width: 32px; height: 28px; flex: none; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+button:hover { background: var(--hover); color: var(--text); }
+button:focus-visible { outline: 2px solid rgb(244 114 182 / 60%); outline-offset: -2px; }
+button.close:hover { background: #e81123; color: white; }
+svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+svg.caption { width: 10px; height: 10px; stroke-width: 1; stroke-linecap: butt; stroke-linejoin: miter; }
+#address { flex: 1; min-width: 0; margin: 0 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
+#host { color: var(--text); }
+#window { display: flex; gap: 2px; margin-left: 4px; }

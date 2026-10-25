@@ -66,8 +66,8 @@ async fn check(app: &AppHandle, origin: &ServerOrigin) -> Result<(), Box<dyn std
 /// portal page load, since a reload forgets it.
 pub fn announce(app: &AppHandle) {
     let Some(version) = PENDING.lock().unwrap().as_ref().map(|(update, _)| update.version.clone()) else { return };
-    if let Some(window) = app.get_webview_window(crate::MAIN) {
-        let _ = window.eval(announcement(&version));
+    if let Some(portal) = app.get_webview(crate::MAIN) {
+        let _ = portal.eval(announcement(&version));
     }
 }
 
@@ -78,7 +78,7 @@ fn announcement(version: &str) -> String {
 
 /// Installs a downloaded update and restarts into it, but never under someone using the window.
 pub fn install_if_idle(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(crate::MAIN) else { return };
+    let Some(window) = crate::window(app) else { return };
     if window.is_focused().unwrap_or(false) {
         return;
     }

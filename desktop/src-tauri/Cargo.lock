@@ -2241,6 +2241,7 @@ version = "0.2.1"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
+ "gtk",
  "notify-rust",
  "rand 0.9.5",
  "reqwest 0.12.28",

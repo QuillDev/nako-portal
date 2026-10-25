@@ -1,14 +1,15 @@
 import type { ComponentProps, ReactNode } from "react"
 import { Button } from "@/components/ui/button"
-import { hasWindowControls } from "@/lib/desktop-window"
+import { useWindowControls } from "@/lib/desktop-window"
 import { cn } from "@/lib/utils"
 import { WindowControls } from "./header"
 
 // Sign-in style screens: serif title, optional note, a stack of wide buttons.
 export function AuthScreen({ title, note, error, children }: { title: string; note?: string; error?: string; children: ReactNode }) {
+  const windowControls = useWindowControls()
   return (
     <div className="flex h-dvh flex-col items-center justify-center p-6 pb-[12vh] text-center">
-      {hasWindowControls && (
+      {windowControls && (
         <div className="fixed inset-x-0 top-0 flex justify-end p-2" data-tauri-drag-region="deep">
           <WindowControls />
         </div>

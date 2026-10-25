@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use crate::alerts::Alert;
 
@@ -15,7 +15,7 @@ fn base(app: &AppHandle, title: &str, body: &str) -> notify_rust::Notification {
 
 pub fn show(app: &AppHandle, alert: Alert) {
     // Nothing to tell someone already looking at the app.
-    if let Some(window) = app.get_webview_window(crate::MAIN) {
+    if let Some(window) = crate::window(app) {
         if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
             return;
         }
