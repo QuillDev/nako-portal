@@ -4,16 +4,13 @@ import {
   PromptInput,
   PromptInputAttachment,
   PromptInputAttachments,
-  PromptInputBody,
   PromptInputButton,
-  PromptInputFooter,
-  PromptInputHeader,
   PromptInputProvider,
   PromptInputSubmit,
   PromptInputTextarea,
-  PromptInputTools,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input"
+import { InputGroupAddon } from "@/components/ui/input-group"
 import type { Portal } from "@/hooks/use-portal"
 
 const MAX_FILE = 25 * 1024 * 1024
@@ -21,7 +18,12 @@ const MAX_FILE = 25 * 1024 * 1024
 function AttachButton() {
   const attachments = usePromptInputAttachments()
   return (
-    <PromptInputButton aria-label="Attach files" onClick={() => attachments.openFileDialog()}>
+    <PromptInputButton
+      aria-label="Attach files"
+      className="rounded-full"
+      onClick={() => attachments.openFileDialog()}
+      size="icon-sm"
+    >
       <PaperclipIcon className="size-4" />
     </PromptInputButton>
   )
@@ -35,7 +37,11 @@ export function Composer({ portal, draftKey }: { portal: Portal; draftKey: strin
   return (
     <PromptInputProvider initialInput={localStorage.getItem(draftKey) || ""} key={draftKey}>
       <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <PromptInputAttachments className="px-1 pt-0 pb-2">
+          {file => <PromptInputAttachment data={file} />}
+        </PromptInputAttachments>
         <PromptInput
+          className="[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl"
           maxFileSize={MAX_FILE}
           multiple
           onError={e => portal.setError(e.message)}
@@ -53,29 +59,31 @@ export function Composer({ portal, draftKey }: { portal: Portal; draftKey: strin
             }
           }}
         >
-          <PromptInputHeader>
-            <PromptInputAttachments>{file => <PromptInputAttachment data={file} />}</PromptInputAttachments>
-          </PromptInputHeader>
-          <PromptInputBody>
-            <PromptInputTextarea
-              enterKeyHint="send"
-              onChange={e => localStorage.setItem(draftKey, e.currentTarget.value)}
-              placeholder={running ? "Steer or queue a message" : "Message"}
-            />
-          </PromptInputBody>
-          <PromptInputFooter>
-            <PromptInputTools>
-              <AttachButton />
-            </PromptInputTools>
-            <div className="flex items-center gap-1">
-              {running && (
-                <PromptInputButton aria-label="Stop" onClick={() => portal.stop()} title="Stop" variant="outline">
-                  <SquareIcon className="size-4" />
-                </PromptInputButton>
-              )}
-              <PromptInputSubmit disabled={sending} status={sending ? "submitted" : undefined} />
-            </div>
-          </PromptInputFooter>
+          <InputGroupAddon align="inline-start" className="self-end pb-1.5">
+            <AttachButton />
+          </InputGroupAddon>
+          <PromptInputTextarea
+            className="min-h-0 px-1 py-3"
+            enterKeyHint="send"
+            onChange={e => localStorage.setItem(draftKey, e.currentTarget.value)}
+            placeholder={running ? "Steer or queue a message" : "Message"}
+            rows={1}
+          />
+          <InputGroupAddon align="inline-end" className="gap-1 self-end pb-1.5">
+            {running && (
+              <PromptInputButton
+                aria-label="Stop"
+                className="rounded-full"
+                onClick={() => portal.stop()}
+                size="icon-sm"
+                title="Stop"
+                variant="outline"
+              >
+                <SquareIcon className="size-4" />
+              </PromptInputButton>
+            )}
+            <PromptInputSubmit className="rounded-full" disabled={sending} status={sending ? "submitted" : undefined} />
+          </InputGroupAddon>
         </PromptInput>
       </div>
     </PromptInputProvider>
