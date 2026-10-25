@@ -15,12 +15,12 @@ from urllib.parse import urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
+from .media import shown_files
 from .rpc import RpcError
 
 log = logging.getLogger("hermes.portal")
 
 CHALLENGE_TTL = 300
-MEDIA = re.compile(r"(?m)^MEDIA:(/[^\r\n]+)$")
 MAX_FILE = 25 * 1024 * 1024
 MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
@@ -29,7 +29,7 @@ ANDROID_PACKAGE = "moe.nakode.portal"
 # Scripts stay 'self' only. Inline styles are allowed because the UI components set them
 # (Radix's scroll area, Shiki's token colors); blob: lets the composer read picked files.
 CSP = (
-    "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
+    "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
     "connect-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 )
 
@@ -366,22 +366,16 @@ class Portal:
         return web.json_response(await hub.answer(request.match_info["request"], body.get("result") or {}))
 
     async def file(self, request):
-        """A file the agent delivered with a MEDIA: line in that session, and nothing else."""
+        """A file shown in that session's transcript (a reply's MEDIA: tag or an image the user attached), and nothing else."""
         self._require(request)
         hub = await self._hub()
         session = request.query.get("session", "")
         raw = request.query.get("path", "")
-        if not SESSION_ID.match(session) or not raw.startswith("/"):
+        if not SESSION_ID.match(session) or not raw.startswith(("/", "~/")):
             raise web.HTTPNotFound()
         opened = await hub.open(session)
-        delivered = {
-            path
-            for message in opened["messages"]
-            if message.get("role") == "assistant"
-            for path in MEDIA.findall(message.get("text") or "")
-        }
-        path = Path(raw)
-        if raw not in delivered or not path.is_file() or path.stat().st_size > MAX_FILE:
+        path = Path(raw).expanduser()
+        if raw not in shown_files(opened["messages"]) or not path.is_file() or path.stat().st_size > MAX_FILE:
             raise web.HTTPNotFound()
         kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         inline = kind.startswith("image/") or kind.startswith("audio/") or kind.startswith("video/") or kind == "application/pdf"

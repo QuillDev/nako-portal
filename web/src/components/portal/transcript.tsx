@@ -1,17 +1,18 @@
-import { CheckIcon, FileIcon, LoaderIcon, XIcon } from "lucide-react"
+import { CheckIcon, FileIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
+import { useState } from "react"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning"
 import { Shimmer } from "@/components/ai-elements/shimmer"
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { fileUrl } from "@/lib/api"
+import { isImage, splitReply, splitUserTurn } from "@/lib/media"
 import type { HistoryMessage, Live, LiveTool } from "@/lib/types"
-
-const MEDIA = /^MEDIA:(\/[^\r\n]+)$/gm
 
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
 
 type Block =
-  | { kind: "user"; key: string; text: string }
+  | { kind: "user"; key: string; text: string; images?: string[] }
   | { kind: "assistant"; key: string; text: string; reasoning?: string }
   | { kind: "tools"; key: string; steps: Step[] }
 
@@ -30,7 +31,7 @@ function blocks(messages: HistoryMessage[]): Block[] {
     if (m.role === "assistant" && !m.text.trim() && !m.reasoning) return
     flush()
     const key = String(m.row_id ?? i)
-    out.push(m.role === "user" ? { kind: "user", key, text: m.text } : { kind: "assistant", key, text: m.text, reasoning: m.reasoning })
+    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: m.reasoning })
   })
   flush()
   return out
@@ -69,24 +70,40 @@ function Steps({ steps, live }: { steps: Step[]; live?: boolean }) {
   )
 }
 
-function Media({ session, text }: { session: string; text: string }) {
-  const paths = [...text.matchAll(MEDIA)].map(m => m[1])
-  if (!paths.length) return null
+function Picture({ src, name }: { src: string; name: string }) {
+  const [broken, setBroken] = useState(false)
+  if (broken)
+    return (
+      <span className="inline-flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-muted-foreground text-xs">
+        <ImageOffIcon className="size-4" />
+        {name} is no longer on disk
+      </span>
+    )
   return (
-    <div className="flex flex-col gap-2">
-      {paths.map(path => {
-        const url = fileUrl(session, path)
-        const name = path.split("/").pop()
-        if (/\.(png|jpe?g|gif|webp|svg)$/i.test(path))
-          return (
-            <a href={url} key={path} rel="noopener" target="_blank">
-              <img alt={name} className="max-h-96 rounded-md border" src={url} />
-            </a>
-          )
-        if (/\.(mp3|m4a|ogg|wav|opus)$/i.test(path)) return <audio controls key={path} src={url} />
-        if (/\.(mp4|webm|mov)$/i.test(path)) return <video className="max-h-96 rounded-md" controls key={path} src={url} />
+    <Dialog>
+      <DialogTrigger asChild>
+        <button aria-label={`Open ${name}`} className="w-fit cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring" type="button">
+          <img alt={name} className="max-h-80 max-w-full rounded-md border object-contain" loading="lazy" onError={() => setBroken(true)} src={src} />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="flex w-[calc(100vw-2rem)] max-w-none justify-center border-0 bg-transparent p-0 shadow-none sm:max-w-none">
+        <DialogTitle className="sr-only">{name}</DialogTitle>
+        <img alt={name} className="max-h-[calc(100dvh-2rem)] max-w-full rounded-md object-contain" src={src} />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function Files({ urls }: { urls: { url: string; name: string; path: string }[] }) {
+  if (!urls.length) return null
+  return (
+    <div className="flex flex-wrap items-start gap-2">
+      {urls.map(({ url, name, path }) => {
+        if (isImage(path)) return <Picture key={url} name={name} src={url} />
+        if (/\.(mp3|m4a|ogg|wav|opus|flac)$/i.test(path)) return <audio className="w-full" controls key={url} src={url} />
+        if (/\.(mp4|webm|mov)$/i.test(path)) return <video className="max-h-96 rounded-md" controls key={url} src={url} />
         return (
-          <a className="inline-flex items-center gap-2 text-sm underline" download href={url} key={path}>
+          <a className="inline-flex items-center gap-2 text-sm underline" download href={url} key={url}>
             <FileIcon className="size-4" />
             {name}
           </a>
@@ -96,8 +113,23 @@ function Media({ session, text }: { session: string; text: string }) {
   )
 }
 
+const named = (path: string) => path.split("/").pop() || path
+
+function User({ session, text, images }: { session: string; text: string; images?: string[] }) {
+  const turn = splitUserTurn(text)
+  const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => ({ url: fileUrl(session, path), name: named(path), path }))]
+  return (
+    <Message from="user">
+      <MessageContent className="whitespace-pre-wrap">
+        <Files urls={shown} />
+        {turn.body}
+      </MessageContent>
+    </Message>
+  )
+}
+
 function Assistant({ session, text, reasoning, streaming }: { session: string; text: string; reasoning?: string; streaming?: boolean }) {
-  const body = text.replace(MEDIA, "").trim()
+  const { body, files } = splitReply(text)
   return (
     <Message from="assistant">
       <MessageContent className="w-full">
@@ -112,7 +144,7 @@ function Assistant({ session, text, reasoning, streaming }: { session: string; t
             {body}
           </MessageResponse>
         )}
-        <Media session={session} text={text} />
+        <Files urls={files.map(path => ({ url: fileUrl(session, path), name: named(path), path }))} />
       </MessageContent>
     </Message>
   )
@@ -123,9 +155,7 @@ export function Transcript({ session, messages, live, running }: { session: stri
     <>
       {blocks(messages).map(b =>
         b.kind === "user" ? (
-          <Message from="user" key={b.key}>
-            <MessageContent className="whitespace-pre-wrap">{b.text}</MessageContent>
-          </Message>
+          <User images={b.images} key={b.key} session={session} text={b.text} />
         ) : b.kind === "assistant" ? (
           <Assistant key={b.key} reasoning={b.reasoning} session={session} text={b.text} />
         ) : (

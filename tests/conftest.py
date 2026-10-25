@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import struct
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -116,6 +118,8 @@ class FakeHermes:
         self.next_row = 1
         self.reply = "hello from hermes"
         self.ask_approval = False
+        self.images = {}
+        self.image_dir = Path(tempfile.mkdtemp())
 
     def add_session(self, sid, title, source="desktop", messages=()):
         self.sessions[sid] = {"id": sid, "title": title, "source": source, "rows": [], "started_at": time.time()}
@@ -180,9 +184,17 @@ class FakeHermes:
             return {"count": len(rows), "messages": rows}
         if method == "session.status":
             return {"running": False}
+        if method == "image.attach_bytes":
+            path = self.image_dir / f"upload_{len(self.images) + 1}_{params['filename']}"
+            path.write_bytes(base64.b64decode(params["content_base64"]))
+            self.images.setdefault(params["session_id"], []).append(path)
+            return {"attached": True, "path": str(path)}
         if method == "prompt.submit":
             sid = self.stored(params["session_id"])
-            row = self._row(sid, "user", params["text"])
+            # Hermes appends a hint per attached image, then the session store's placeholder.
+            images = self.images.pop(params["session_id"], [])
+            hints = "".join(f"\n\n[Image attached at: {p}]" if i == 0 else f"\n[Image attached at: {p}]" for i, p in enumerate(images))
+            row = self._row(sid, "user", params["text"] + hints + ("\n[screenshot]" * len(images)))
             asyncio.get_running_loop().create_task(self._turn(sid, params["text"]))
             return {"status": "streaming", "user_row_id": row["row_id"]}
         if method == "request.answer":

@@ -16,6 +16,7 @@ import re
 import time
 import uuid
 
+from .media import MEDIA
 from .rpc import RpcError
 
 log = logging.getLogger("hermes.portal")
@@ -387,9 +388,9 @@ def _request_view(frame):
 
 
 def _preview(text, limit=PREVIEW_CHARS):
-    """The start of a reply as one plain line for a notification: no MEDIA lines or markdown marks."""
-    lines = [line for line in str(text or "").splitlines() if not line.startswith("MEDIA:")]
-    plain = re.sub(r"[`*_#>|]+", "", " ".join(lines))
+    """The start of a reply as one plain line for a notification: no MEDIA tags or markdown marks."""
+    plain = re.sub(r"[`*_#>|]+", "", " ".join(MEDIA.sub("", str(text or "")).splitlines()))
+    plain = re.sub(r"\s+([,.;:)])", r"\1", plain)
     plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
     plain = " ".join(plain.split())
     return plain if len(plain) <= limit else plain[: limit - 1].rstrip() + "…"

@@ -225,7 +225,7 @@ export function usePortal() {
         const open = currentRef.current
         if (open) {
           await api(sessionPath(open.session, "/messages"), { method: "POST", form })
-          setCurrent(c => c && { ...c, running: true, messages: [...c.messages, { role: "user", text, row_id: `pending-${Date.now()}` }] })
+          setCurrent(c => c && { ...c, running: true, messages: [...c.messages, { role: "user", text, row_id: `pending-${Date.now()}`, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }] })
           setLive(l => l || emptyLive())
         } else {
           const created = await api<{ session: string }>("/api/sessions", { method: "POST", form })
