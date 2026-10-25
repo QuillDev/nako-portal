@@ -24,7 +24,7 @@ CHALLENGE_TTL = 300
 MAX_FILE = 25 * 1024 * 1024
 MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
-ANDROID_APK_PATH = "/android/hermes.apk"
+ANDROID_APK_PATH = "/android/nako.apk"
 ANDROID_PACKAGE = "moe.nakode.portal"
 # Scripts stay 'self' only. Inline styles are allowed because the UI components set them
 # (Radix's scroll area, Shiki's token colors); blob: lets the composer read picked files.
@@ -226,7 +226,7 @@ class Portal:
             raise web.HTTPForbidden(text=json.dumps({"error": "This setup link was already used."}), content_type="application/json")
         label = str(body.get("label") or "passkey")[:60]
         self.store.add_credential(registered.credential_id, registered.cose_key, registered.sign_count, label)
-        log.info("Hermes portal registered a passkey (%s)", label)
+        log.info("Nako portal registered a passkey (%s)", label)
         response = web.json_response({"ok": True})
         self._set_login(response, registered.credential_id)
         return response
@@ -409,7 +409,7 @@ class Portal:
             return None
         try:
             manifest = json.loads((self.android_release_dir / "android-release.json").read_text())
-            apk = self.android_release_dir / "hermes.apk"
+            apk = self.android_release_dir / "nako.apk"
             code, name, sha, size = manifest["versionCode"], manifest["versionName"], manifest["sha256"], manifest["sizeBytes"]
         except (OSError, ValueError, KeyError, TypeError):
             return None
@@ -434,7 +434,7 @@ class Portal:
         if self._published_release() is None:
             raise web.HTTPNotFound()
         return web.FileResponse(
-            self.android_release_dir / "hermes.apk",
+            self.android_release_dir / "nako.apk",
             headers={"Content-Type": "application/vnd.android.package-archive", "Cache-Control": "no-store"},
         )
 

@@ -17,7 +17,7 @@ class InstallResultReceiver : BroadcastReceiver() {
             return
         }
         if (status != PackageInstaller.STATUS_SUCCESS) {
-            Log.w("HermesUpdate", "Update failed: ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
+            Log.w("NakoUpdate", "Update failed: ${intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)}")
         }
     }
 }

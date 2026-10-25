@@ -84,7 +84,7 @@ async def test_cron_deliveries_to_the_portal_platform_land_in_its_inbox(tmp_path
     fake_constants = type(sys)("hermes_constants")
     fake_constants.get_hermes_home = lambda: home
     monkeypatch.setitem(sys.modules, "hermes_constants", fake_constants)
-    spec = importlib.util.spec_from_file_location("hermes_portal_plugin", ROOT / "__init__.py")
+    spec = importlib.util.spec_from_file_location("nako_portal_plugin", ROOT / "__init__.py")
     plugin = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(plugin)
 
@@ -98,6 +98,6 @@ async def test_cron_deliveries_to_the_portal_platform_land_in_its_inbox(tmp_path
     assert registered["name"] == "portal"
     sent = await registered["standalone_sender_fn"](None, "inbox", "daily digest: 3 new emails")
     assert sent["success"]
-    rows = Store(home / "hermes-portal" / "portal.db").inbox()
+    rows = Store(home / "nako-portal" / "portal.db").inbox()
     assert [(r["chat"], r["text"]) for r in rows] == [("inbox", "daily digest: 3 new emails")]
     await asyncio.sleep(0)

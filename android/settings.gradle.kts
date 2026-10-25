@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "hermes-portal-android"
+rootProject.name = "nako-portal-android"
 include(":app")

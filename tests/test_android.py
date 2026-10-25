@@ -57,18 +57,18 @@ async def test_the_android_app_signs_in_with_a_passkey_bound_to_its_signing_key(
         # Nothing published yet; then a published release is served only when it matches its manifest.
         assert (await world.http.get(url("/api/android/release"))).status == 404
         apk = b"PK fake apk bytes"
-        (tmp_path / "hermes.apk").write_bytes(apk)
+        (tmp_path / "nako.apk").write_bytes(apk)
         manifest = {"versionCode": 7, "versionName": "0.2.0", "sha256": hashlib.sha256(apk).hexdigest(), "sizeBytes": len(apk) + 1}
         (tmp_path / "android-release.json").write_text(json.dumps(manifest))
         assert (await world.http.get(url("/api/android/release"))).status == 404
         manifest["sizeBytes"] = len(apk)
         (tmp_path / "android-release.json").write_text(json.dumps(manifest))
         release = await (await world.http.get(url("/api/android/release"))).json()
-        assert release == {**manifest, "apkUrl": "/android/hermes.apk"}
-        assert await (await world.http.get(url("/android/hermes.apk"))).read() == apk
+        assert release == {**manifest, "apkUrl": "/android/nako.apk"}
+        assert await (await world.http.get(url("/android/nako.apk"))).read() == apk
 
         world.http.cookie_jar.clear()
-        assert (await world.http.get(url("/android/hermes.apk"))).status == 401
+        assert (await world.http.get(url("/android/nako.apk"))).status == 401
     finally:
         await server.close()
     await asyncio.sleep(0)

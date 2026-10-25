@@ -17,7 +17,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * Updates the shell from the signed-in Hermes Portal, reusing the WebView's
+ * Updates the shell from the signed-in Nako Portal, reusing the WebView's
  * session cookie. Android 12+ installs without a prompt once this app is its
  * own installer of record; otherwise the system confirmation appears.
  */
@@ -50,7 +50,7 @@ class AppUpdater(private val context: Context) {
             val apk = withContext(Dispatchers.IO) {
                 val directory = File(context.cacheDir, "updates").apply { mkdirs() }
                 directory.listFiles()?.forEach { it.delete() }
-                downloadRelease(origin.value, cookie, release, File(directory, "hermes-${release.versionCode}.apk"))
+                downloadRelease(origin.value, cookie, release, File(directory, "nako-${release.versionCode}.apk"))
             }
             withContext(Dispatchers.IO) { install(apk) }
         }.onFailure { Log.w(TAG, "Update to ${release.versionName} failed", it) }
@@ -85,7 +85,7 @@ class AppUpdater(private val context: Context) {
         }
         val sessionId = installer.createSession(params)
         installer.openSession(sessionId).use { session ->
-            session.openWrite("hermes.apk", 0, apk.length()).use { output ->
+            session.openWrite("nako.apk", 0, apk.length()).use { output ->
                 apk.inputStream().use { it.copyTo(output) }
                 session.fsync(output)
             }
@@ -101,7 +101,7 @@ class AppUpdater(private val context: Context) {
 
     companion object {
         const val RELEASE_PACKAGE = "moe.nakode.portal"
-        private const val TAG = "HermesUpdate"
+        private const val TAG = "NakoUpdate"
         private const val CHECK_INTERVAL_MS = 30 * 60 * 1000L
     }
 }

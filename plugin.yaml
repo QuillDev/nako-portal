@@ -1,4 +1,4 @@
-name: hermes-portal
+name: nako-portal
 version: 0.1.0
 description: A private web portal on this machine that mirrors Desktop sessions both ways, signed in with a passkey.
 author: QuillDev

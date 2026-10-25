@@ -12,7 +12,7 @@ self.addEventListener('push', event => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body: data.body || '',
-      tag: data.session || 'hermes',
+      tag: data.session || 'nako',
       renotify: true,
       icon: '/icon-192.png',
       badge: '/icon-192.png',

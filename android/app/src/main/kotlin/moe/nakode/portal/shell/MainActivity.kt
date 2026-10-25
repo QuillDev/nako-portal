@@ -163,7 +163,7 @@ class MainActivity : ComponentActivity() {
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = false
-            settings.userAgentString = "${settings.userAgentString} HermesAndroid/${updater.installedVersionName}"
+            settings.userAgentString = "${settings.userAgentString} NakoAndroid/${updater.installedVersionName}"
             // Passkeys inside the WebView, bound to this app by the portal's assetlinks.json.
             if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
                 WebSettingsCompat.setWebAuthenticationSupport(settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
