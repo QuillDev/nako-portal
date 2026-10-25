@@ -89,16 +89,14 @@ function Swap({ id, children }: { id: string; children: ReactNode }) {
 
 // Nako docked above the composer, thinking out loud. During a turn her sticker shows what she's
 // doing and the bubble says it (the tool she's on, one at a time); afterwards she signs off and
-// waits, until the person starts typing.
+// waits, and stays while the person types.
 export function Presence({
   live,
   running,
   outcome,
   signOff: line,
-  typing,
-}: { live: Live | null; running: boolean; outcome?: Status | null; signOff: string; typing: boolean }) {
+}: { live: Live | null; running: boolean; outcome?: Status | null; signOff: string }) {
   const signOff = useSignOff(running, outcome, line)
-  if (!running && typing) return null
   const now: Activity = running ? activity(live) : signOff.proud ? "replying" : "idle"
   const tool = now === "tools" ? (live?.tools.findLast(t => t.state === "running") ?? live?.tools.at(-1)) : undefined
   const busy = running || signOff.waiting
