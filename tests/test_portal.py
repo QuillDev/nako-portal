@@ -335,12 +335,22 @@ async def test_a_message_sent_mid_turn_shows_without_the_origin_note_hermes_adds
     sid = world.hermes.add_session(
         "20261024_080808_bbbbbb",
         "Bug",
-        messages=[("user", "look at this"), ("user", note + "it fixed itself"), ("user", "what is a Gateway message origin (JSON data):\n{}\nhm")],
+        messages=[
+            ("user", "look at this"),
+            ("user", note + "it fixed itself"),
+            ("user", note + "wow ig it is\n" + note.replace("m1", "m2") + "nvm"),
+            ("user", "what is a Gateway message origin (JSON data):\n{}\nhm"),
+        ],
     )
     await world.sign_up()
 
     opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
-    assert [m["text"] for m in opened["messages"]] == ["look at this", "it fixed itself", "what is a Gateway message origin (JSON data):\n{}\nhm"]
+    assert [m["text"] for m in opened["messages"]] == [
+        "look at this",
+        "it fixed itself",
+        "wow ig it is\nnvm",
+        "what is a Gateway message origin (JSON data):\n{}\nhm",
+    ]
 
 
 async def test_cron_posts_read_as_nakos_messages_in_the_notifications_thread(world):

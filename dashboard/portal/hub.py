@@ -50,8 +50,9 @@ INBOX = "inbox"
 # Hermes labels every cron post it mirrors into a chat with this.
 CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
 # A message sent while a turn runs is steered into it with a note for the model saying where it
-# came from; Hermes keeps that note in the saved text, but the user never typed it.
-STEER_ORIGIN = re.compile(r"^\s*Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\s*")
+# came from; Hermes keeps that note in the saved text, but the user never typed it. Several messages
+# sent during one turn arrive joined, each with its own note at the start of a line.
+STEER_ORIGIN = re.compile(r"^Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\n*", re.M)
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
@@ -424,7 +425,8 @@ def _preview(text, limit=PREVIEW_CHARS):
 def _without_steer_origin(message):
     if message.get("role") != "user" or not message.get("text"):
         return message
-    return {**message, "text": STEER_ORIGIN.sub("", message["text"], count=1)}
+    text, notes = STEER_ORIGIN.subn("", message["text"])
+    return {**message, "text": text.strip()} if notes else message
 
 
 def _as_notification(message):
