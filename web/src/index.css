@@ -4,29 +4,51 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Nako's palette (Nako-Agent/nako-website): dark plum with a pink accent. */
+/* Neutral surfaces with Nako's pink kept for actions. Dark is the default; html.light swaps the palette. */
 :root {
   color-scheme: dark;
-  --radius: 0.625rem;
-  --background: #0d0a11;
-  --foreground: #f3eaef;
-  --card: #16111b;
-  --card-foreground: #f3eaef;
-  --popover: #16111b;
-  --popover-foreground: #f3eaef;
+  --radius: 0.75rem;
+  --background: #09090b;
+  --foreground: #ececef;
+  --card: #111114;
+  --card-foreground: #ececef;
+  --popover: #111114;
+  --popover-foreground: #ececef;
   --primary: #ec4899;
   --primary-foreground: #ffffff;
-  --secondary: #1d1623;
-  --secondary-foreground: #f3eaef;
-  --muted: #1d1623;
-  --muted-foreground: #b6a4b1;
-  --accent: #241a2b;
-  --accent-foreground: #f3eaef;
+  --secondary: #17171b;
+  --secondary-foreground: #ececef;
+  --muted: #17171b;
+  --muted-foreground: #8e8e99;
+  --accent: #18181c;
+  --accent-foreground: #ececef;
   --destructive: #f87171;
-  --border: rgb(255 255 255 / 8%);
-  --input: rgb(255 255 255 / 16%);
+  --border: rgb(255 255 255 / 7%);
+  --input: rgb(255 255 255 / 10%);
   --ring: #f472b6;
-  --sidebar: #120e17;
+  --sidebar: #09090b;
+}
+
+:root.light {
+  color-scheme: light;
+  --background: #fbfbfc;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --card-foreground: #18181b;
+  --popover: #ffffff;
+  --popover-foreground: #18181b;
+  --primary: #db2777;
+  --secondary: #f1f1f4;
+  --secondary-foreground: #18181b;
+  --muted: #f1f1f4;
+  --muted-foreground: #6b6b76;
+  --accent: #ededf0;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --border: rgb(0 0 0 / 8%);
+  --input: rgb(0 0 0 / 12%);
+  --ring: #db2777;
+  --sidebar: #fbfbfc;
 }
 
 @theme inline {
@@ -113,4 +135,69 @@
     transform: translate(var(--dx), var(--rise)) scale(0.9) rotate(var(--rot));
     opacity: 0;
   }
+}
+
+/* Tables in replies: one hairline frame, quiet header, actions tucked into the header row.
+   The fullscreen view reuses data-streamdown="table-wrapper" (with h-full), so the inline-only
+   rules skip it. Copy goes straight to TSV (src/lib/table-copy.ts); the download menu opens
+   sideways as a row because a short table sits in a message that clips overflow. */
+[data-streamdown="table-wrapper"]:not(.h-full) {
+  position: relative;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+[data-streamdown="table-wrapper"]:not(.h-full) > div:first-child {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.375rem;
+  z-index: 1;
+}
+[data-streamdown="table-wrapper"]:not(.h-full) > div:first-child .absolute {
+  top: 50%;
+  right: 100%;
+  margin: 0 0.25rem 0 0;
+  display: flex;
+  translate: 0 -50%;
+  background: var(--popover);
+  box-shadow: none;
+}
+[data-streamdown="table-wrapper"] > div:first-child .absolute button {
+  white-space: nowrap;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.75rem;
+}
+[data-streamdown="table-wrapper"]:not(.h-full) > div:has(> table) {
+  border-radius: var(--radius);
+  background: transparent;
+}
+[data-streamdown="table-wrapper"].h-full table {
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+}
+[data-streamdown="table-wrapper"] button[data-copied] {
+  color: var(--primary);
+}
+[data-streamdown="table"] thead {
+  background: transparent;
+}
+[data-streamdown="table"] th {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  font-size: 0.75rem;
+}
+[data-streamdown="table"] td {
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
+  font-variant-numeric: tabular-nums;
+}
+[data-streamdown="table"] tbody tr {
+  transition: background-color 100ms;
+}
+[data-streamdown="table"] tbody tr:hover {
+  background: var(--muted);
 }

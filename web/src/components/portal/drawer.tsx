@@ -1,6 +1,16 @@
 // On a phone the chat list is a drawer over the open page: swipe right anywhere to pull
-// it in, swipe left or tap outside to put it away. From md up the list sits beside the page.
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react"
+// it in, swipe left or tap outside to put it away. From md up the list sits beside the page,
+// where its edge drags to resize and it collapses (Ctrl/Cmd+B, or dragging it nearly shut).
+import {
+  createContext,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react"
 import { navigate } from "@/hooks/use-portal"
 import { cn } from "@/lib/utils"
 
@@ -10,9 +20,11 @@ const SLOP = 10
 // A flick this fast (px/ms) settles the drawer whichever way it was going.
 const FLICK = 0.3
 
-type Drawer = { phone: boolean; show: () => void; go: (hash: string) => void }
+const WIDTH = { min: 220, max: 480, initial: 288, collapseBelow: 160 }
 
-const DrawerContext = createContext<Drawer>({ phone: false, show: () => {}, go: navigate })
+type Drawer = { phone: boolean; collapsed: boolean; toggle: () => void; show: () => void; go: (hash: string) => void }
+
+const DrawerContext = createContext<Drawer>({ phone: false, collapsed: false, toggle: () => {}, show: () => {}, go: navigate })
 
 export const useDrawer = () => useContext(DrawerContext)
 
@@ -39,6 +51,54 @@ function scrollsSideways(target: EventTarget | null, root: HTMLElement, dx: numb
   return false
 }
 
+const clamp = (width: number) => Math.min(WIDTH.max, Math.max(WIDTH.min, width))
+
+function useDesktopSidebar() {
+  const [width, setWidth] = useState(() => clamp(Number(localStorage.getItem("sidebar:width")) || WIDTH.initial))
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("sidebar:collapsed") === "1")
+  const [dragging, setDragging] = useState(false)
+  useEffect(() => localStorage.setItem("sidebar:width", String(width)), [width])
+  useEffect(() => localStorage.setItem("sidebar:collapsed", collapsed ? "1" : "0"), [collapsed])
+  const toggle = useCallback(() => setCollapsed(c => !c), [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault()
+        toggle()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [toggle])
+
+  const startResize = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const handle = e.currentTarget
+    const left = handle.parentElement!.getBoundingClientRect().left
+    handle.setPointerCapture(e.pointerId)
+    setDragging(true)
+    const move = (ev: PointerEvent) => {
+      const next = ev.clientX - left
+      if (next < WIDTH.collapseBelow) setCollapsed(true)
+      else {
+        setCollapsed(false)
+        setWidth(clamp(next))
+      }
+    }
+    const end = () => {
+      setDragging(false)
+      handle.removeEventListener("pointermove", move)
+      handle.removeEventListener("pointerup", end)
+      handle.removeEventListener("pointercancel", end)
+    }
+    handle.addEventListener("pointermove", move)
+    handle.addEventListener("pointerup", end)
+    handle.addEventListener("pointercancel", end)
+  }
+
+  return { width, collapsed, dragging, toggle, startResize, reset: () => setWidth(WIDTH.initial) }
+}
+
 const pushedDrawer = () => (history.state as { drawer?: boolean } | null)?.drawer === true
 
 /**
@@ -47,6 +107,8 @@ const pushedDrawer = () => (history.state as { drawer?: boolean } | null)?.drawe
  */
 export function DrawerLayout({ list, sidebar, children }: { list: boolean; sidebar: ReactNode; children: ReactNode }) {
   const phone = usePhone()
+  const desk = useDesktopSidebar()
+  const collapsed = !phone && desk.collapsed
   const [pushed, setPushed] = useState(pushedDrawer)
   const open = list || pushed
   const rootRef = useRef<HTMLDivElement>(null)
@@ -169,17 +231,33 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
   }, [phone])
 
   return (
-    <DrawerContext.Provider value={{ phone, show, go }}>
+    <DrawerContext.Provider value={{ phone, collapsed, toggle: desk.toggle, show, go }}>
       <div className="relative flex h-dvh overflow-hidden" ref={rootRef}>
         <div
           className={cn(
-            "flex max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-[85vw] max-md:max-w-sm max-md:transition-[translate] max-md:duration-200 max-md:ease-out max-md:motion-reduce:transition-none max-md:data-dragging:shadow-xl",
+            "relative flex max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-[85vw] max-md:max-w-sm max-md:transition-[translate] max-md:duration-200 max-md:ease-out max-md:motion-reduce:transition-none max-md:data-dragging:shadow-xl",
+            "md:shrink-0 md:overflow-hidden md:transition-[width] md:duration-200 md:ease-out md:motion-reduce:transition-none",
+            desk.dragging && "md:transition-none",
             open ? "max-md:shadow-xl" : "max-md:-translate-x-full",
           )}
-          inert={phone && !open}
+          inert={phone ? !open : collapsed}
           ref={panelRef}
+          style={phone ? undefined : { width: collapsed ? 0 : desk.width }}
         >
-          {sidebar}
+          <div className="flex w-full md:shrink-0" style={phone ? undefined : { width: desk.width }}>
+            {sidebar}
+          </div>
+          {!phone && (
+            <div
+              aria-label="Resize chat list"
+              aria-orientation="vertical"
+              className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-border data-dragging:bg-border"
+              data-dragging={desk.dragging ? "" : undefined}
+              onDoubleClick={desk.reset}
+              onPointerDown={desk.startResize}
+              role="separator"
+            />
+          )}
         </div>
         <div
           aria-hidden

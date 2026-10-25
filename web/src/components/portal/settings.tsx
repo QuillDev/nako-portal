@@ -4,8 +4,11 @@ import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { cancelled, register } from "@/lib/passkeys"
 import { enablePush, pushState } from "@/lib/push"
+import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
+
+const THEMES: Theme[] = ["system", "light", "dark"]
 
 const PUSH_LABEL = { unsupported: "unsupported here", on: "on", blocked: "blocked in browser settings", off: "turn on" }
 
@@ -22,6 +25,7 @@ export function Settings({ portal }: { portal: Portal }) {
   const [passkeys, setPasskeys] = useState<Passkey[]>([])
   const [push, setPush] = useState(pushState())
   const [error, setError] = useState("")
+  const theme = useTheme()
   const load = useCallback(() => api<Passkey[]>("/api/passkeys").then(setPasskeys, () => {}), [])
   useEffect(() => void load(), [load])
 
@@ -38,6 +42,16 @@ export function Settings({ portal }: { portal: Portal }) {
     <>
       <PageHeader title="Settings" />
       <section className="mx-auto w-full max-w-xl overflow-y-auto px-4 py-2">
+        <h3 className="pt-4 pb-1 font-medium text-muted-foreground text-xs">Appearance</h3>
+        <Row label="Theme">
+          <div className="flex gap-1">
+            {THEMES.map(t => (
+              <Button aria-pressed={theme === t} key={t} onClick={() => setTheme(t)} size="sm" variant={theme === t ? "secondary" : "ghost"}>
+                {t}
+              </Button>
+            ))}
+          </div>
+        </Row>
         <h3 className="pt-4 pb-1 font-medium text-muted-foreground text-xs">Passkeys</h3>
         {passkeys.map(k => (
           <Row key={k.id} label={`${k.label}${k.current ? " (this device)" : ""}`}>
