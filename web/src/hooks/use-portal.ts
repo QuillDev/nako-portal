@@ -2,7 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
-import type { Frame, Live, LiveTool, Me, OpenSession, SessionRow } from "@/lib/types"
+import { type Frame, type Live, type LiveTool, type Me, NOTIFICATIONS, type OpenSession, type SessionRow } from "@/lib/types"
 
 export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
@@ -225,7 +225,7 @@ export function usePortal() {
       return
     }
     if (currentRef.current?.session === routedSession) return
-    const title = sessions.find(s => s.id === routedSession)?.title || ""
+    const title = routedSession === NOTIFICATIONS ? NOTIFICATIONS : sessions.find(s => s.id === routedSession)?.title || ""
     setCurrent({ session: routedSession, title, messages: [], start: 0, requests: [], running: false, loading: true, loadingOlder: false })
     setLive(null)
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ watch: routedSession }))

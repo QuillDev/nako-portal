@@ -32,9 +32,12 @@ DONE = "done"
 FAILED = "failed"
 MAX_FILE = 25 * 1024 * 1024
 PREVIEW_CHARS = 280
-# Hermes seeds an untitled session for every cron post it mirrors into a chat; until someone
-# replies, the session holds only these labelled briefs.
-CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]]+)")
+# Hermes seeds a session for every cron post it mirrors into a chat, each opening with this label.
+# The portal folds them into one conversation, the way a bot's posts share one DM elsewhere.
+CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
+NOTIFICATIONS = "notifications"
+# Cron sessions read into the notifications chat, newest first.
+NOTIFICATION_SESSIONS = 50
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 
@@ -59,6 +62,8 @@ class Hub:
         self.ready = asyncio.Event()
         self.last_error = None
         self.attach_locks = {}
+        # Stored sessions that began as a cron post (id -> started_at); they make up the notifications chat.
+        self.cron = {}
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -95,6 +100,8 @@ class Hub:
 
     async def _publish(self, session, message):
         await self._send(self.subscribers.get(session, ()), {"session": session, **message})
+        if session in self.cron:
+            await self._send(self.subscribers.get(NOTIFICATIONS, ()), {"session": NOTIFICATIONS, **message})
 
     async def _set_status(self, session, status):
         if self.status.get(session) == status:
@@ -112,7 +119,9 @@ class Hub:
             if row.get("source") in HIDDEN_SOURCES:
                 continue
             session = row["id"]
-            notification = _notification(row)
+            notification = _cron_job(row.get("preview"))
+            if notification:
+                self.cron[session] = row.get("started_at") or 0
             self.titles[session] = row.get("title") or notification or ""
             rows.append(
                 {
@@ -167,6 +176,8 @@ class Hub:
         return [frame for frame in self.requests.values() if (frame.get("params") or {}).get("session_id") == runtime]
 
     async def open(self, session):
+        if session == NOTIFICATIONS:
+            return await self._open_notifications()
         runtime = await self.attach(session)
         history = await self.rpc.call("session.history", {"session_id": runtime})
         status = {}
@@ -180,6 +191,40 @@ class Hub:
             "status": self.status.get(session),
             "requests": [_request_view(frame) for frame in self._requests_for(runtime)],
         }
+
+    async def _open_notifications(self):
+        """Every cron session as one chat, oldest first. A post reads as Nako's message under its
+        job's name; replies go to the newest cron session (see `_target`)."""
+        if not self.cron:
+            await self.sessions()
+        newest = sorted(self.cron, key=self.cron.get, reverse=True)[:NOTIFICATION_SESSIONS]
+        opened = await asyncio.gather(*(self.open(session) for session in newest))
+        merged = []
+        for chat in opened:
+            clock = self.cron.get(chat["session"], 0)
+            for index, message in enumerate(chat["messages"]):
+                clock = message.get("timestamp") or clock
+                merged.append(((clock, chat["session"], index), _as_notification(message)))
+        merged.sort(key=lambda pair: pair[0])
+        newest_chat = opened[0] if opened else {}
+        return {
+            "session": NOTIFICATIONS,
+            "title": NOTIFICATIONS,
+            "messages": [message for _, message in merged],
+            "running": bool(newest_chat.get("running")),
+            "status": newest_chat.get("status"),
+            "requests": [request for chat in opened for request in chat["requests"]],
+        }
+
+    async def _target(self, session):
+        """Where a message to `session` goes: the notifications chat answers from its newest post."""
+        if session != NOTIFICATIONS:
+            return session
+        if not self.cron:
+            await self.sessions()
+        if not self.cron:
+            raise ValueError("No notifications to reply to yet")
+        return max(self.cron, key=self.cron.get)
 
     async def create(self, text, files=(), title=None, cwd=None, yolo=False):
         params = {
@@ -203,6 +248,7 @@ class Hub:
         return {"session": session, **submitted}
 
     async def send(self, session, text, files=()):
+        session = await self._target(session)
         runtime = await self.attach(session)
         refs = [ref for ref in [await self._attach_file(runtime, f) for f in files] if ref]
         prompt = "\n".join([text.strip(), *refs]).strip()
@@ -235,7 +281,7 @@ class Hub:
         return result.get("ref_text")
 
     async def interrupt(self, session):
-        runtime = await self.attach(session)
+        runtime = await self.attach(await self._target(session))
         return await self.rpc.call("session.interrupt", {"session_id": runtime})
 
     async def answer(self, request_id, result):
@@ -430,10 +476,15 @@ def _title_from(text):
     return first[:90] or "portal chat"
 
 
-def _notification(row):
-    """The cron job behind a session that is nothing but cron deliveries, else None.
-    A title means someone replied (Hermes titles a session after its first answer)."""
-    if row.get("title"):
-        return None
-    match = CRON_DELIVERY.match(row.get("preview") or "")
+def _cron_job(text):
+    """The job name when `text` opens with Hermes's cron label, else None."""
+    match = CRON_DELIVERY.match(text or "")
     return match.group(1).removesuffix("...").strip() if match else None
+
+
+def _as_notification(message):
+    """A cron post reads as Nako's message under its job's name; everything else is unchanged."""
+    match = CRON_DELIVERY.match(message.get("text") or "") if message.get("role") == "user" else None
+    if not match:
+        return message
+    return {**message, "role": "assistant", "label": match.group(1).strip(), "text": message["text"][match.end():].strip()}

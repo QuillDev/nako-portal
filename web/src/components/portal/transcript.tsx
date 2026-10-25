@@ -14,7 +14,7 @@ type Step = { key: string; name: string; context: string; state: "done" | "runni
 
 type Block =
   | { kind: "user"; key: string; text: string; images?: string[] }
-  | { kind: "assistant"; key: string; text: string; reasoning?: string }
+  | { kind: "assistant"; key: string; text: string; reasoning?: string; label?: string }
   | { kind: "tools"; key: string; steps: Step[] }
 
 function blocks(messages: HistoryMessage[]): Block[] {
@@ -32,7 +32,7 @@ function blocks(messages: HistoryMessage[]): Block[] {
     if (m.role === "assistant" && !m.text.trim() && !m.reasoning) return
     flush()
     const key = String(m.row_id ?? i)
-    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: m.reasoning })
+    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: m.reasoning, label: m.label })
   })
   flush()
   return out
@@ -132,12 +132,13 @@ function User({ session, text, images }: { session: string; text: string; images
   )
 }
 
-function Assistant({ session, text, reasoning, streaming }: { session: string; text: string; reasoning?: string; streaming?: boolean }) {
+function Assistant({ session, text, reasoning, label, streaming }: { session: string; text: string; reasoning?: string; label?: string; streaming?: boolean }) {
   const { body, files } = splitReply(text)
   const { stopScroll } = useStickToBottomContext()
   return (
     <Message from="assistant">
       <MessageContent className="w-full">
+        {label && <p className="text-muted-foreground text-xs">{label}</p>}
         {reasoning && (
           <Reasoning defaultOpen={false} isStreaming={streaming && !body}>
             <ReasoningTrigger onClick={stopScroll} />
@@ -170,7 +171,7 @@ export function Transcript({ session, messages, live, running }: { session: stri
         b.kind === "user" ? (
           <User images={b.images} key={b.key} session={session} text={b.text} />
         ) : b.kind === "assistant" ? (
-          <Assistant key={b.key} reasoning={b.reasoning} session={session} text={b.text} />
+          <Assistant key={b.key} label={b.label} reasoning={b.reasoning} session={session} text={b.text} />
         ) : (
           <Steps key={b.key} steps={b.steps} />
         ),

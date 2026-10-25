@@ -129,7 +129,8 @@ class FakeHermes:
         return sid
 
     def _row(self, sid, role, text, **extra):
-        row = {"role": role, "text": text, "row_id": self.next_row, **extra}
+        # Hermes stamps each row with its authoring time; a counter keeps the fake's order exact.
+        row = {"role": role, "text": text, "row_id": self.next_row, "timestamp": 1_700_000_000 + self.next_row, **extra}
         self.next_row += 1
         self.sessions[sid]["rows"].append(row)
         return row
