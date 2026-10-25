@@ -44,8 +44,9 @@ if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
   export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 fi
 
-export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$PWD/src-tauri/target}
+# Build caches live outside the checkout, so a fresh worktree builds warm.
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/nako-desktop-release
+export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$cache/target}
 mkdir -p "$cache/linux-target" "$cache/linux-cargo"
 config="{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":true}}"
 
