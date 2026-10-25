@@ -1,9 +1,12 @@
 """The portal is a Hermes messaging platform, like Discord or Slack.
 
-Its adapter runs in the gateway and hosts the whole portal: the web app, sign-in,
-push, and the hub that turns gateway traffic into what the chat UI shows. Each
-portal chat is a gateway thread (`portal:<chat id>`), so commands, approvals,
-cron delivery and `send_message` work here the way they do on any platform.
+The portal itself (the web app, sign-in, push, and the hub that turns gateway
+traffic into what the chat UI shows) runs as its own process, `dashboard/serve.py`,
+so the site stays up while the gateway restarts. This adapter starts that server
+when it isn't running and dials in over a loopback WebSocket (`link.py`), the way
+a bot connects to Discord. Each portal chat is a gateway thread
+(`portal:<chat id>`), so commands, approvals, cron delivery and `send_message`
+work here the way they do on any platform.
 
 `portal:inbox` is the Notifications thread: like a bot's DM, cron posts and other
 deliveries land there, and a reply has every post in context. `portal:new` starts
@@ -14,12 +17,17 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import importlib
 import importlib.util
+import json
 import logging
 import mimetypes
+import os
 import secrets
+import shutil
 import sqlite3
+import subprocess
 import sys
 import time
 import uuid
@@ -38,9 +46,12 @@ DEFAULT_PROFILE = "default"
 # The one person portal threads belong to; passkey sign-in already decided who that is.
 OWNER = "owner"
 INBOX_POLL = 2
-BIND_RETRY = 5
 ROOT = Path(__file__).parent
-WEB_ROOT = ROOT / "dashboard" / "web"
+SERVER = ROOT / "dashboard" / "serve.py"
+# The server's code: a change here means the running server is stale and gets replaced.
+SERVER_CODE = [SERVER, *sorted((ROOT / "dashboard" / "portal").glob("*.py"))]
+# Don't start servers faster than this while one is still coming up.
+SPAWN_GAP = 30
 # Gateway commands with no use in a portal thread (platform setup, the portal's own list).
 UNSUPPORTED = {"start", "sethome", "topic", "platform", "commands"}
 
@@ -115,6 +126,51 @@ def _settings():
     }
     contact = str(entry.get("contact") or "mailto:owner@localhost")
     return get_hermes_home().resolve(), origin.rstrip("/"), int(entry.get("port") or DEFAULT_PORT), contact, apps
+
+
+def _server_config(home, origin, port, contact, apps):
+    """What the server runs with, written to a file it reads. `code` names this code and these
+    settings, so a server started from anything else is replaced."""
+    data = home / "nako-portal"
+    config = {"data": str(data), "origin": origin, "port": port, "contact": contact, **apps}
+    digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode())
+    for path in SERVER_CODE:
+        digest.update(path.name.encode() + b"\0" + path.read_bytes())
+    config["code"] = digest.hexdigest()[:24]
+    path = data / "server.json"
+    data.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n")
+    path.chmod(0o600)
+    return path, config
+
+
+def _spawn_server(config_path, data):
+    """Start the portal server where a gateway restart can't take it down: its own systemd user
+    unit when the gateway is a systemd service (which kills the service's whole cgroup on
+    stop), otherwise its own session."""
+    command = [sys.executable, str(SERVER), str(config_path)]
+    # The gateway's interpreter finds aiohttp and cryptography through the import path Hermes set
+    # up at launch, not through its own site-packages; the server gets the same path.
+    path = os.pathsep.join(p for p in sys.path if p and os.path.isabs(p) and os.path.isdir(p))
+    if os.environ.get("INVOCATION_ID") and shutil.which("systemd-run"):
+        unit = f"nako-portal-{int(time.time())}"
+        try:
+            started = subprocess.run(
+                ["systemd-run", "--user", "--collect", "--quiet", f"--unit={unit}", "--description=Nako portal", f"--setenv=PYTHONPATH={path}", *command],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if started.returncode == 0:
+                log.info("Nako portal: started the server as %s.service", unit)
+                return
+            log.warning("Nako portal: systemd-run failed (%s); starting the server directly", started.stderr.strip())
+        except (OSError, subprocess.SubprocessError):
+            log.warning("Nako portal: systemd-run failed; starting the server directly", exc_info=True)
+    with open(data / "server.log", "ab") as out:
+        env = {**os.environ, "PYTHONPATH": path}
+        subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, start_new_session=True, close_fds=True)
+    log.info("Nako portal: started the server (log in %s)", data / "server.log")
 
 
 def _local_token(data):
@@ -486,21 +542,6 @@ def _model_providers():
     ]
 
 
-async def _listen(runner, port):
-    """Bind the portal's port, retrying while something else still holds it (an older
-    portal shutting down), so the gateway never fails to start over it."""
-    from aiohttp import web
-
-    while True:
-        try:
-            await web.TCPSite(runner, "127.0.0.1", port).start()
-            log.info("Nako portal listening on 127.0.0.1:%s", port)
-            return
-        except OSError as error:
-            log.warning("Nako portal can't bind 127.0.0.1:%s yet (%s); retrying", port, error)
-            await asyncio.sleep(BIND_RETRY)
-
-
 async def _forward_inbox(store, adapter):
     """Posts written while no gateway ran (`_deliver`) are sent once it's back."""
     last = store.meta("inbox_pushed", None)
@@ -548,65 +589,74 @@ def _adapter(config):
 
         def __init__(self, cfg):
             super().__init__(cfg, Platform("portal"))
-            self.hub = None
-            self._runners = []
+            self.backend = None
+            self.link = None
             self._tasks = []
             self._http = None
+            self._spawned = 0.0
 
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             import aiohttp
-            from aiohttp import web
 
-            if self.hub is None:
+            if self.link is None:
                 home, origin, port, contact, apps = _settings()
                 data = home / "nako-portal"
-                store = _portal("store").Store(data / "portal.db")
-                push = _portal("push")
-                vapid = push.Vapid(data / "vapid.pem", contact)
+                token = _local_token(data)
+                config_path, config = _server_config(home, origin, port, contact, apps)
+                self.backend = HermesBackend(self, home)
+
+                async def start_server(stale=False):
+                    # A stale server shuts itself down; the new one waits for its port.
+                    if not stale and time.monotonic() - self._spawned < SPAWN_GAP:
+                        return
+                    self._spawned = time.monotonic()
+                    await asyncio.to_thread(_spawn_server, config_path, data)
+
+                self.link = _portal("link").GatewayClient(
+                    f"http://127.0.0.1:{port + 1}/gateway",
+                    token,
+                    config["code"],
+                    self.backend,
+                    on_missing=start_server,
+                    on_stale=lambda: start_server(stale=True),
+                )
                 self._http = aiohttp.ClientSession()
-                pusher = push.Pusher(self._http, store, vapid)
                 loop = asyncio.get_running_loop()
-
-                def alert(session, title, text):
-                    loop.create_task(pusher.notify(title, text, session))
-
-                self.hub = _portal("hub").Hub(HermesBackend(self, home), alert=alert)
-                portal = _portal("server").Portal(self.hub, store, origin=origin, web_root=WEB_ROOT, vapid=vapid, **apps)
-                for app, at in ((portal.app(), port), (portal.local_app(_local_token(data)), port + 1)):
-                    runner = web.AppRunner(app, access_log=None)
-                    await runner.setup()
-                    self._runners.append(runner)
-                    self._tasks.append(loop.create_task(_listen(runner, at)))
-                (data / "local-url").write_text(f"http://127.0.0.1:{port + 1}\n")
-                if not store.has_credentials():
-                    (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
-                    (data / "setup-link").chmod(0o600)
-                    log.info("Nako portal has no passkey yet; a setup link is in %s", data / "setup-link")
-                self._tasks.append(loop.create_task(_forward_inbox(store, self)))
-                _LIVE_TOOLS.update(hub=self.hub, loop=loop)
-                log.info("Nako portal serving %s on 127.0.0.1:%s", origin, port)
+                self._tasks.append(loop.create_task(self.link.run(self._http)))
+                self._tasks.append(loop.create_task(_forward_inbox(_portal("store").Store(data / "portal.db"), self)))
+                _LIVE_TOOLS.update(link=self.link, loop=loop)
             # Every served profile gets its Notifications thread, so its cron posts have one to land in.
-            for profile in await asyncio.to_thread(self.hub.backend.homes):
+            for profile in await asyncio.to_thread(self.backend.homes):
                 await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE, profile)
             self._mark_connected()
             return True
 
         async def disconnect(self) -> None:
+            # The server keeps running and shows "offline" until a gateway dials in again.
             for task in self._tasks:
                 task.cancel()
-            for runner in self._runners:
-                await runner.cleanup()
             if self._http is not None:
                 await self._http.close()
-            self._tasks, self._runners, self._http, self.hub = [], [], None, None
+            _LIVE_TOOLS.clear()
+            self._tasks, self._http, self.link, self.backend = [], None, None, None
             self._mark_disconnected()
+
+        async def _hub(self, method, *args):
+            """Tell the portal's hub something and wait for it; a no-op while it's unreachable."""
+            if self.link is None:
+                return False
+            try:
+                await self.link.call(method, *args)
+                return True
+            except ConnectionError:
+                return False
 
         def _chat(self, chat, title=None, profile=None):
             """A thread in ``profile``; by default the one whose work is sending (a cron run or
             turn), else the profile the portal shows."""
             try:
-                if profile is None and self.hub is not None:
-                    profile = self.hub.backend._origin()
+                if profile is None and self.backend is not None:
+                    profile = self.backend._origin()
                 return _ensure_chat(getattr(self, "_session_store", None), chat, title, profile)
             except Exception:
                 log.exception("portal: could not open thread %s", chat)
@@ -622,8 +672,7 @@ def _adapter(config):
             # send_message mirrors into the chat it was given ("new"), which no session matches.
             if session:
                 await asyncio.to_thread(mirror_to_session, "portal", chat, content, source_label="send_message", session_id=session)
-            if self.hub is not None:
-                await self.hub.broadcast({"kind": "sessions.changed"})
+            await self._hub("sessions_changed")
             return chat
 
         async def send(self, chat_id, content, reply_to=None, metadata=None):
@@ -633,14 +682,13 @@ def _adapter(config):
             elif chat == HOME_CHANNEL:
                 await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE)
             message_id = uuid.uuid4().hex
-            if self.hub is not None:
+            if self.link is not None:
                 # Not awaited: outside a turn the hub waits for the mirror before telling clients.
-                asyncio.get_running_loop().create_task(self.hub.outgoing(chat, message_id, content))
+                self.link.tell("outgoing", chat, message_id, content)
             return SendResult(success=True, message_id=message_id)
 
         async def edit_message(self, chat_id, message_id, content, *, finalize=False):
-            if self.hub is not None:
-                await self.hub.outgoing(str(chat_id), message_id, content)
+            await self._hub("outgoing", str(chat_id), message_id, content)
             return SendResult(success=True, message_id=message_id)
 
         async def _send_file(self, chat_id, path, caption):
@@ -662,34 +710,31 @@ def _adapter(config):
             return None
 
         def toolsets_for_source(self, source):
-            home = self.hub.backend.home_of(getattr(source, "profile", None)) if self.hub is not None else None
+            home = self.backend.home_of(getattr(source, "profile", None)) if self.backend is not None else None
             return _fallback_toolsets(home)
 
         async def get_chat_info(self, chat_id):
             return {"name": "Nako", "type": "dm"}
 
         async def on_processing_start(self, event):
-            if self.hub is not None:
-                await self.hub.turn_started(event.source.chat_id)
+            await self._hub("turn_started", event.source.chat_id)
 
         async def on_processing_complete(self, event, outcome):
-            if self.hub is not None:
-                await self.hub.turn_finished(event.source.chat_id, getattr(outcome, "value", str(outcome)))
+            await self._hub("turn_finished", event.source.chat_id, getattr(outcome, "value", str(outcome)))
 
         async def _send_exec_approval_prompt(self, prompt):
-            if self.hub is None:
-                return SendResult(success=False, error="portal is not serving")
             request = {
                 "id": uuid.uuid4().hex,
                 "method": "approval",
                 "params": {"command": prompt.command, "description": prompt.description, "choices": prompt.choices},
                 "private": {"session_key": prompt.session_key},
             }
-            await self.hub.ask(prompt.chat_id, request)
+            if not await self._hub("ask", prompt.chat_id, request):
+                return SendResult(success=False, error="the portal server isn't reachable")
             return SendResult(success=True, message_id=request["id"])
 
         async def send_clarify(self, chat_id, question, choices, clarify_id, session_key, metadata=None):
-            if self.hub is None or not choices:
+            if self.link is None or self.link.peer is None or not choices:
                 # An open question is answered by the next message, which the gateway intercepts.
                 return await super().send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
             request = {
@@ -698,7 +743,8 @@ def _adapter(config):
                 "params": {"questions": [{"qid": clarify_id, "question": question, "choices": list(choices)}]},
                 "private": {"clarify_id": clarify_id},
             }
-            await self.hub.ask(str(chat_id), request)
+            if not await self._hub("ask", str(chat_id), request):
+                return await super().send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
             return SendResult(success=True, message_id=request["id"])
 
     return PortalAdapter(config)
@@ -735,7 +781,7 @@ SIGN_OFF_PROMPT = (
 SIGN_OFF_REPLY_CHARS = 3000
 SIGN_OFF_MAX_CHARS = 120
 
-# Tool hooks run on the agent's thread; the hub lives on the gateway's loop.
+# Tool hooks run on the agent's thread; the link to the hub lives on the gateway's loop.
 _LIVE_TOOLS = {}
 
 
@@ -750,12 +796,13 @@ def _tool_context(name, args):
 
 def _forward_tool(state):
     def hook(tool_name="", args=None, session_id=None, tool_call_id=None, status=None, **_):
-        hub, loop = _LIVE_TOOLS.get("hub"), _LIVE_TOOLS.get("loop")
-        if hub is None or loop is None or not session_id or session_id not in hub.running:
+        link, loop = _LIVE_TOOLS.get("link"), _LIVE_TOOLS.get("loop")
+        if link is None or loop is None or link.peer is None or not session_id:
             return None
         ended = "failed" if status == "error" else "done"
         payload = (session_id, str(tool_call_id or ""), tool_name, _tool_context(tool_name, args), state or ended)
-        asyncio.run_coroutine_threadsafe(hub.tool(*payload), loop)
+        # The hub keeps only calls in a portal turn it shows as running.
+        loop.call_soon_threadsafe(link.tell, "tool", *payload)
         return None
 
     return hook

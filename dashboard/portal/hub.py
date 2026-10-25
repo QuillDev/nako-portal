@@ -2,9 +2,10 @@
 
 Every portal chat is a gateway thread (`portal:<chat id>`). Prompts go in as
 gateway messages, replies come back through the adapter's sends and edits, and
-transcripts are read from Hermes's own session store. The adapter
-(`__init__.py`) hosts this hub and the web server inside the gateway; the
-`backend` it hands over is the only part that touches Hermes, so tests use a fake.
+transcripts are read from Hermes's own session store. The hub and the
+web server run in their own process (`dashboard/serve.py`), so the site stays up
+while the gateway restarts; the `backend` is the gateway's adapter on the other
+end of the link (`link.py`), the only part that touches Hermes, so tests use a fake.
 
 backend:
   sessions() -> [{id, title, preview, started_at, message_count, pinned, chat_id}]
@@ -78,7 +79,7 @@ class Hub:
         self.running = set()
         self.titles = {}
         self.last_text = {}
-        # In-process with the gateway, so the portal is up whenever this hub is.
+        # Whether a gateway is there to run turns. The standalone server's link keeps this.
         self.connected = True
         # Whether a finished turn gets Nako's sign-off line (Settings; the server keeps it).
         self.sign_off_on = True
