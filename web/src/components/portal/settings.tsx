@@ -5,6 +5,7 @@ import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { cancelled, register } from "@/lib/passkeys"
 import { enablePush, pushState } from "@/lib/push"
+import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
@@ -27,6 +28,7 @@ export function Settings({ portal }: { portal: Portal }) {
   const [push, setPush] = useState(pushState())
   const [error, setError] = useState("")
   const theme = useTheme()
+  const presence = usePresence()
   const load = useCallback(() => api<Passkey[]>("/api/passkeys").then(setPasskeys, () => {}), [])
   useEffect(() => void load(), [load])
 
@@ -52,6 +54,11 @@ export function Settings({ portal }: { portal: Portal }) {
               </Button>
             ))}
           </div>
+        </Row>
+        <Row label="Nako's sticker while she works">
+          <Button aria-pressed={presence} onClick={() => setPresence(!presence)} size="sm" variant="ghost">
+            {presence ? "on" : "off"}
+          </Button>
         </Row>
         <Row label="Your name">
           <Input

@@ -365,6 +365,7 @@ def _adapter(config):
                     (data / "setup-link").chmod(0o600)
                     log.info("Nako portal has no passkey yet; a setup link is in %s", data / "setup-link")
                 self._tasks.append(loop.create_task(_forward_inbox(store, self)))
+                _LIVE_TOOLS.update(hub=self.hub, loop=loop)
                 log.info("Nako portal serving %s on 127.0.0.1:%s", origin, port)
             await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE)
             self._mark_connected()
@@ -493,8 +494,37 @@ def _quiet_display_defaults():
         defaults.setdefault("portal", {**high, **QUIET_DISPLAY})
 
 
+# Tool hooks run on the agent's thread; the hub lives on the gateway's loop.
+_LIVE_TOOLS = {}
+
+
+def _tool_context(name, args):
+    try:
+        from agent.display import build_tool_preview
+
+        return build_tool_preview(name, args if isinstance(args, dict) else {}, max_len=80) or ""
+    except Exception:
+        return ""
+
+
+def _forward_tool(state):
+    def hook(tool_name="", args=None, session_id=None, tool_call_id=None, status=None, **_):
+        hub, loop = _LIVE_TOOLS.get("hub"), _LIVE_TOOLS.get("loop")
+        if hub is None or loop is None or not session_id or session_id not in hub.running:
+            return None
+        ended = "failed" if status == "error" else "done"
+        payload = (session_id, str(tool_call_id or ""), tool_name, _tool_context(tool_name, args), state or ended)
+        asyncio.run_coroutine_threadsafe(hub.tool(*payload), loop)
+        return None
+
+    return hook
+
+
 def register(ctx):
     _quiet_display_defaults()
+    # Live tool calls for the chat's activity view (the gateway's own text breadcrumbs are off).
+    ctx.register_hook("pre_tool_call", _forward_tool("running"))
+    ctx.register_hook("post_tool_call", _forward_tool(None))
     ctx.register_platform(
         name="portal",
         label="Nako",

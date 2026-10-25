@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Portal } from "@/hooks/use-portal"
+import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
+import { Presence } from "./presence"
 import { Requests } from "./requests"
 import { sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
@@ -131,6 +133,7 @@ function NewChat({ portal }: { portal: Portal }) {
 
 export function Chat({ portal }: { portal: Portal }) {
   const c = portal.current
+  const presence = usePresence()
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
   if (!c)
     return (
@@ -158,12 +161,14 @@ export function Chat({ portal }: { portal: Portal }) {
               notes={portal.notes.filter(n => n.session === c.session && n.at >= c.start).map(n => ({ ...n, at: n.at - c.start }))}
               running={c.running}
               session={c.session}
+              working={!presence}
             />}
           <Requests answer={portal.answer} requests={c.requests} />
           {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
+      {presence && c.running && !c.requests.length && <Presence live={portal.live} />}
       <Composer draftKey={`draft:${c.session}`} portal={portal} />
     </>
   )

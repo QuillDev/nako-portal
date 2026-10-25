@@ -91,6 +91,9 @@ async def test_cron_deliveries_to_the_portal_platform_land_in_its_inbox(tmp_path
     registered = {}
 
     class Ctx:
+        def register_hook(self, name, callback):
+            pass
+
         def register_platform(self, **entry):
             registered.update(entry)
 

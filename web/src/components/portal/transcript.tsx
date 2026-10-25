@@ -201,7 +201,8 @@ export function Transcript({
   live,
   running,
   notes,
-}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[] }) {
+  working = true,
+}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; working?: boolean }) {
   const shown = blocks(messages, notes)
   const pending = live?.messages.filter(m => m.text.trim()) ?? []
   return (
@@ -220,7 +221,7 @@ export function Transcript({
       {pending.map((m, i) => (
         <Assistant key={m.id} session={session} streaming={running && i === pending.length - 1} text={m.text} />
       ))}
-      {running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
+      {working && running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
     </>
   )
 }
