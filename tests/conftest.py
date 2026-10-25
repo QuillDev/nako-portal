@@ -171,7 +171,7 @@ class FakeHermes:
             return {}
         if method == "session.list":
             rows = [
-                {"id": s["id"], "title": s["title"], "source": s["source"], "started_at": s["started_at"], "preview": _preview(s)}
+                {"id": s["id"], "title": s["title"], "source": s["source"], "started_at": s["started_at"], "preview": _preview(s), "message_count": len(s["rows"])}
                 for s in self.sessions.values()
                 if not s.get("archived")
             ]

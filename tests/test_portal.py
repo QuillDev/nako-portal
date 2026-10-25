@@ -285,6 +285,21 @@ async def test_cron_posts_read_as_nakos_messages_and_per_post_copies_stay_out_of
     ]
 
 
+async def test_the_notifications_chat_is_unread_until_opened_and_again_after_a_new_post(world):
+    inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", source="portal", messages=[("user", "[Cron delivery: build watch]\nci red")])
+    chat = world.hermes.add_session("20261024_070707_aaaaaa", "plans", messages=[("user", "hi")])
+    await world.sign_up()
+
+    async def unread():
+        return {row["id"]: row["unread"] for row in await (await world.http.get(world.url("/api/sessions"))).json()}
+
+    assert await unread() == {inbox: True, chat: False}
+    await world.http.get(world.url(f"/api/sessions/{inbox}"))
+    assert await unread() == {inbox: False, chat: False}
+    world.hermes._row(inbox, "user", "[Cron delivery: build watch]\nci green")
+    assert await unread() == {inbox: True, chat: False}
+
+
 async def test_pins_and_archives_reach_desktop(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()
