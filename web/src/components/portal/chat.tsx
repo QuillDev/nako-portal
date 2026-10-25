@@ -1,7 +1,7 @@
 import { MoreHorizontalIcon } from "lucide-react"
 import { useEffect, useLayoutEffect, useRef } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
-import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation"
+import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -107,26 +107,50 @@ function OlderTurns({ portal }: { portal: Portal }) {
   )
 }
 
+// A new chat puts the greeting and the composer together in the middle on wide screens;
+// on a phone the composer stays at the bottom, under the thumb.
+function NewChat({ portal }: { portal: Portal }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col md:justify-center md:pb-[12vh]">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center md:flex-none md:pb-6">
+        <h2 className="font-medium text-2xl tracking-tight">what are we working on?</h2>
+        {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
+      </div>
+      <Composer draftKey="draft:new" portal={portal} />
+    </div>
+  )
+}
+
 export function Chat({ portal }: { portal: Portal }) {
   const c = portal.current
+  const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
+  if (!c)
+    return (
+      <>
+        <PageHeader title="New chat" />
+        {offline}
+        <NewChat portal={portal} />
+      </>
+    )
   return (
     <>
-      <PageHeader title={c ? c.title || "chat" : "New chat"}>{c && <ChatMenu portal={portal} />}</PageHeader>
-      {!portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>}
+      <PageHeader title={c.title || "chat"}>
+        <ChatMenu portal={portal} />
+      </PageHeader>
+      {offline}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
-      <Conversation className="min-h-0 flex-1" initial="instant" key={c ? `${c.session}:${c.loading}` : "new"}>
+      <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${c.loading}`}>
         {/* Scrollable from the first layout (StickToBottom only sets overflow later), so OlderTurns can pin the bottom before paint. */}
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
-          {!c && <ConversationEmptyState description="" title="what are we working on?" />}
-          {c?.loading && <TurnSkeletons count={3} />}
-          {c && !c.loading && <OlderTurns portal={portal} />}
-          {c && !c.loading && <Transcript live={portal.live} messages={c.messages} running={c.running} session={c.session} />}
-          {c && <Requests answer={portal.answer} requests={c.requests} />}
+          {c.loading && <TurnSkeletons count={3} />}
+          {!c.loading && <OlderTurns portal={portal} />}
+          {!c.loading && <Transcript live={portal.live} messages={c.messages} running={c.running} session={c.session} />}
+          <Requests answer={portal.answer} requests={c.requests} />
           {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-      <Composer draftKey={`draft:${c?.session || "new"}`} portal={portal} />
+      <Composer draftKey={`draft:${c.session}`} portal={portal} />
     </>
   )
 }
