@@ -144,7 +144,7 @@ class HermesBackend:
 
     def thread(self, session):
         from hermes_constants import get_hermes_home
-        from tui_gateway.session_history import _history_to_messages
+        from tui_gateway.server import _history_to_messages  # bound copy; the session_history original lacks server globals
 
         if not self._read("SELECT 1 FROM sessions WHERE id=? AND source='portal'", (session,)):
             return None
