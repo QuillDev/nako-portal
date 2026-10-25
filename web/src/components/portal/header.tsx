@@ -15,7 +15,7 @@ export function PageHeader({ title, children }: { title: string; children?: Reac
           <ChevronRightIcon />
         </Button>
       )}
-      <h2 className="min-w-0 flex-1 truncate px-2 font-medium text-sm">{title}</h2>
+      <h2 className="min-w-0 flex-1 truncate px-2 font-medium text-sm leading-9">{title}</h2>
       {children}
     </header>
   )

@@ -76,11 +76,14 @@ async def main(port):
     )
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
     for sid, job, text in [
-        ("20261024_093000_d00001", "build watch", "ci went red on main: the lint job fails on an unused import"),
-        ("20261024_083000_d00002", "news digest", "five links worth reading today, starting with a new sorting paper"),
-        ("20261023_203000_d00003", "build watch", "ci is green again on main"),
+        ("20261023_203000_d00003", "build watch", "ci went red on main: the lint job fails on an unused import"),
+        ("20261024_083000_d00001", "build watch", "ci is green again on main"),
+        ("20261024_093000_d00002", "news digest", "five links worth reading today, starting with a new sorting paper"),
     ]:
         hermes.add_session(sid, "", messages=[("user", f"[Cron delivery: {job}]\n{text}")])
+    hermes._row("20261024_093000_d00002", "user", "which one is worth reading first?")
+    hermes._row("20261024_093000_d00002", "assistant", "the sorting paper. it's short and the benchmark section is the interesting part.")
+    hermes.sessions["20261024_093000_d00002"]["title"] = "Pick a link from the digest"
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
     long = hermes.add_session("20261023_060000_eeeeee", "Untangle the importer")
     for turn in range(1, 81):

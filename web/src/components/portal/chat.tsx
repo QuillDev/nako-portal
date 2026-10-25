@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Portal } from "@/hooks/use-portal"
+import { NOTIFICATIONS } from "@/lib/types"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
 import { Requests } from "./requests"
@@ -111,7 +112,7 @@ export function Chat({ portal }: { portal: Portal }) {
   const c = portal.current
   return (
     <>
-      <PageHeader title={c ? c.title || "chat" : "New chat"}>{c && <ChatMenu portal={portal} />}</PageHeader>
+      <PageHeader title={c ? c.title || "chat" : "New chat"}>{c && c.session !== NOTIFICATIONS && <ChatMenu portal={portal} />}</PageHeader>
       {!portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
       <Conversation className="min-h-0 flex-1" initial="instant" key={c ? `${c.session}:${c.loading}` : "new"}>
