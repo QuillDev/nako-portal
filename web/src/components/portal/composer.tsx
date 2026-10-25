@@ -42,8 +42,7 @@ const TALL = {
   end: "col-start-3 row-start-2 p-0 has-[>button]:mr-0",
 }
 
-// onTyping: whether the box holds text, as the person types and once a message goes out.
-type ComposerProps = { portal: Portal; draftKey: string; placeholder?: string; tall?: boolean; onTyping?: (typing: boolean) => void }
+type ComposerProps = { portal: Portal; draftKey: string; placeholder?: string; tall?: boolean }
 
 export function Composer(props: ComposerProps) {
   return (
@@ -53,7 +52,7 @@ export function Composer(props: ComposerProps) {
   )
 }
 
-function ComposerBody({ portal, draftKey, placeholder, tall, onTyping }: ComposerProps) {
+function ComposerBody({ portal, draftKey, placeholder, tall }: ComposerProps) {
   const running = Boolean(portal.current?.running)
   const [sending, setSending] = useState(false)
   const box = useRef<HTMLDivElement>(null)
@@ -79,7 +78,6 @@ function ComposerBody({ portal, draftKey, placeholder, tall, onTyping }: Compose
             if (portal.current && isCommand(message.text) && !message.files.length) {
               const prefill = await portal.command(message.text)
               localStorage.removeItem(draftKey)
-              onTyping?.(Boolean(prefill))
               // The composer clears itself once this returns; put /undo's text back after that.
               if (prefill) setTimeout(() => textInput.setInput(prefill))
               return
@@ -89,7 +87,6 @@ function ComposerBody({ portal, draftKey, placeholder, tall, onTyping }: Compose
               message.files.map(f => ({ url: f.url, filename: f.filename, mediaType: f.mediaType })),
             )
             localStorage.removeItem(draftKey)
-            onTyping?.(false)
           } finally {
             setSending(false)
           }
@@ -104,7 +101,6 @@ function ComposerBody({ portal, draftKey, placeholder, tall, onTyping }: Compose
           onKeyDownCapture={slash.onKeyDownCapture}
           onChange={e => {
             localStorage.setItem(draftKey, e.currentTarget.value)
-            onTyping?.(Boolean(e.currentTarget.value.trim()))
           }}
           placeholder={running ? "Steer or queue a message" : placeholder || "Message"}
           rows={1}
