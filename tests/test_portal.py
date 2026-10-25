@@ -345,6 +345,15 @@ async def test_pins_and_archives_are_saved_on_the_session(world):
     assert await (await world.http.get(world.url("/api/sessions"))).json() == []
 
 
+async def test_the_notifications_chat_cant_be_archived_out_of_the_sidebar(world):
+    # Archived, it drops out of the list and the bell row has nothing to open.
+    inbox = world.hermes.add_session("20261024_070707_eeeeee", "Notifications", chat="inbox")
+    await world.sign_up()
+    assert (await world.post(f"/api/sessions/{inbox}/archive", {"archived": True})).status == 400
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [(row["id"], row["notifications"]) for row in listed] == [(inbox, True)]
+
+
 async def test_a_notification_shows_the_start_of_the_reply_as_plain_text():
     from portal.hub import _preview
 
