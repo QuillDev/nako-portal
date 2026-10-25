@@ -58,7 +58,12 @@ def _settings():
     origin = str(entry.get("origin") or "").strip()
     if not origin.startswith("https://"):
         raise RuntimeError("Set plugins.entries.hermes-portal.settings.origin to the portal's https URL")
-    return home, origin.rstrip("/"), int(entry.get("port") or DEFAULT_PORT), str(entry.get("contact") or "mailto:owner@localhost")
+    android = {
+        "android_release_dir": entry.get("android_release_dir") or None,
+        "android_cert_sha256": entry.get("android_cert_sha256") or None,
+    }
+    contact = str(entry.get("contact") or "mailto:owner@localhost")
+    return home, origin.rstrip("/"), int(entry.get("port") or DEFAULT_PORT), contact, android
 
 
 def _connection_url(app, port):
@@ -134,7 +139,7 @@ class _Service:
             return settings
 
     async def _main(self, app):
-        home, origin, port, contact = await self._configured()
+        home, origin, port, contact, android = await self._configured()
         data = home / "hermes-portal"
         store = Store(data / "portal.db")
         vapid = push.Vapid(data / "vapid.pem", contact)
@@ -146,7 +151,7 @@ class _Service:
                 loop.create_task(pusher.notify(title, text, session))
 
             hub = Hub(Rpc(http, _connection_url(app, app.state.bound_port)), pins=HermesPins(home), alert=alert)
-            portal = Portal(hub, store, origin=origin, web_root=WEB_ROOT, vapid=vapid)
+            portal = Portal(hub, store, origin=origin, web_root=WEB_ROOT, vapid=vapid, **android)
             runner = web.AppRunner(portal.app(), access_log=None)
             await runner.setup()
             await web.TCPSite(runner, "127.0.0.1", port).start()
@@ -155,10 +160,10 @@ class _Service:
                 (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
                 (data / "setup-link").chmod(0o600)
                 log.info("Hermes portal has no passkey yet; a setup link is in %s", data / "setup-link")
-            await asyncio.gather(hub.serve(), _forward_inbox(store, pusher))
+            await asyncio.gather(hub.serve(), _forward_inbox(store, hub))
 
 
-async def _forward_inbox(store, pusher):
+async def _forward_inbox(store, hub):
     """Messages the gateway delivered to the portal (cron results, send_message) become notifications."""
     last = store.meta("inbox_pushed", None)
     if last is None:
@@ -169,7 +174,7 @@ async def _forward_inbox(store, pusher):
         fresh = [row for row in reversed(store.inbox(50)) if row["id"] > last]
         for row in fresh:
             first = (row["text"].strip().splitlines() or [""])[0][:180]
-            await pusher.notify("Hermes", first, None)
+            hub.notify(None, "Hermes", first)
             last = row["id"]
         if fresh:
             store.set_meta("inbox_pushed", last)

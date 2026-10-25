@@ -194,8 +194,10 @@ class FakeHermes:
         if method == "session.interrupt":
             return {"status": "interrupted"}
         if method == "session.title":
-            self.sessions[self.stored(params["session_id"])]["title"] = params["title"]
-            return {"title": params["title"]}
+            stored = self.sessions[self.stored(params["session_id"])]
+            if params.get("title") is not None:
+                stored["title"] = params["title"]
+            return {"title": stored["title"]}
         raise KeyError(f"unknown method {method}")
 
     def app(self):

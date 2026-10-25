@@ -52,6 +52,13 @@ class Hub:
         self.last_error = None
         self.attach_locks = {}
 
+    def notify(self, session, title, text):
+        """An alert for every surface: web push (via ``alert``) and every live socket, which is
+        how the Android app hears about it without Google's push service."""
+        self.alert(session, title, text)
+        frame = {"kind": "alert", "title": title, "body": text, "session": session}
+        asyncio.get_running_loop().create_task(self.broadcast(frame))
+
     def _scoped(self, params):
         return {**params, "profile": self.profile} if self.profile else params
 
@@ -134,6 +141,9 @@ class Hub:
             runtime = snapshot["session_id"]
             self.runtime[session] = runtime
             self.stored[runtime] = session
+            if not self.titles.get(session):
+                with contextlib.suppress(RpcError):
+                    self.titles[session] = (await self.rpc.call("session.title", {"session_id": runtime})).get("title") or ""
             for request in snapshot.get("open_requests") or []:
                 self.requests[str(request["id"])] = request
             inflight = snapshot.get("inflight") or {}
@@ -296,9 +306,9 @@ class Hub:
         await self._set_status(session, FAILED if outcome == "error" else DONE)
         title = self.titles.get(session) or "hermes"
         if outcome == "error":
-            self.alert(session, title, "hit an error")
+            self.notify(session, title, "hit an error")
         elif session in self.from_portal and outcome == "complete":
-            self.alert(session, title, "done")
+            self.notify(session, title, "done")
         self.from_portal.discard(session)
 
     async def _server_request(self, frame):
@@ -311,7 +321,7 @@ class Hub:
         await self._set_status(session, NEEDS_YOU)
         await self._publish(session, {"kind": "request", "request": _request_view(frame)})
         what = {"approval": "needs your ok", "clarify": "has a question"}.get(frame.get("method"), "needs the desktop app")
-        self.alert(session, self.titles.get(session) or "hermes", what)
+        self.notify(session, self.titles.get(session) or "hermes", what)
 
     async def _settle(self, rid):
         frame = self.requests.pop(rid, None)

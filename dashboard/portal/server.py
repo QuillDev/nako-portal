@@ -24,6 +24,8 @@ MEDIA = re.compile(r"(?m)^MEDIA:(/[^\r\n]+)$")
 MAX_FILE = 25 * 1024 * 1024
 MAX_BODY = 60 * 1024 * 1024
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
+ANDROID_APK_PATH = "/android/hermes.apk"
+ANDROID_PACKAGE = "moe.nakode.hermes"
 CSP = (
     "default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; "
     "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
@@ -31,14 +33,33 @@ CSP = (
 
 
 class Portal:
-    def __init__(self, hub, store, *, origin, web_root, rp_name="Hermes Portal", vapid=None, clock=time.time):
+    def __init__(
+        self,
+        hub,
+        store,
+        *,
+        origin,
+        web_root,
+        rp_name="Hermes Portal",
+        vapid=None,
+        android_release_dir=None,
+        android_cert_sha256=None,
+        clock=time.time,
+    ):
         self.vapid = vapid
+        self.android_release_dir = Path(android_release_dir) if android_release_dir else None
+        # The release key's SHA-256 fingerprint; lets the Android app use passkeys for this site.
+        self.android_cert_sha256 = android_cert_sha256
         parsed = urlparse(origin)
         if parsed.scheme not in {"https", "http"} or not parsed.hostname:
             raise ValueError("origin must be an http(s) URL")
         self.hub = hub
         self.store = store
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
+        # Passkey ceremonies from the Android app carry its signing-key origin, not the site's.
+        self.origins = {self.origin}
+        if android_cert_sha256:
+            self.origins.add(webauthn.android_origin(android_cert_sha256))
         self.rp_id = parsed.hostname
         self.rp_name = rp_name
         self.web_root = Path(web_root).resolve()
@@ -74,6 +95,9 @@ class Portal:
         r.add_get("/api/inbox", self.inbox)
         r.add_get("/api/push/key", self.push_key)
         r.add_post("/api/push/subscribe", self.push_subscribe)
+        r.add_get("/api/android/release", self.android_release)
+        r.add_get(ANDROID_APK_PATH, self.android_apk)
+        r.add_get("/.well-known/assetlinks.json", self.assetlinks)
         r.add_get("/ws", self.socket)
         r.add_get("/{path:.*}", self.static)
         return app
@@ -193,7 +217,7 @@ class Portal:
             client_data_json=webauthn.unb64url(credential.get("clientDataJSON", "")),
             attestation_object=webauthn.unb64url(credential.get("attestationObject", "")),
             challenge=entry["challenge"],
-            origin=self.origin,
+            origin=self.origins,
             rp_id=self.rp_id,
         )
         if entry["setup"] is not None and not self.store.use_setup_link(entry["setup"]):
@@ -233,7 +257,7 @@ class Portal:
             authenticator_data=webauthn.unb64url(credential.get("authenticatorData", "")),
             signature=webauthn.unb64url(credential.get("signature", "")),
             challenge=entry["challenge"],
-            origin=self.origin,
+            origin=self.origins,
             rp_id=self.rp_id,
             cose_key=stored["cose_key"],
             stored_sign_count=stored["sign_count"],
@@ -381,6 +405,51 @@ class Portal:
             raise ValueError("That isn't a push subscription")
         self.store.add_push(endpoint, {"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])})
         return web.json_response({"ok": True})
+
+    # Android app: self-updates from a signed release CI published, and passkeys via Digital Asset Links.
+
+    def _published_release(self):
+        if self.android_release_dir is None:
+            return None
+        try:
+            manifest = json.loads((self.android_release_dir / "android-release.json").read_text())
+            apk = self.android_release_dir / "hermes.apk"
+            code, name, sha, size = manifest["versionCode"], manifest["versionName"], manifest["sha256"], manifest["sizeBytes"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        valid = (
+            isinstance(code, int) and code > 0 and isinstance(name, str) and name
+            and isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)
+            and isinstance(size, int) and apk.is_file() and apk.stat().st_size == size
+        )
+        if not valid:
+            return None
+        return {"versionCode": code, "versionName": name, "sha256": sha, "sizeBytes": size, "apkUrl": ANDROID_APK_PATH}
+
+    async def android_release(self, request):
+        self._require(request)
+        release = self._published_release()
+        if release is None:
+            raise web.HTTPNotFound()
+        return web.json_response(release)
+
+    async def android_apk(self, request):
+        self._require(request)
+        if self._published_release() is None:
+            raise web.HTTPNotFound()
+        return web.FileResponse(
+            self.android_release_dir / "hermes.apk",
+            headers={"Content-Type": "application/vnd.android.package-archive", "Cache-Control": "no-store"},
+        )
+
+    async def assetlinks(self, request):
+        if not self.android_cert_sha256:
+            raise web.HTTPNotFound()
+        statement = {
+            "relation": ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
+            "target": {"namespace": "android_app", "package_name": ANDROID_PACKAGE, "sha256_cert_fingerprints": [self.android_cert_sha256]},
+        }
+        return web.json_response([statement])
 
     async def socket(self, request):
         self._require(request)

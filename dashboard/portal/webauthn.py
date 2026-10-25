@@ -30,6 +30,12 @@ class WebAuthnError(ValueError):
     pass
 
 
+def android_origin(cert_sha256: str) -> str:
+    """The origin Android's Credential Manager signs for an app, from its signing cert's SHA-256 (AA:BB:...)."""
+    raw = bytes.fromhex(cert_sha256.replace(":", ""))
+    return "android:apk-key-hash:" + b64url(raw)
+
+
 def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
@@ -68,7 +74,7 @@ def parse_auth_data(raw: bytes) -> AuthData:
     return data
 
 
-def _client_data(raw: bytes, ceremony: str, challenge: bytes, origin: str) -> None:
+def _client_data(raw: bytes, ceremony: str, challenge: bytes, origin) -> None:
     try:
         client = json.loads(raw)
     except ValueError as error:
@@ -77,7 +83,8 @@ def _client_data(raw: bytes, ceremony: str, challenge: bytes, origin: str) -> No
         raise WebAuthnError("wrong ceremony type")
     if unb64url(str(client.get("challenge", ""))) != challenge:
         raise WebAuthnError("challenge mismatch")
-    if client.get("origin") != origin:
+    allowed = {origin} if isinstance(origin, str) else set(origin)
+    if client.get("origin") not in allowed:
         raise WebAuthnError("origin mismatch")
     if client.get("crossOrigin"):
         raise WebAuthnError("cross-origin ceremony")
@@ -114,7 +121,7 @@ class Registered:
     sign_count: int
 
 
-def verify_registration(*, client_data_json: bytes, attestation_object: bytes, challenge: bytes, origin: str, rp_id: str) -> Registered:
+def verify_registration(*, client_data_json: bytes, attestation_object: bytes, challenge: bytes, origin, rp_id: str) -> Registered:
     _client_data(client_data_json, "webauthn.create", challenge, origin)
     try:
         attestation = cbor.loads(attestation_object)
@@ -139,7 +146,7 @@ def verify_assertion(
     authenticator_data: bytes,
     signature: bytes,
     challenge: bytes,
-    origin: str,
+    origin,
     rp_id: str,
     cose_key: bytes,
     stored_sign_count: int,
