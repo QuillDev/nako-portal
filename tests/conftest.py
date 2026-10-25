@@ -128,6 +128,7 @@ class FakeGateway:
         # Hermes profiles the gateway serves; the portal shows one at a time.
         self.profile_names = ["default", "work", "research"]
         self.profile = "default"
+        self.profile_models = {}
 
     def add_session(self, sid, title, chat=None, messages=(), profile=None):
         self.sessions[sid] = {
@@ -181,6 +182,17 @@ class FakeGateway:
 
     def profiles(self):
         return {"profile": self.profile, "profiles": list(self.profile_names)}
+
+    def models(self):
+        return [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}, {"provider": "big", "label": "Big Co", "models": ["large"]}]
+
+    def model(self):
+        return dict(self.profile_models.get(self.profile, {"provider": "fast", "model": "tiny"}))
+
+    def set_model(self, provider, model):
+        if not any(p["provider"] == provider and model in p["models"] for p in self.models()):
+            raise ValueError("Model not found for that provider")
+        self.profile_models[self.profile] = {"provider": provider, "model": model}
 
     def use_profile(self, name):
         if name not in self.profile_names:

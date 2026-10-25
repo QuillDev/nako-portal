@@ -13,7 +13,7 @@ import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
-import { SignOffSettings } from "./sign-off-settings"
+import { type ModelChoice, ModelPicker, SignOffSettings } from "./sign-off-settings"
 
 const THEMES: Theme[] = ["system", "light", "dark"]
 
@@ -49,13 +49,31 @@ function Segmented<T extends string>({ options, value, onPick }: { options: read
 
 type Profiles = { profile: string; profiles: string[] }
 
-// Which Hermes profile the portal shows. Switching swaps every chat for that profile's.
-function ProfileRow({ onError }: { onError: (message: string) => void }) {
+// Which Hermes profile the portal shows, and the model that profile runs on. Switching
+// profiles swaps every chat for that profile's; the model belongs to the profile shown.
+function ProfileRows({ onError }: { onError: (message: string) => void }) {
   const [state, setState] = useState<Profiles | null>(null)
-  useEffect(() => void api<Profiles>("/api/profile").then(setState, e => onError((e as Error).message)), [onError])
-  if (!state || state.profiles.length < 2) return null
-  const pick = (profile: string) =>
-    profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, e => onError((e as Error).message))
+  const [model, setModel] = useState<ModelChoice | null>(null)
+  const fail = useCallback((e: unknown) => onError((e as Error).message), [onError])
+  useEffect(() => void api<Profiles>("/api/profile").then(setState, fail), [fail])
+  const shown = state?.profile
+  useEffect(() => {
+    if (!shown) return
+    setModel(null)
+    api<ModelChoice>("/api/model").then(setModel, fail)
+  }, [shown, fail])
+  if (!state) return null
+  const pick = (profile: string) => profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, fail)
+  const pickModel = (provider: string, chosen: string) => api<ModelChoice>("/api/model", { method: "POST", body: { provider, model: chosen } }).then(setModel, fail)
+  return (
+    <>
+      {state.profiles.length > 1 && <ProfileRow onPick={pick} state={state} />}
+      <Row label="Model">{model && <ModelPicker onPick={pickModel} value={model} />}</Row>
+    </>
+  )
+}
+
+function ProfileRow({ state, onPick: pick }: { state: Profiles; onPick: (profile: string) => void }) {
   return (
     <Row label="Profile">
       <Select onValueChange={pick} value={state.profile}>
@@ -128,7 +146,7 @@ export function Settings({ portal }: { portal: Portal }) {
           </Row>
         </Section>
         <Section defaultOpen title="Nako">
-          <ProfileRow onError={setError} />
+          <ProfileRows onError={setError} />
           <Row label="Sticker while she works">
             <Switch checked={presence} label="Sticker while she works" onCheckedChange={setPresence} />
           </Row>

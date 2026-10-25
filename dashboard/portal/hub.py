@@ -22,6 +22,7 @@ backend:
   sign_off_model() -> {provider, model}     / set_sign_off_model(provider, model)
   profiles() -> {profile, profiles}         the Hermes profile shown, and the ones served
   use_profile(name) -> profiles()           show another profile's chats (ValueError if not served)
+  models() / model() / set_model(provider, model)   the shown profile's own model (ValueError if refused)
 """
 
 from __future__ import annotations

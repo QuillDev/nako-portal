@@ -8,12 +8,14 @@ import { api } from "@/lib/api"
 import { Row } from "./settings"
 
 type Provider = { provider: string; label: string; models: string[] }
-type SignOff = { on: boolean; provider: string; model: string; providers: Provider[] }
+// A chosen model and what else could be picked.
+export type ModelChoice = { provider: string; model: string; providers: Provider[] }
+type SignOff = ModelChoice & { on: boolean }
 
 // Plain substring match on the model or provider name.
 const matches = (query: string, ...texts: string[]) => texts.some(t => t.toLowerCase().includes(query.trim().toLowerCase()))
 
-function ModelPicker({ value, onPick }: { value: SignOff; onPick: (provider: string, model: string) => void }) {
+export function ModelPicker({ value, onPick, label = "Model" }: { value: ModelChoice; onPick: (provider: string, model: string) => void; label?: string }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   return (
@@ -24,7 +26,7 @@ function ModelPicker({ value, onPick }: { value: SignOff; onPick: (provider: str
       </Button>
       <Dialog onOpenChange={setOpen} open={open}>
         <DialogContent className="overflow-hidden p-0" showCloseButton={false}>
-          <DialogTitle className="sr-only">Sign-off model</DialogTitle>
+          <DialogTitle className="sr-only">{label}</DialogTitle>
           <Command shouldFilter={false}>
             <CommandInput onValueChange={setQuery} placeholder="Search models" value={query} />
             <CommandList className="max-h-[60vh]">
@@ -73,7 +75,7 @@ export function SignOffSettings({ onError }: { onError: (message: string) => voi
       </Row>
       {state.on && (
         <Row label="Sign-off model">
-          <ModelPicker onPick={(provider, model) => save({ provider, model })} value={state} />
+          <ModelPicker label="Sign-off model" onPick={(provider, model) => save({ provider, model })} value={state} />
         </Row>
       )}
     </>
