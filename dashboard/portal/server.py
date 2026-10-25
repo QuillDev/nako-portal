@@ -17,7 +17,8 @@ from urllib.parse import urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
-from .hub import page
+from .hub import NEEDS_YOU, WORKING, page
+from .link import GATEWAY_PATH
 from .media import shown_files
 
 log = logging.getLogger("hermes.portal")
@@ -77,12 +78,6 @@ class Portal:
         self.hub = hub
         self.store = store
         hub.sign_off_on = store.meta("signoff", "on") != "off"
-        saved = store.meta("profile", None)
-        if saved:
-            try:
-                hub.backend.use_profile(saved)
-            except Exception:
-                log.warning("portal: can't show saved profile %r; showing the default", saved, exc_info=True)
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         # Passkey ceremonies from the Android app carry its signing-key origin, not the site's.
         self.origins = {self.origin}
@@ -96,6 +91,27 @@ class Portal:
         # __Host- cookies need https; plain http is only ever a local test.
         self.cookie = "__Host-portal" if parsed.scheme == "https" else "portal"
         self.secure = parsed.scheme == "https"
+
+    async def gateway_changed(self, connected):
+        """A gateway connected (show the saved profile, then say so) or went away. Turns and
+        questions die with the gateway, so the chats stop showing them as running."""
+        if connected:
+            saved = self.store.meta("profile", None)
+            if saved:
+                try:
+                    await asyncio.to_thread(self.hub.backend.use_profile, saved)
+                except Exception:
+                    log.warning("portal: can't show saved profile %r; showing the default", saved, exc_info=True)
+            self.hub.connected = True
+            await self.hub.broadcast({"kind": "hub.connected"})
+            return
+        self.hub.connected = False
+        self.hub.running.clear()
+        self.hub.requests.clear()
+        for session, status in list(self.hub.status.items()):
+            if status in (WORKING, NEEDS_YOU):
+                del self.hub.status[session]
+        await self.hub.broadcast({"kind": "hub.disconnected"})
 
     # Plumbing
 
@@ -143,8 +159,9 @@ class Portal:
         r.add_get("/{path:.*}", self.static)
         return app
 
-    def local_app(self, token):
-        """Starts chats for scripts on this machine (an agent handing work to a new thread).
+    def local_app(self, token, link=None):
+        """Starts chats for scripts on this machine (an agent handing work to a new thread), and
+        is where the gateway dials in (`link`).
 
         Served on its own loopback port, never through the public origin, and every call
         carries the token from a 0600 file only this account can read.
@@ -189,6 +206,8 @@ class Portal:
         app.router.add_post("/sessions", start)
         app.router.add_post("/sessions/{session}/messages", send)
         app.router.add_post("/sessions/{session}/handoff", handoff)
+        if link is not None:
+            app.router.add_get(GATEWAY_PATH, link.handle)
         return app
 
     @web.middleware

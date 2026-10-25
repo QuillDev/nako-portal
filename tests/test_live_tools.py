@@ -29,7 +29,7 @@ def plugin_hooks():
 async def test_tool_calls_in_a_running_turn_reach_the_open_chat_live(world):
     sid = world.hermes.add_session("20261025_101010_cccccc", "flaky ci", messages=[("user", "why is shard 3 red")])
     plugin, hooks = plugin_hooks()
-    plugin._LIVE_TOOLS.update(hub=world.hub, loop=asyncio.get_running_loop())
+    plugin._LIVE_TOOLS.update(link=world.client, loop=asyncio.get_running_loop())
     release = asyncio.Event()
 
     async def turn(chat, session):

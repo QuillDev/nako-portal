@@ -1,7 +1,7 @@
 import aiohttp
 import pytest
 
-from conftest import ORIGIN, ROOT, Backend, Hub, Portal, next_message
+from conftest import ORIGIN, next_message
 
 pytestmark = pytest.mark.asyncio
 
@@ -52,12 +52,13 @@ async def test_an_unknown_profile_is_refused_and_nothing_changes(world):
     assert await ids(world) == {"work"}
 
 
-async def test_the_chosen_profile_survives_a_restart(world):
+async def test_the_chosen_profile_survives_a_gateway_restart(world):
     await world.sign_up()
     await world.post("/api/profile", {"profile": "work"})
 
+    await world.gateway.stop(world.hub)
     world.hermes.profile = "default"  # a fresh gateway starts on the default profile
-    Portal(Hub(Backend(world.hermes)), world.store, origin=ORIGIN, web_root=ROOT / "dashboard" / "web")
+    await world.gateway.start(world.hub)
     assert world.hermes.profile == "work"
 
 

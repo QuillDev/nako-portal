@@ -24,11 +24,13 @@ sys.path.insert(0, str(ROOT / "dashboard"))
 from portal import webauthn  # noqa: E402
 from portal import hub as hub_module  # noqa: E402
 from portal.hub import Hub  # noqa: E402
+from portal.link import GatewayClient, GatewayLink  # noqa: E402
 from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
 
 ORIGIN = "http://portal.test"
 LOCAL_TOKEN = "local-test-token"
+SERVER_CODE = "test-code"
 
 
 # --- CBOR encoding, just enough to play an authenticator ---
@@ -284,6 +286,46 @@ class Backend:
         return getattr(self.fake, "sessions_list" if name == "sessions" else name)
 
 
+class HubOverLink:
+    """What the fake gateway tells the hub, sent over the link like the real adapter does."""
+
+    def __init__(self, client):
+        self.client = client
+
+    def __getattr__(self, name):
+        return lambda *args: self.client.call(name, *args)
+
+
+class Gateway:
+    """The gateway's end of the link, dialled in from the same loop the way the adapter does."""
+
+    def __init__(self, hermes, local_server, http):
+        self.hermes = hermes
+        self.url = str(local_server.make_url("/gateway"))
+        self.http = http
+        self.client = None
+        self.task = None
+
+    async def start(self, hub, code=SERVER_CODE):
+        self.client = GatewayClient(self.url, LOCAL_TOKEN, code, Backend(self.hermes))
+        self.hermes.hub = HubOverLink(self.client)
+        self.task = asyncio.get_running_loop().create_task(self.client.run(self.http))
+        await until(lambda: hub.connected)
+
+    async def stop(self, hub):
+        self.task.cancel()
+        await asyncio.gather(self.task, return_exceptions=True)
+        await until(lambda: not hub.connected)
+
+
+async def until(check, timeout=5):
+    async def wait():
+        while not check():
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(wait(), timeout)
+
+
 class World:
     def __init__(self, hermes, store, portal_server, http, hub):
         self.hermes = hermes
@@ -292,6 +334,11 @@ class World:
         self.http = http
         self.hub = hub
         self.alerts = []
+        self.gateway = None
+
+    @property
+    def client(self):
+        return self.gateway.client
 
     def url(self, path):
         return str(self.server.make_url(path))
@@ -315,19 +362,28 @@ async def world(tmp_path, monkeypatch):
     hermes = FakeGateway()
     store = Store(tmp_path / "portal" / "portal.db")
     alerts = []
-    hub = Hub(Backend(hermes), alert=lambda *a: alerts.append(a))
-    hermes.hub = hub
+    # The portal server as it runs on its own, with the fake gateway dialled in over the link.
+    link = GatewayLink(SERVER_CODE)
+    hub = Hub(link, alert=lambda *a: alerts.append(a))
+    link.serve(hub)
     portal = Portal(hub, store, origin=ORIGIN, web_root=ROOT / "dashboard" / "web")
+    link.on_change = portal.gateway_changed
     portal_server = TestServer(portal.app())
     await portal_server.start_server()
-    local_server = TestServer(portal.local_app(LOCAL_TOKEN))
+    local_server = TestServer(portal.local_app(LOCAL_TOKEN, link))
     await local_server.start_server()
     jar = aiohttp.CookieJar(unsafe=True)
-    async with aiohttp.ClientSession(cookie_jar=jar) as http:
+    async with aiohttp.ClientSession(cookie_jar=jar) as http, aiohttp.ClientSession() as gateway_http:
         w = World(hermes, store, portal_server, http, hub)
         w.alerts = alerts
         w.local = local_server
+        w.link = link
+        w.gateway = Gateway(hermes, local_server, gateway_http)
+        await w.gateway.start(hub)
         yield w
+        if w.gateway.task is not None:
+            w.gateway.task.cancel()
+            await asyncio.gather(w.gateway.task, return_exceptions=True)
     await local_server.close()
     await portal_server.close()
 
