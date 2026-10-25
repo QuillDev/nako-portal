@@ -66,7 +66,7 @@ export function Chat({ portal }: { portal: Portal }) {
   return (
     <>
       <PageHeader title={c ? c.title || "chat" : "New chat"}>{c && <ChatMenu portal={portal} />}</PageHeader>
-      {!portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">hermes is offline. messages will work again once it reconnects.</p>}
+      {!portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>}
       <Conversation className="min-h-0 flex-1">
         <ConversationContent className="mx-auto w-full max-w-3xl">
           {!c && <ConversationEmptyState description="" title="what are we working on?" />}

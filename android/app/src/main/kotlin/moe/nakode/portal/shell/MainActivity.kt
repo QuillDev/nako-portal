@@ -1,4 +1,4 @@
-package moe.nakode.hermes.shell
+package moe.nakode.portal.shell
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -6,12 +6,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.inputmethod.EditorInfo
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
@@ -24,6 +26,7 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -42,8 +45,9 @@ import androidx.lifecycle.lifecycleScope
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.launch
-import moe.nakode.hermes.notify.AlertService
-import moe.nakode.hermes.update.AppUpdater
+import moe.nakode.portal.R
+import moe.nakode.portal.notify.AlertService
+import moe.nakode.portal.update.AppUpdater
 
 /**
  * Hosts the portal's web app in a WebView: every web deploy updates the app, and
@@ -236,12 +240,12 @@ class MainActivity : ComponentActivity() {
             hint = "portal.example.com"
             setText(origin?.value.orEmpty())
             setTextColor(Color.WHITE)
-            setHintTextColor(Color.GRAY)
+            setHintTextColor(MUTED)
             isSingleLine = true
             inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
             imeOptions = EditorInfo.IME_ACTION_GO
         }
-        val message = label(error ?: "Portal address", if (error == null) Color.LTGRAY else ERROR)
+        val message = label(error ?: "Portal address", if (error == null) MUTED else ERROR)
         val connect = Button(this).apply { text = "Connect" }
         val submit = {
             val parsed = ServerOrigin.parse(input.text.toString())
@@ -258,7 +262,7 @@ class MainActivity : ComponentActivity() {
             submit()
             true
         }
-        root.addView(column(label("Hermes", Color.WHITE, 30f), message, input, connect))
+        root.addView(column(portrait(), label("Nako", Color.WHITE, 30f), message, input, connect))
         input.requestFocus()
     }
 
@@ -273,7 +277,21 @@ class MainActivity : ComponentActivity() {
             text = "Change address"
             setOnClickListener { showServerPrompt(null) }
         }
-        root.addView(column(label("Can't reach ${server.value}", Color.WHITE, 18f), label(detail.orEmpty(), Color.GRAY), retry, change))
+        root.addView(column(label("Can't reach ${server.value}", Color.WHITE, 18f), label(detail.orEmpty(), MUTED), retry, change))
+    }
+
+    private fun portrait() = ImageView(this).apply {
+        val size = (88 * resources.displayMetrics.density).toInt()
+        setImageResource(R.drawable.nako)
+        contentDescription = "Nako"
+        scaleType = ImageView.ScaleType.CENTER_CROP
+        outlineProvider = ViewOutlineProvider.BACKGROUND
+        background = GradientDrawable().apply { shape = GradientDrawable.OVAL }
+        clipToOutline = true
+        layoutParams = LinearLayout.LayoutParams(size, size).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            bottomMargin = size / 5
+        }
     }
 
     private fun label(text: String, color: Int, size: Float = 15f) = TextView(this).apply {
@@ -288,13 +306,14 @@ class MainActivity : ComponentActivity() {
         gravity = Gravity.CENTER
         val pad = (24 * resources.displayMetrics.density).toInt()
         setPadding(pad, pad, pad, pad)
-        views.forEach { addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+        views.forEach { addView(it, it.layoutParams as? LinearLayout.LayoutParams ?: LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
         layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
     companion object {
         const val EXTRA_SESSION = "session"
-        private val BACKGROUND = "#111111".toColorInt()
+        private val BACKGROUND = "#0D0A11".toColorInt()
+        private val MUTED = "#B6A4B1".toColorInt()
         private val ERROR = "#F87171".toColorInt()
     }
 }

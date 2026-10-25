@@ -91,7 +91,7 @@ def _adapter(config):
 def register(ctx):
     ctx.register_platform(
         name="portal",
-        label="Hermes Portal",
+        label="Nako",
         adapter_factory=_adapter,
         check_fn=_check,
         validate_config=_validate,
@@ -101,5 +101,5 @@ def register(ctx):
         max_message_length=0,
         emoji="🪟",
         pii_safe=True,
-        platform_hint="You are writing to the user's private Hermes Portal inbox. It renders markdown.",
+        platform_hint="You are writing to the user's private Nako app inbox. It renders markdown.",
     )

@@ -1,4 +1,4 @@
-package moe.nakode.hermes.update
+package moe.nakode.portal.update
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json

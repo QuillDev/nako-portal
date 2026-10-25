@@ -1,4 +1,4 @@
-package moe.nakode.hermes.notify
+package moe.nakode.portal.notify
 
 import android.content.BroadcastReceiver
 import android.content.Context

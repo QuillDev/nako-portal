@@ -1,4 +1,4 @@
-package moe.nakode.hermes.update
+package moe.nakode.portal.update
 
 import android.content.BroadcastReceiver
 import android.content.Context

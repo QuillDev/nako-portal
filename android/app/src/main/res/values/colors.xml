@@ -1,3 +1,4 @@
 <resources>
-    <color name="background">#111111</color>
+    <color name="background">#0D0A11</color>
+    <color name="accent">#EC4899</color>
 </resources>
