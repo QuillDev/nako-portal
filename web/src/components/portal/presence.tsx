@@ -18,7 +18,7 @@ const FAILED = "hmm, that didn't work"
 const SHOWN_TOOLS = 3
 // How long to wait for the model's line, and how long a sign-off stays up.
 const SIGN_OFF_WAIT_MS = 5000
-const SIGN_OFF_MS = 6000
+const SIGN_OFF_MS = 8000
 
 function Dots() {
   return (
@@ -59,9 +59,10 @@ function useSignOff(running: boolean, outcome: Status | null | undefined, line: 
       return () => clearTimeout(timer)
     }
   }, [phase, line])
-  if (phase === "waiting") return { text: "", waiting: true }
-  if (phase === "shown") return { text: (fallback === FAILED ? "" : line) || fallback, waiting: false }
-  return { text: "", waiting: false }
+  // She keeps her happy face while she signs off, and only waves for the next message after.
+  if (phase === "waiting") return { text: "", waiting: true, proud: true }
+  if (phase === "shown") return { text: (fallback === FAILED ? "" : line) || fallback, waiting: false, proud: fallback !== FAILED }
+  return { text: "", waiting: false, proud: false }
 }
 
 // Nako docked above the composer. During a turn her sticker shows what she's doing with a bubble
@@ -76,9 +77,9 @@ export function Presence({
 }: { live: Live | null; running: boolean; outcome?: Status | null; signOff: string; typing: boolean }) {
   const signOff = useSignOff(running, outcome, line)
   if (!running && typing) return null
-  const now: Activity = running ? activity(live) : "idle"
+  const now: Activity = running ? activity(live) : signOff.proud ? "replying" : "idle"
   const tools = now === "tools" ? (live?.tools ?? []).slice(-SHOWN_TOOLS) : []
-  const said = now === "idle" ? signOff.text : SAYS[now]
+  const said = running ? SAYS[now as keyof typeof SAYS] : signOff.text
   const dots = (running && now !== "tools") || signOff.waiting
   return (
     <div aria-live="polite" className="mx-auto flex w-full max-w-3xl items-end gap-2.5 px-4 pb-1" data-activity={now}>
