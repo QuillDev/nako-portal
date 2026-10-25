@@ -11,14 +11,17 @@ const HEART =
 export function burstHearts(origin?: Element | null) {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return
   const box = origin?.getBoundingClientRect()
-  const x = box ? box.left + box.width / 2 : window.innerWidth / 2
+  const left = box ? box.left : 0
+  const width = box ? box.width : window.innerWidth
   const y = box ? box.top : window.innerHeight - 80
-  const spread = Math.min(box?.width ?? 260, 260)
+  // One heart per ~32px, spaced evenly across the composer with a little jitter.
+  const count = Math.max(8, Math.min(28, Math.round(width / 32)))
+  const slot = width / count
 
   const layer = document.createElement("div")
   layer.className = "hearts-layer"
   let longest = 0
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < count; i++) {
     const heart = document.createElement("span")
     heart.className = "heart"
     heart.innerHTML = HEART
@@ -27,14 +30,14 @@ export function burstHearts(origin?: Element | null) {
     const delay = Math.random() * 400
     longest = Math.max(longest, duration + delay)
     Object.assign(heart.style, {
-      left: `${x + (Math.random() - 0.5) * spread - size / 2}px`,
+      left: `${Math.min(Math.max(left + slot * (i + 0.2 + Math.random() * 0.6) - size / 2, left), left + width - size)}px`,
       top: `${y - size}px`,
       width: `${size}px`,
       height: `${size}px`,
       animationDuration: `${duration}ms`,
       animationDelay: `${delay}ms`,
     })
-    heart.style.setProperty("--dx", `${(Math.random() - 0.5) * 120}px`)
+    heart.style.setProperty("--dx", `${(Math.random() - 0.5) * 40}px`)
     heart.style.setProperty("--rise", `${-(120 + Math.random() * 180)}px`)
     heart.style.setProperty("--rot", `${(Math.random() - 0.5) * 40}deg`)
     layer.appendChild(heart)
