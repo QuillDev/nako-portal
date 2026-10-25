@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
+from .hub import page
 from .media import shown_files
 from .rpc import RpcError
 
@@ -32,6 +33,12 @@ CSP = (
     "default-src 'self'; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; "
     "connect-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
 )
+
+
+def _index(raw):
+    if not raw.isdigit():
+        raise ValueError("bad transcript position")
+    return int(raw)
 
 
 class Portal:
@@ -302,7 +309,11 @@ class Portal:
     async def open(self, request):
         self._require(request)
         hub = await self._hub()
-        return web.json_response(await hub.open(self._session(request)))
+        opened = await hub.open(self._session(request))
+        query = request.query
+        window = {key: _index(query[key]) for key in ("before", "since") if key in query}
+        opened["start"], opened["messages"] = page(opened["messages"], **window)
+        return web.json_response(opened)
 
     async def _message(self, request):
         form = await request.post()

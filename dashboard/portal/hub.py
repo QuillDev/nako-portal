@@ -32,6 +32,8 @@ DONE = "done"
 FAILED = "failed"
 MAX_FILE = 25 * 1024 * 1024
 PREVIEW_CHARS = 280
+# Prompts and replies in one page of a transcript; tool rows between them come along.
+PAGE_MESSAGES = 30
 
 
 class Hub:
@@ -369,6 +371,27 @@ class Hub:
                     await self.rpc.close()
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
+
+
+def page(messages, *, before=None, since=None, limit=PAGE_MESSAGES):
+    """A window of a transcript and the index it starts at.
+
+    `since` reads from that index to the end, which refreshes what a client already shows.
+    Otherwise it's the last `limit` prompts and replies before `before` (the end when absent),
+    with the tool rows between them. A page always starts on a prompt or reply, so a run of
+    tool calls is never split across two pages.
+    """
+    total = len(messages)
+    if since is not None:
+        start = min(max(since, 0), total)
+        return start, messages[start:]
+    end = total if before is None else min(max(before, 0), total)
+    start, seen = end, 0
+    while start > 0 and seen < limit:
+        start -= 1
+        if messages[start].get("role") != "tool":
+            seen += 1
+    return start, messages[start:end]
 
 
 def _is_shown(message):
