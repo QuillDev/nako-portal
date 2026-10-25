@@ -38,9 +38,8 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
   const [filter, setFilter] = useState("")
   const rename = useRenameDialog(portal)
   const needle = filter.trim().toLowerCase()
-  const matches = portal.sessions.filter(s => !needle || s.title.toLowerCase().includes(needle))
-  const inbox = matches.filter(s => s.notifications)
-  const rows = matches.filter(s => !s.notifications)
+  const rows = portal.sessions.filter(s => !s.notifications && (!needle || s.title.toLowerCase().includes(needle)))
+  const inbox = portal.sessions.find(s => s.notifications)
   const open = portal.route.view === "chat" ? portal.route.session : null
 
   const item = (s: SessionRow) => (
@@ -51,7 +50,6 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
           onClick={() => go(`#/c/${s.id}`)}
           type="button"
         >
-          {s.notifications && <BellIcon className="size-4 shrink-0 text-muted-foreground" />}
           <span className="min-w-0 flex-1 truncate">{s.title}</span>
           {s.status && DOT[s.status] && <span className={cn("size-2 shrink-0 rounded-full", DOT[s.status])} title={s.status} />}
         </button>
@@ -84,8 +82,22 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         <Input aria-label="Search chats" onChange={e => setFilter(e.target.value)} placeholder="Search" type="search" value={filter} />
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {inbox.length > 0 && <div className="pt-2">{inbox.map(item)}</div>}
-        {rows.length === 0 && inbox.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
+        {/* Always first. The dot is green while a post waits unread, or shows the chat's status. */}
+        <button
+          className={cn("mt-2 flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent", inbox && open === inbox.id && "bg-accent")}
+          disabled={!inbox}
+          onClick={() => inbox && go(`#/c/${inbox.id}`)}
+          type="button"
+        >
+          <BellIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate">{inbox?.title || "Notifications"}</span>
+          {inbox?.status && DOT[inbox.status] ? (
+            <span className={cn("size-2 shrink-0 rounded-full", DOT[inbox.status])} title={inbox.status} />
+          ) : (
+            inbox?.unread && open !== inbox.id && <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="new notification" />
+          )}
+        </button>
+        {rows.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
         {groups(rows).map(([label, items]) => (
           <div key={label}>
             <p className="px-2 pt-3 pb-1 text-muted-foreground text-xs">{label}</p>

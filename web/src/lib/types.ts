@@ -7,6 +7,8 @@ export type SessionRow = {
   pinned?: boolean
   // The one chat posts to the portal (cron deliveries) land in; it sits above every other chat.
   notifications?: boolean
+  // A post landed in the notifications chat since it was last opened.
+  unread?: boolean
   status?: Status | null
 }
 

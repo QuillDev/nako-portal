@@ -70,6 +70,8 @@ export function usePortal() {
         return { ...opened, start: opened.start - kept.length, messages: [...kept, ...opened.messages], loading: false, loadingOlder: c.loadingOlder }
       })
       if (!opened.running) setLive(null)
+      // Opening the notifications chat marks its posts seen on the server too.
+      setSessions(rows => (rows.some(r => r.id === session && r.unread) ? rows.map(r => (r.id === session ? { ...r, unread: false } : r)) : rows))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -101,7 +103,10 @@ export function usePortal() {
         case "hub.disconnected":
           return setConnected(false)
         case "sessions.changed":
-          return void loadSessions()
+          loadSessions()
+          // A post can land in the open notifications chat; reading it there also marks it seen.
+          if (currentRef.current && !currentRef.current.running) refresh(currentRef.current.session)
+          return
         case "status":
           setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status } : r)))
           return

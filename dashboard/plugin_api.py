@@ -195,6 +195,8 @@ async def _forward_inbox(store, hub):
             last = row["id"]
         if fresh:
             store.set_meta("inbox_pushed", last)
+            # Hermes mirrors a cron post into the notifications chat right after it lands here.
+            await hub.broadcast({"kind": "sessions.changed"})
 
 
 _service = _Service()

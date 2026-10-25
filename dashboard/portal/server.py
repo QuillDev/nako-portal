@@ -362,12 +362,20 @@ class Portal:
     async def sessions(self, request):
         self._require(request)
         hub = await self._hub()
-        return web.json_response(await hub.sessions())
+        rows = await hub.sessions()
+        for row in rows:
+            # A post nobody has opened the chat for since: the sidebar marks it.
+            row["unread"] = row["notifications"] and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
+        return web.json_response(rows)
 
     async def open(self, request):
         self._require(request)
         hub = await self._hub()
-        opened = await hub.open(self._session(request))
+        session = self._session(request)
+        opened = await hub.open(session)
+        listed = next((row for row in await hub.sessions() if row["id"] == session), None)
+        if listed and listed["notifications"]:
+            self.store.set_meta(f"seen:{session}", listed["message_count"])
         query = request.query
         window = {key: _index(query[key]) for key in ("before", "since") if key in query}
         opened["start"], opened["messages"] = page(opened["messages"], **window)
