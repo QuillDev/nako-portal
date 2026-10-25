@@ -472,7 +472,26 @@ def _adapter(config):
     return PortalAdapter(config)
 
 
+# The chat UI draws tool calls and mid-turn commentary from the session store, so the gateway's
+# text breadcrumbs and interim bubbles would show each turn twice. Streaming and heartbeats stay on.
+QUIET_DISPLAY = {"tool_progress": "off", "interim_assistant_messages": False}
+
+
+def _quiet_display_defaults():
+    """Hermes's named display tiers can't drop just these two (the low tier also stops streaming),
+    so the portal's built-in defaults are the high tier minus them. config.yaml still overrides."""
+    try:
+        from gateway import display_config
+    except ImportError:
+        return
+    defaults = getattr(display_config, "_PLATFORM_DEFAULTS", None)
+    high = getattr(display_config, "_TIERS", {}).get("high")
+    if isinstance(defaults, dict) and isinstance(high, dict):
+        defaults.setdefault("portal", {**high, **QUIET_DISPLAY})
+
+
 def register(ctx):
+    _quiet_display_defaults()
     ctx.register_platform(
         name="portal",
         label="Nako",
