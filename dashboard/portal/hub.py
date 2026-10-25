@@ -49,6 +49,9 @@ PREVIEW_CHARS = 280
 INBOX = "inbox"
 # Hermes labels every cron post it mirrors into a chat with this.
 CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
+# A message sent while a turn runs is steered into it with a note for the model saying where it
+# came from; Hermes keeps that note in the saved text, but the user never typed it.
+STEER_ORIGIN = re.compile(r"^\s*Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\s*")
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
@@ -176,7 +179,7 @@ class Hub:
         return {
             "session": session,
             "title": self.titles[session],
-            "messages": [_without_sign_off(_as_notification(m)) for m in thread["messages"] if _is_shown(m)],
+            "messages": [_without_sign_off(_as_notification(_without_steer_origin(m))) for m in thread["messages"] if _is_shown(m)],
             "running": session in self.running,
             "status": self.status.get(session),
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
@@ -416,6 +419,12 @@ def _preview(text, limit=PREVIEW_CHARS):
     plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
     plain = " ".join(plain.split())
     return plain if len(plain) <= limit else plain[: limit - 1].rstrip() + "…"
+
+
+def _without_steer_origin(message):
+    if message.get("role") != "user" or not message.get("text"):
+        return message
+    return {**message, "text": STEER_ORIGIN.sub("", message["text"], count=1)}
 
 
 def _as_notification(message):
