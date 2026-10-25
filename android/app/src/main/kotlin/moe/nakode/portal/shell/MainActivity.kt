@@ -14,7 +14,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
+import android.provider.Settings
 import android.view.inputmethod.EditorInfo
+import android.webkit.JavascriptInterface
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
@@ -36,6 +38,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
 import androidx.core.view.ViewCompat
@@ -141,6 +144,20 @@ class MainActivity : ComponentActivity() {
         if (granted) AlertService.start(this)
     }
 
+    /** What the web app's Settings can ask the shell: the app's own alerts, which web push can't do here. */
+    private inner class AppBridge {
+        @JavascriptInterface
+        fun notifications(): String = if (NotificationManagerCompat.from(this@MainActivity).areNotificationsEnabled()) "on" else "off"
+
+        @JavascriptInterface
+        fun openNotificationSettings() {
+            runOnUiThread {
+                val settings = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                startActivity(settings)
+            }
+        }
+    }
+
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             val web = webView
@@ -168,6 +185,7 @@ class MainActivity : ComponentActivity() {
             if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
                 WebSettingsCompat.setWebAuthenticationSupport(settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
             }
+            addJavascriptInterface(AppBridge(), "NakoApp")
             webViewClient = ShellWebViewClient(server)
             webChromeClient = ShellChromeClient()
         }

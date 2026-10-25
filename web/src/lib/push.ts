@@ -1,5 +1,18 @@
 import { api, unb64url } from "./api"
 
+// The Android app's own alerts (a native notification service), exposed by its shell.
+type AppBridge = { notifications(): "on" | "off"; openNotificationSettings(): void }
+const appBridge = (): AppBridge | undefined => (window as unknown as { NakoApp?: AppBridge }).NakoApp
+
+/** Inside the Android app: "on"/"off" from the app, "app" from a shell too old to say. Else null. */
+export function appAlerts(): "on" | "off" | "app" | null {
+  const bridge = appBridge()
+  if (bridge) return bridge.notifications()
+  return /NakoAndroid\//.test(navigator.userAgent) ? "app" : null
+}
+
+export const openAppNotificationSettings = () => appBridge()?.openNotificationSettings()
+
 export function pushState(): "unsupported" | "on" | "blocked" | "off" {
   if (!("Notification" in window) || !("serviceWorker" in navigator)) return "unsupported"
   if (Notification.permission === "granted") return "on"
