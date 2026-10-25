@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
+import { GlobeIcon, KeyRoundIcon } from "lucide-react"
+import { AuthButton, AuthScreen } from "@/components/portal/auth-screen"
 import type { Portal } from "@/hooks/use-portal"
 import { cancelled, register, signIn } from "@/lib/passkeys"
 
@@ -29,24 +30,19 @@ export function Gate({ portal }: { portal: Portal }) {
   }
 
   return (
-    <div className="flex h-dvh flex-col items-center justify-center gap-4 p-6 text-center">
-      <img alt="" className="size-24 rounded-full ring-2 ring-primary ring-offset-4 ring-offset-background" src="/icon-192.png" />
-      <h1 className="font-semibold text-2xl tracking-tight">Nako</h1>
+    <AuthScreen error={error} note={setup ? "Create a passkey on this device. It is the only way in." : undefined} title="Nako">
       {desktopApp && !setup ? (
-        <>
-          <p className="text-muted-foreground text-sm">Sign in with your browser.</p>
-          {/* The app catches this navigation and opens the browser. */}
-          <Button onClick={() => location.assign("/desktop/sign-in")}>Sign in</Button>
-        </>
+        // The app catches this navigation and opens the browser.
+        <AuthButton onClick={() => location.assign("/desktop/sign-in")}>
+          <GlobeIcon />
+          Sign in with browser
+        </AuthButton>
       ) : (
-        <>
-          <p className="text-muted-foreground text-sm">{setup ? "Create a passkey on this device. It is the only way in." : "Sign in with your passkey."}</p>
-          <Button disabled={busy} onClick={go}>
-            {setup ? "Create passkey" : "Sign in"}
-          </Button>
-        </>
+        <AuthButton disabled={busy} onClick={go}>
+          <KeyRoundIcon />
+          {setup ? "Create passkey" : "Sign in with passkey"}
+        </AuthButton>
       )}
-      {error && <p className="text-destructive text-sm">{error}</p>}
-    </div>
+    </AuthScreen>
   )
 }
