@@ -8,22 +8,20 @@ async def _start(world, payload, token=LOCAL_TOKEN):
     return await world.http.post(str(world.local.make_url("/sessions")), json=payload, headers=headers)
 
 
-async def test_a_script_starts_a_desktop_chat_that_runs_the_brief(world):
-    started = await _start(world, {"text": "build the shell", "title": "Shell build", "cwd": "/home/me/projects", "yolo": True})
+async def test_a_script_starts_a_portal_thread_that_runs_the_brief(world):
+    started = await _start(world, {"text": "build the shell", "title": "Shell build", "yolo": True})
     assert started.status == 200, await started.text()
     session = (await started.json())["session"]
     stored = world.hermes.sessions[session]
-    assert stored["source"] == "desktop"
     assert stored["title"] == "Shell build"
-    assert stored["cwd"] == "/home/me/projects"
-    assert stored["yolo"] is True
+    assert stored["chat"] in world.hermes.yolo
     assert stored["rows"][0]["text"] == "build the shell"
 
 
 async def test_approvals_stay_on_unless_the_script_asks(world):
     started = await _start(world, {"text": "look around"})
     session = (await started.json())["session"]
-    assert world.hermes.sessions[session].get("yolo") is None
+    assert world.hermes.sessions[session]["chat"] not in world.hermes.yolo
 
 
 async def test_the_loopback_api_refuses_callers_without_the_token(world):

@@ -2,7 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
-import type { Command, CommandNote, Frame, Live, LiveTool, Me, OpenSession, SessionRow } from "@/lib/types"
+import type { Command, CommandNote, Frame, Live, Me, OpenSession, SessionRow } from "@/lib/types"
 
 export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
@@ -21,18 +21,7 @@ export function navigate(hash: string) {
   if (location.hash !== hash) location.hash = hash
 }
 
-const emptyLive = (): Live => ({ text: "", reasoning: "", tools: [] })
-
-function toolFrom(payload: Record<string, unknown>): LiveTool {
-  return {
-    id: String(payload.tool_id || crypto.randomUUID()),
-    name: String(payload.name || "tool"),
-    context: String(payload.context || payload.preview || ""),
-    args: (payload.args as Record<string, unknown>) || undefined,
-    done: false,
-    failed: false,
-  }
-}
+const emptyLive = (): Live => ({ messages: [] })
 
 export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
@@ -131,30 +120,15 @@ export function usePortal() {
           setLive(emptyLive())
           setCurrent(c => c && { ...c, running: true })
           break
-        case "message.delta":
-          setLive(l => ({ ...(l || emptyLive()), text: (l?.text || "") + String(p.text || "") }))
-          break
-        case "reasoning.delta":
-        case "thinking.delta":
-          setLive(l => ({ ...(l || emptyLive()), reasoning: (l?.reasoning || "") + String(p.text || "") }))
-          break
-        case "tool.start":
-          setLive(l => ({ ...(l || emptyLive()), tools: [...(l?.tools || []), toolFrom(p)] }))
-          break
-        case "tool.complete":
+        case "gateway.message": {
+          const message = { id: String(p.id || ""), text: String(p.text || "") }
           setLive(l => {
             const base = l || emptyLive()
-            const id = String(p.tool_id || "")
-            return {
-              ...base,
-              tools: base.tools.map(t => (t.id === id ? { ...t, done: true, failed: Boolean(p.error), summary: p.summary ? String(p.summary) : undefined } : t)),
-            }
+            const at = base.messages.findIndex(m => m.id === message.id)
+            return { messages: at < 0 ? [...base.messages, message] : base.messages.map((m, i) => (i === at ? message : m)) }
           })
           break
-        case "message.interim":
-          setLive(emptyLive())
-          refresh(open.session)
-          break
+        }
         case "message.complete":
           setCurrent(c => c && { ...c, running: false })
           refresh(open.session)

@@ -8,7 +8,7 @@ import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { fileUrl } from "@/lib/api"
 import { isImage, splitReply, splitUserTurn } from "@/lib/media"
-import type { HistoryMessage, Live, LiveTool } from "@/lib/types"
+import type { HistoryMessage, Live } from "@/lib/types"
 
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
 
@@ -65,18 +65,12 @@ function oneLine(text?: string) {
   return String(text || "").replace(/\s+/g, " ").trim()
 }
 
-// A refresh mid-turn brings in the calls Hermes has already saved; live keeps only the rest.
-function liveSteps(tools: LiveTool[], messages: HistoryMessage[]): Step[] {
-  const saved = new Set(messages.flatMap(m => (m.role === "tool" && m.tool_call_id ? [m.tool_call_id] : [])))
-  return tools.filter(t => !saved.has(t.id)).map(t => ({ key: t.id, name: t.name, context: oneLine(t.context), state: t.failed ? "failed" : t.done ? "done" : "running", summary: t.summary }))
-}
-
-function Steps({ steps, live }: { steps: Step[]; live?: boolean }) {
+function Steps({ steps }: { steps: Step[] }) {
   const { stopScroll } = useStickToBottomContext()
   const label = `${steps.length} tool ${steps.length === 1 ? "call" : "calls"}`
   return (
     <ChainOfThought className="-my-2" defaultOpen={false}>
-      <ChainOfThoughtHeader className="w-fit" onClick={stopScroll}>{live && steps.at(-1)?.state === "running" ? `${steps.at(-1)!.name}…` : label}</ChainOfThoughtHeader>
+      <ChainOfThoughtHeader className="w-fit" onClick={stopScroll}>{label}</ChainOfThoughtHeader>
       <ChainOfThoughtContent>
         {steps.map(s => (
           <ChainOfThoughtStep
@@ -187,13 +181,7 @@ export function Transcript({
   notes,
 }: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[] }) {
   const shown = blocks(messages, notes)
-  let steps = running && live ? liveSteps(live.tools, messages) : []
-  // The saved run at the end belongs to the running turn, so the live calls continue it as one group.
-  const last = shown.at(-1)
-  if (steps.length && last?.kind === "tools") {
-    shown.pop()
-    steps = [...last.steps, ...steps]
-  }
+  const pending = live?.messages.filter(m => m.text.trim()) ?? []
   return (
     <>
       {shown.map(b =>
@@ -207,13 +195,10 @@ export function Transcript({
           <Steps key={b.key} steps={b.steps} />
         ),
       )}
-      {running && live && (
-        <>
-          {steps.length > 0 && <Steps live steps={steps} />}
-          {(live.text || live.reasoning) && <Assistant reasoning={live.reasoning} session={session} streaming text={live.text} />}
-          {!live.text && !live.reasoning && <Shimmer className="text-sm">working…</Shimmer>}
-        </>
-      )}
+      {pending.map((m, i) => (
+        <Assistant key={m.id} session={session} streaming={running && i === pending.length - 1} text={m.text} />
+      ))}
+      {running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
     </>
   )
 }
