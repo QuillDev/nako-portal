@@ -30,6 +30,7 @@ from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
 
 ORIGIN = "http://portal.test"
+LOCAL_TOKEN = "local-test-token"
 
 
 # --- CBOR encoding, just enough to play an authenticator ---
@@ -178,6 +179,7 @@ class FakeHermes:
         if method == "session.create":
             sid = f"20261024_000000_{len(self.sessions):06x}"
             self.add_session(sid, params.get("title") or "", source=params.get("source") or "")
+            self.sessions[sid]["cwd"] = params.get("cwd")
             return {"session_id": self.runtime(sid), "stored_session_id": sid, "message_count": 0, "messages": [], "info": {}}
         if method == "session.history":
             rows = self.sessions[self.stored(params["session_id"])]["rows"]
@@ -197,6 +199,9 @@ class FakeHermes:
             row = self._row(sid, "user", params["text"] + hints + ("\n[screenshot]" * len(images)))
             asyncio.get_running_loop().create_task(self._turn(sid, params["text"]))
             return {"status": "streaming", "user_row_id": row["row_id"]}
+        if method == "config.set" and params.get("key") == "yolo":
+            self.sessions[self.stored(params["session_id"])]["yolo"] = params.get("value") == "on"
+            return {"key": "yolo", "value": "1" if params.get("value") == "on" else "0"}
         if method == "request.answer":
             self.answers.append(params)
             return {"status": "answered"}
@@ -284,14 +289,18 @@ async def world(tmp_path):
         portal = Portal(hub, store, origin=ORIGIN, web_root=ROOT / "dashboard" / "web")
         portal_server = TestServer(portal.app())
         await portal_server.start_server()
+        local_server = TestServer(portal.local_app(LOCAL_TOKEN))
+        await local_server.start_server()
         serving = asyncio.create_task(hub.serve())
         await asyncio.wait_for(hub.ready.wait(), 5)
         jar = aiohttp.CookieJar(unsafe=True)
         async with aiohttp.ClientSession(cookie_jar=jar) as http:
             w = World(hermes, store, portal_server, http, hub, pins)
             w.alerts = alerts
+            w.local = local_server
             yield w
         serving.cancel()
+        await local_server.close()
         await portal_server.close()
     await backend.close()
 

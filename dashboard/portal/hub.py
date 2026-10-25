@@ -176,23 +176,24 @@ class Hub:
             "requests": [_request_view(frame) for frame in self._requests_for(runtime)],
         }
 
-    async def create(self, text, files=(), title=None):
-        created = await self.rpc.call(
-            "session.create",
-            self._scoped(
-                {
-                    "source": "desktop",
-                    "title": title or _title_from(text),
-                    "close_on_disconnect": False,
-                    "idempotency_key": f"nako-portal:{uuid.uuid4().hex}",
-                }
-            ),
-        )
+    async def create(self, text, files=(), title=None, cwd=None, yolo=False):
+        params = {
+            "source": "desktop",
+            "title": title or _title_from(text),
+            "close_on_disconnect": False,
+            "idempotency_key": f"nako-portal:{uuid.uuid4().hex}",
+        }
+        if cwd:
+            params |= {"cwd": cwd, "cwd_explicit": True}
+        created = await self.rpc.call("session.create", self._scoped(params))
         session = created["stored_session_id"]
         runtime = created["session_id"]
         self.runtime[session] = runtime
         self.stored[runtime] = session
         self.titles[session] = title or _title_from(text)
+        if yolo:
+            # Session-scoped, like Shift+Tab in Desktop: approvals stay on everywhere else.
+            await self.rpc.call("config.set", {"session_id": runtime, "key": "yolo", "value": "on"})
         submitted = await self.send(session, text, files)
         return {"session": session, **submitted}
 
