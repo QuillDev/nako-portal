@@ -266,6 +266,11 @@ export function usePortal() {
     [act],
   )
 
+  const setName = useCallback(async (name: string) => {
+    const saved = await api<{ name: string }>("/api/me/name", { method: "POST", body: { name } })
+    setMe(m => (m ? { ...m, name: saved.name } : m))
+  }, [])
+
   const rename = useCallback(
     (session: string, title: string) =>
       act(async () => {
@@ -322,7 +327,7 @@ export function usePortal() {
     [refresh],
   )
 
-  return { me, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, commands, command, notes }
+  return { me, setName, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, commands, command, notes }
 }
 
 export type Portal = ReturnType<typeof usePortal>

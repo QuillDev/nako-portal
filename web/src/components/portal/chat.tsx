@@ -107,16 +107,24 @@ function OlderTurns({ portal }: { portal: Portal }) {
   )
 }
 
-// A new chat puts the greeting and the composer together in the middle on wide screens;
-// on a phone the composer stays at the bottom, under the thumb.
+function partOfDay(hour: number) {
+  return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
+}
+
+// A new chat puts the greeting and the composer together a little above the middle on wide
+// screens; on a phone the composer stays at the bottom, under the thumb.
 function NewChat({ portal }: { portal: Portal }) {
+  const name = portal.me?.name
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:justify-center md:pb-[12vh]">
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center md:flex-none md:pb-6">
-        <h2 className="font-medium text-2xl tracking-tight">what are we working on?</h2>
+    <div className="flex min-h-0 flex-1 flex-col md:justify-center md:pb-[16vh]">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-4 text-center md:flex-none md:pb-7">
+        <h2 className="font-serif text-[2.5rem] leading-[1.1] tracking-[-0.01em] md:text-[2.875rem]">
+          good <em className="text-primary">{partOfDay(new Date().getHours())}</em>
+          {name && `, ${name}`}
+        </h2>
         {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
       </div>
-      <Composer draftKey="draft:new" portal={portal} />
+      <Composer draftKey="draft:new" placeholder="what are we working on?" portal={portal} tall />
     </div>
   )
 }

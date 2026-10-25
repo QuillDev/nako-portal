@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { cancelled, register } from "@/lib/passkeys"
@@ -51,6 +52,18 @@ export function Settings({ portal }: { portal: Portal }) {
               </Button>
             ))}
           </div>
+        </Row>
+        <Row label="Your name">
+          <Input
+            aria-label="Your name"
+            className="h-8 w-40"
+            defaultValue={portal.me?.name || ""}
+            key={portal.me?.name}
+            maxLength={40}
+            onBlur={e => e.currentTarget.value.trim() !== (portal.me?.name || "") && attempt(() => portal.setName(e.currentTarget.value))()}
+            onKeyDown={e => e.key === "Enter" && e.currentTarget.blur()}
+            placeholder="for the greeting"
+          />
         </Row>
         <h3 className="pt-4 pb-1 font-medium text-muted-foreground text-xs">Passkeys</h3>
         {passkeys.map(k => (

@@ -96,6 +96,7 @@ class Portal:
         app = web.Application(client_max_size=MAX_BODY, middlewares=[self._guard])
         r = app.router
         r.add_get("/api/me", self.me)
+        r.add_post("/api/me/name", self.set_name)
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -245,9 +246,18 @@ class Portal:
 
     async def me(self, request):
         signed_in = self._signed_in(request) is not None
-        return web.json_response(
-            {"signed_in": signed_in, "has_passkeys": self.store.has_credentials(), "connected": self.hub.connected}
-        )
+        me = {"signed_in": signed_in, "has_passkeys": self.store.has_credentials(), "connected": self.hub.connected}
+        if signed_in:
+            me["name"] = self.store.meta("name", "")
+        return web.json_response(me)
+
+    async def set_name(self, request):
+        """The name the new-chat greeting uses, kept here so every device says the same thing."""
+        self._require(request)
+        body = await request.json()
+        name = " ".join(str(body.get("name") or "").split())[:40]
+        self.store.set_meta("name", name)
+        return web.json_response({"name": name})
 
     async def register_options(self, request):
         body = await request.json()

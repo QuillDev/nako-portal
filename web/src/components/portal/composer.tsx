@@ -33,15 +33,25 @@ function AttachButton() {
 }
 
 // Drafts live in this browser per chat, so switching chats or reloading keeps them.
-export function Composer({ portal, draftKey }: { portal: Portal; draftKey: string }) {
+// `tall` gives the new-chat composer room to write: the text on top, the buttons on a row below.
+const TALL = {
+  group: "[&>[data-slot=input-group]]:grid [&>[data-slot=input-group]]:grid-cols-[auto_1fr_auto] [&>[data-slot=input-group]]:rounded-[22px] [&>[data-slot=input-group]]:p-1.5",
+  text: "col-span-3 row-start-1 min-h-14 px-2.5 pt-3 pb-1",
+  start: "col-start-1 row-start-2 p-0",
+  end: "col-start-3 row-start-2 p-0",
+}
+
+type ComposerProps = { portal: Portal; draftKey: string; placeholder?: string; tall?: boolean }
+
+export function Composer(props: ComposerProps) {
   return (
-    <PromptInputProvider initialInput={localStorage.getItem(draftKey) || ""} key={draftKey}>
-      <ComposerBody draftKey={draftKey} portal={portal} />
+    <PromptInputProvider initialInput={localStorage.getItem(props.draftKey) || ""} key={props.draftKey}>
+      <ComposerBody {...props} />
     </PromptInputProvider>
   )
 }
 
-function ComposerBody({ portal, draftKey }: { portal: Portal; draftKey: string }) {
+function ComposerBody({ portal, draftKey, placeholder, tall }: ComposerProps) {
   const running = Boolean(portal.current?.running)
   const [sending, setSending] = useState(false)
   const box = useRef<HTMLDivElement>(null)
@@ -55,7 +65,7 @@ function ComposerBody({ portal, draftKey }: { portal: Portal; draftKey: string }
         {file => <PromptInputAttachment data={file} />}
       </PromptInputAttachments>
       <PromptInput
-        className="[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card"
+        className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${tall ? TALL.group : ""}`}
         maxFileSize={MAX_FILE}
         multiple
         onError={e => portal.setError(e.message)}
@@ -81,18 +91,18 @@ function ComposerBody({ portal, draftKey }: { portal: Portal; draftKey: string }
           }
         }}
       >
-        <InputGroupAddon align="inline-start" className="self-end pb-1.5">
+        <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${tall ? TALL.start : ""}`}>
           <AttachButton />
         </InputGroupAddon>
         <PromptInputTextarea
-          className="min-h-0 px-1 py-3"
+          className={tall ? TALL.text : "min-h-0 px-1 py-3"}
           enterKeyHint="send"
           onKeyDownCapture={slash.onKeyDownCapture}
           onChange={e => localStorage.setItem(draftKey, e.currentTarget.value)}
-          placeholder={running ? "Steer or queue a message" : "Message"}
+          placeholder={running ? "Steer or queue a message" : placeholder || "Message"}
           rows={1}
         />
-        <InputGroupAddon align="inline-end" className="gap-1 self-end pb-1.5">
+        <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${tall ? TALL.end : ""}`}>
           {running && (
             <PromptInputButton
               aria-label="Stop"

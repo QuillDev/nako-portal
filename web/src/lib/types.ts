@@ -1,4 +1,4 @@
-export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean }
+export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; name?: string }
 
 export type SessionRow = {
   id: string
