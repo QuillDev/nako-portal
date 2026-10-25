@@ -167,7 +167,12 @@ class Hub:
         thread = await asyncio.to_thread(self.backend.thread, session)
         if thread is None:
             raise ValueError("No such chat")
-        self.titles[session] = thread.get("title") or ""
+        title = thread.get("title") or ""
+        # Hermes names a chat after its first exchange; a list fetched before that still says untitled.
+        renamed = session in self.titles and self.titles[session] != title
+        self.titles[session] = title
+        if renamed:
+            await self.broadcast({"kind": "sessions.changed"})
         return {
             "session": session,
             "title": self.titles[session],
