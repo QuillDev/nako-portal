@@ -322,6 +322,16 @@ async def test_slash_commands_go_to_the_gateway_like_any_message(world):
     assert world.hermes.received[-1] == (f"chat-{sid}", "/stop", [])
 
 
+async def test_the_name_for_the_greeting_is_shared_by_every_signed_in_device(world):
+    assert "name" not in await (await world.http.get(world.url("/api/me"))).json()
+    assert (await world.post("/api/me/name", {"name": "quill"})).status == 401
+    await world.sign_up()
+    assert (await (await world.http.get(world.url("/api/me"))).json())["name"] == ""
+    saved = await (await world.post("/api/me/name", {"name": "  Quill   Dev  "})).json()
+    assert saved == {"name": "Quill Dev"}
+    assert (await (await world.http.get(world.url("/api/me"))).json())["name"] == "Quill Dev"
+
+
 async def test_pins_and_archives_are_saved_on_the_session(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()
