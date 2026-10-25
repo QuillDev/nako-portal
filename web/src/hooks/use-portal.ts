@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
 import type { Command, CommandNote, Frame, Live, Me, OpenSession, SessionRow } from "@/lib/types"
 
+/** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
+const looking = () => document.visibilityState === "visible" && document.hasFocus()
+
 export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
@@ -164,7 +167,7 @@ export function usePortal() {
     socketRef.current = socket
     socket.onopen = () => {
       retryRef.current = 1000
-      if (currentRef.current) socket.send(JSON.stringify({ watch: currentRef.current.session }))
+      socket.send(JSON.stringify({ watch: currentRef.current?.session ?? null, looking: looking() }))
     }
     socket.onmessage = event => onFrameRef.current(JSON.parse(event.data))
     socket.onclose = () => {
@@ -197,11 +200,22 @@ export function usePortal() {
       loadSessions()
       if (currentRef.current) refresh(currentRef.current.session)
     }
+    // The server holds alerts for the chat on screen; tell it whenever that changes.
+    const onLooking = () => {
+      const socket = socketRef.current
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ looking: looking() }))
+    }
     window.addEventListener("hashchange", onHash)
     document.addEventListener("visibilitychange", onVisible)
+    document.addEventListener("visibilitychange", onLooking)
+    window.addEventListener("focus", onLooking)
+    window.addEventListener("blur", onLooking)
     return () => {
       window.removeEventListener("hashchange", onHash)
       document.removeEventListener("visibilitychange", onVisible)
+      document.removeEventListener("visibilitychange", onLooking)
+      window.removeEventListener("focus", onLooking)
+      window.removeEventListener("blur", onLooking)
     }
   }, [boot, connect, loadSessions, refresh])
 
@@ -213,6 +227,7 @@ export function usePortal() {
     if (!routedSession) {
       setCurrent(null)
       setLive(null)
+      if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ watch: null }))
       return
     }
     if (currentRef.current?.session === routedSession) return
