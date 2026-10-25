@@ -47,3 +47,19 @@ async def test_an_empty_brief_is_rejected(world):
     rejected = await _start(world, {"text": "  "})
     assert rejected.status == 400
     assert set(world.hermes.sessions) == before
+
+
+async def test_a_script_can_follow_up_on_an_existing_chat(world):
+    sid = world.hermes.add_session("20261024_050505_eeeeee", "stack pr")
+    sent = await world.http.post(
+        str(world.local.make_url(f"/sessions/{sid}/messages")), json={"text": "parent moved, restack"}, headers={"Authorization": f"Bearer {LOCAL_TOKEN}"}
+    )
+    assert sent.status == 200, await sent.text()
+    assert [row["text"] for row in world.hermes.sessions[sid]["rows"] if row["role"] == "user"] == ["parent moved, restack"]
+
+
+async def test_follow_ups_need_the_token_too(world):
+    sid = world.hermes.add_session("20261024_060606_ffffff", "stack pr")
+    refused = await world.http.post(str(world.local.make_url(f"/sessions/{sid}/messages")), json={"text": "hi"})
+    assert refused.status == 401
+    assert world.hermes.sessions[sid]["rows"] == []
