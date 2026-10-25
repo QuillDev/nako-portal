@@ -159,6 +159,23 @@ async def test_a_new_portal_chat_is_a_new_gateway_thread(world):
     assert stored["title"] == ""
 
 
+async def test_the_chat_list_picks_up_a_title_the_gateway_gave_a_chat_after_it_was_listed(world):
+    session = world.hermes.add_session("20261025_050505_eeeeee", "")
+    await world.sign_up()
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [r["title"] for r in listed if r["id"] == session] == ["untitled"]
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await asyncio.sleep(0.05)
+
+    world.hermes.set_title(session, "Plan the week")
+    opened = await (await world.http.get(world.url(f"/api/sessions/{session}"))).json()
+    assert opened["title"] == "Plan the week"
+    await next_message(ws, lambda m: m.get("kind") == "sessions.changed")
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [r["title"] for r in listed if r["id"] == session] == ["Plan the week"]
+    await ws.close()
+
+
 async def test_a_post_outside_a_turn_lands_in_the_chat_and_alerts(world):
     inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox")
     await world.sign_up()
