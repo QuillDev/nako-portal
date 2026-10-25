@@ -68,7 +68,7 @@ export function Chat({ portal }: { portal: Portal }) {
       <PageHeader title={c ? c.title || "chat" : "New chat"}>{c && <ChatMenu portal={portal} />}</PageHeader>
       {!portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>}
       <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="mx-auto w-full max-w-3xl">
+        <ConversationContent className="mx-auto w-full max-w-3xl gap-6">
           {!c && <ConversationEmptyState description="" title="what are we working on?" />}
           {c && !c.loading && <Transcript live={portal.live} messages={c.messages} running={c.running} session={c.session} />}
           {c && <Requests answer={portal.answer} requests={c.requests} />}
