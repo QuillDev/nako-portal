@@ -41,8 +41,10 @@ function oneLine(text?: string) {
   return String(text || "").replace(/\s+/g, " ").trim()
 }
 
-function liveSteps(tools: LiveTool[]): Step[] {
-  return tools.map(t => ({ key: t.id, name: t.name, context: oneLine(t.context), state: t.failed ? "failed" : t.done ? "done" : "running", summary: t.summary }))
+// A refresh mid-turn brings in the calls Hermes has already saved; live keeps only the rest.
+function liveSteps(tools: LiveTool[], messages: HistoryMessage[]): Step[] {
+  const saved = new Set(messages.flatMap(m => (m.role === "tool" && m.tool_call_id ? [m.tool_call_id] : [])))
+  return tools.filter(t => !saved.has(t.id)).map(t => ({ key: t.id, name: t.name, context: oneLine(t.context), state: t.failed ? "failed" : t.done ? "done" : "running", summary: t.summary }))
 }
 
 function Steps({ steps, live }: { steps: Step[]; live?: boolean }) {
@@ -151,9 +153,17 @@ function Assistant({ session, text, reasoning, streaming }: { session: string; t
 }
 
 export function Transcript({ session, messages, live, running }: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean }) {
+  const shown = blocks(messages)
+  let steps = running && live ? liveSteps(live.tools, messages) : []
+  // The saved run at the end belongs to the running turn, so the live calls continue it as one group.
+  const last = shown.at(-1)
+  if (steps.length && last?.kind === "tools") {
+    shown.pop()
+    steps = [...last.steps, ...steps]
+  }
   return (
     <>
-      {blocks(messages).map(b =>
+      {shown.map(b =>
         b.kind === "user" ? (
           <User images={b.images} key={b.key} session={session} text={b.text} />
         ) : b.kind === "assistant" ? (
@@ -164,7 +174,7 @@ export function Transcript({ session, messages, live, running }: { session: stri
       )}
       {running && live && (
         <>
-          {live.tools.length > 0 && <Steps live steps={liveSteps(live.tools)} />}
+          {steps.length > 0 && <Steps live steps={steps} />}
           {(live.text || live.reasoning) && <Assistant reasoning={live.reasoning} session={session} streaming text={live.text} />}
           {!live.text && !live.reasoning && <Shimmer className="text-sm">working…</Shimmer>}
         </>
