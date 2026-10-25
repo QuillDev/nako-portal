@@ -32,6 +32,9 @@ DONE = "done"
 FAILED = "failed"
 MAX_FILE = 25 * 1024 * 1024
 PREVIEW_CHARS = 280
+# Hermes seeds an untitled session for every cron post it mirrors into a chat; until someone
+# replies, the session holds only these labelled briefs.
+CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]]+)")
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 
@@ -109,7 +112,8 @@ class Hub:
             if row.get("source") in HIDDEN_SOURCES:
                 continue
             session = row["id"]
-            self.titles[session] = row.get("title") or ""
+            notification = _notification(row)
+            self.titles[session] = row.get("title") or notification or ""
             rows.append(
                 {
                     "id": session,
@@ -117,6 +121,7 @@ class Hub:
                     "preview": row.get("preview") or "",
                     "started_at": row.get("started_at") or 0,
                     "source": row.get("source") or "",
+                    "notification": notification,
                     "pinned": session in pinned,
                     "status": self.status.get(session),
                 }
@@ -423,3 +428,12 @@ def _preview(text, limit=PREVIEW_CHARS):
 def _title_from(text):
     first = (str(text or "").strip().splitlines() or [""])[0]
     return first[:90] or "portal chat"
+
+
+def _notification(row):
+    """The cron job behind a session that is nothing but cron deliveries, else None.
+    A title means someone replied (Hermes titles a session after its first answer)."""
+    if row.get("title"):
+        return None
+    match = CRON_DELIVERY.match(row.get("preview") or "")
+    return match.group(1).removesuffix("...").strip() if match else None
