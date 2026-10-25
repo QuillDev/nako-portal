@@ -178,6 +178,10 @@ class HermesBackend:
     def _home(self, profile=None):
         return self.homes().get(profile or self.profile, self.root)
 
+    def home_of(self, profile):
+        """The home a turn for ``profile`` runs in (None is the default profile)."""
+        return self.homes().get(profile or DEFAULT_PROFILE, self.root)
+
     def _scoped(self, fn, *args, profile=None):
         """Run ``fn`` with Hermes pointed at one profile's home, so the store reads its state.db.
         Reach ``self.db`` inside ``fn``: it resolves to the profile's store only once scoped."""
@@ -405,6 +409,34 @@ class HermesBackend:
         return listed
 
 
+# What a portal turn gets when its profile resolves to no tools at all.
+FALLBACK_TOOLSETS = ["hermes-cli"]
+
+
+def _fallback_toolsets(home=None):
+    """Tools for a portal turn in a profile that doesn't load this plugin.
+
+    Hermes builds a plugin platform's default toolset (`hermes-portal`) only where the plugin is
+    registered, so in a profile that doesn't load it the bundle is empty and portal turns run
+    with no tools. Such a profile gets the standard full toolset instead. A profile that sets
+    `platform_toolsets.portal`, or where the bundle exists, is left alone (None)."""
+    from hermes_cli.config import load_config
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from toolsets import resolve_toolset
+
+    token = set_hermes_home_override(str(home)) if home else None
+    try:
+        if "portal" in (load_config().get("platform_toolsets") or {}):
+            return None
+        return None if resolve_toolset("hermes-portal") else list(FALLBACK_TOOLSETS)
+    except Exception:
+        log.warning("portal: could not check the toolset for a turn", exc_info=True)
+        return None
+    finally:
+        if token is not None:
+            reset_hermes_home_override(token)
+
+
 async def _listen(runner, port):
     """Bind the portal's port, retrying while something else still holds it (an older
     portal shutting down), so the gateway never fails to start over it."""
@@ -579,6 +611,10 @@ def _adapter(config):
 
         async def send_typing(self, chat_id, metadata=None):
             return None
+
+        def toolsets_for_source(self, source):
+            home = self.hub.backend.home_of(getattr(source, "profile", None)) if self.hub is not None else None
+            return _fallback_toolsets(home)
 
         async def get_chat_info(self, chat_id):
             return {"name": "Nako", "type": "dm"}
