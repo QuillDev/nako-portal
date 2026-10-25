@@ -78,53 +78,63 @@ async def test_writes_from_another_site_are_refused_even_when_signed_in(world):
     assert refused.value.status == 403
 
 
-async def test_desktop_and_portal_see_one_conversation_both_ways(world):
+async def test_a_message_goes_to_the_gateway_and_its_reply_streams_back(world):
     sid = world.hermes.add_session(
         "20261024_020202_bbbbbb", "fix the build", messages=[("user", "why is ci red"), ("assistant", "lint failed")]
     )
-    world.hermes.add_session("20261024_030303_cccccc", "watch run", source="cron")
     await world.sign_up()
 
     listed = await (await world.http.get(world.url("/api/sessions"))).json()
     assert [row["id"] for row in listed] == [sid]
-
     opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
     assert [(m["role"], m["text"]) for m in opened["messages"]] == [("user", "why is ci red"), ("assistant", "lint failed")]
 
     ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
     await ws.send_json({"watch": sid})
     await asyncio.sleep(0.05)
-
-    # Desktop to portal: a turn typed in Desktop streams into the open portal tab.
-    await world.hermes.desktop_turn(sid, "and now?")
-    delta = await next_message(ws, lambda m: m.get("type") == "message.delta")
-    assert (delta["session"], delta["payload"]["text"]) == (sid, "hello from hermes")
-    await next_message(ws, lambda m: m.get("type") == "message.complete")
-
-    # Portal to desktop: a message sent here lands in the same transcript Desktop reads.
     sent = await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "ship it"}, headers={"Origin": ORIGIN})
     assert sent.status == 200
+    assert world.hermes.received == [(f"chat-{sid}", "ship it", [])]
+
+    await next_message(ws, lambda m: m.get("type") == "message.start")
+    shown = await next_message(ws, lambda m: m.get("type") == "gateway.message")
+    assert (shown["session"], shown["payload"]["text"]) == (sid, "hello from hermes")
     await next_message(ws, lambda m: m.get("type") == "message.complete")
     texts = [row["text"] for row in world.hermes.sessions[sid]["rows"]]
     assert texts[-2:] == ["ship it", "hello from hermes"]
-    # A turn started from the portal says so when it's done, with the start of the reply;
-    # Desktop's own turns stay quiet.
+    # A finished reply says so with its start, on push and on every open socket.
     assert [alert[2] for alert in world.alerts] == ["hello from hermes"]
-
     listed = await (await world.http.get(world.url("/api/sessions"))).json()
     assert listed[0]["status"] == "done"
     await ws.close()
 
 
-async def test_a_new_portal_chat_is_a_desktop_session(world):
+async def test_a_new_portal_chat_is_a_new_gateway_thread(world):
     await world.sign_up()
     created = await world.http.post(world.url("/api/sessions"), data={"text": "plan my week"}, headers={"Origin": ORIGIN})
     assert created.status == 200
     session = (await created.json())["session"]
     stored = world.hermes.sessions[session]
-    assert stored["source"] == "desktop"
-    assert stored["title"] == "plan my week"
     assert stored["rows"][0]["text"] == "plan my week"
+    # Each new chat is its own thread; the gateway names it after the first answer.
+    assert world.hermes.received[0][0] == stored["chat"]
+    assert stored["title"] == ""
+
+
+async def test_a_post_outside_a_turn_lands_in_the_chat_and_alerts(world):
+    inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox")
+    await world.sign_up()
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": inbox})
+    await asyncio.sleep(0.05)
+
+    await world.hermes.post(inbox, "[Cron delivery: build watch]\nci went red")
+    shown = await next_message(ws, lambda m: m.get("type") == "gateway.message")
+    assert shown["payload"]["text"] == "[Cron delivery: build watch]\nci went red"
+    await next_message(ws, lambda m: m.get("type") == "message.complete")
+    await next_message(ws, lambda m: m.get("kind") == "sessions.changed")
+    assert [alert[2] for alert in world.alerts] == ["[Cron delivery: build watch] ci went red"]
+    await ws.close()
 
 
 async def test_approvals_are_answered_from_the_portal(world):
@@ -147,7 +157,7 @@ async def test_approvals_are_answered_from_the_portal(world):
 
     answered = await world.post("/api/requests/req-1", {"result": {"choice": "once"}})
     assert answered.status == 200
-    assert world.hermes.answers == [{"id": "req-1", "result": {"choice": "once"}}]
+    assert world.hermes.answers == [{"id": "req-1", "private": {"session_key": f"key-chat-{sid}"}, "result": {"choice": "once"}}]
     closed = await next_message(ws, lambda m: m.get("kind") == "request.closed")
     assert closed["id"] == "req-1"
     again = await world.post("/api/requests/req-1", {"result": {"choice": "once"}})
@@ -261,20 +271,18 @@ async def test_a_long_chat_opens_on_its_latest_turns_and_pages_back_through_the_
     assert (await world.http.get(world.url(f"/api/sessions/{sid}"), params={"before": "-1"})).status == 400
 
 
-async def test_cron_posts_read_as_nakos_messages_and_per_post_copies_stay_out_of_the_list(world):
+async def test_cron_posts_read_as_nakos_messages_in_the_notifications_thread(world):
     inbox = world.hermes.add_session(
         "20261024_040404_dddddd",
         "Notifications",
-        source="portal",
+        chat="inbox",
         messages=[("user", "[Cron delivery: build watch]\nci went red on main"), ("user", "[Cron delivery: news digest]\nfive links"), ("user", "which first?"), ("assistant", "the sorting paper")],
     )
-    copy = world.hermes.add_session("20261024_050505_eeeeee", "", messages=[("user", "[Cron delivery: build watch]\nci went red on main")])
     chat = world.hermes.add_session("20261024_070707_aaaaaa", "", messages=[("user", "what is [Cron delivery: x] about")])
     await world.sign_up()
 
     listed = {row["id"]: row["notifications"] for row in await (await world.http.get(world.url("/api/sessions"))).json()}
     assert listed == {inbox: True, chat: False}
-    assert copy in world.hermes.sessions
 
     opened = await (await world.http.get(world.url(f"/api/sessions/{inbox}"))).json()
     assert [(m["role"], m.get("label"), m["text"]) for m in opened["messages"]] == [
@@ -286,7 +294,7 @@ async def test_cron_posts_read_as_nakos_messages_and_per_post_copies_stay_out_of
 
 
 async def test_the_notifications_chat_is_unread_until_opened_and_again_after_a_new_post(world):
-    inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", source="portal", messages=[("user", "[Cron delivery: build watch]\nci red")])
+    inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox", messages=[("user", "[Cron delivery: build watch]\nci red")])
     chat = world.hermes.add_session("20261024_070707_aaaaaa", "plans", messages=[("user", "hi")])
     await world.sign_up()
 
@@ -300,44 +308,28 @@ async def test_the_notifications_chat_is_unread_until_opened_and_again_after_a_n
     assert await unread() == {inbox: True, chat: False}
 
 
-async def test_slash_commands_run_like_desktop_and_list_only_what_the_portal_can_run(world):
+async def test_slash_commands_go_to_the_gateway_like_any_message(world):
     sid = world.hermes.add_session("20261024_020202_bbbbbb", "fix the build", messages=[("user", "hi"), ("assistant", "hello")])
     await world.sign_up()
 
     listed = await (await world.http.get(world.url("/api/commands"))).json()
-    assert [(c["name"], c["skill"]) for c in listed] == [("/status", False), ("/goal", False), ("/undo", False), ("/work", True)]
-
-    async def run(text):
-        response = await world.post(f"/api/sessions/{sid}/command", {"text": text})
-        return response.status, await response.json()
-
-    # Output-only commands come back to show; nothing enters the transcript.
-    assert await run("/status") == (200, {"output": f"session {sid}"})
-    # A command that becomes a prompt starts a turn with what Hermes expanded it to.
-    assert await run("/goal ship it") == (200, {"output": "goal set: ship it", "sent": True})
-    # The slash worker doesn't know skills; command.dispatch does, as in Desktop.
-    assert await run("/work fix the leak") == (200, {"output": None, "sent": True})
-    await asyncio.sleep(0.05)
-    user_turns = [row["text"] for row in world.hermes.sessions[sid]["rows"] if row["role"] == "user"]
-    assert user_turns[-2:] == ["ship it", "[work skill] fix the leak"]
-    # /undo hands its text back for the composer instead of sending it.
-    assert await run("/undo") == (200, {"output": None, "prefill": "the message you sent last"})
-    # Desktop-only and unknown commands say so instead of reaching the model.
-    status, body = await run("/new")
-    assert status == 400 and "isn't available in the portal" in body["error"]
-    status, body = await run("/nope")
-    assert status == 400 and "unknown command /nope" in body["error"]
-    assert world.hermes.slash == ["status", "goal ship it", "work fix the leak", "undo", "nope"]
+    assert [(c["name"], c["skill"]) for c in listed] == [("/status", False), ("/work", True)]
+    ran = await world.post(f"/api/sessions/{sid}/command", {"text": "/restart"})
+    assert (ran.status, await ran.json()) == (200, {"output": None, "sent": True})
+    assert world.hermes.received == [(f"chat-{sid}", "/restart", [])]
+    # Stop is the gateway's /stop in that thread.
+    assert (await world.post(f"/api/sessions/{sid}/stop")).status == 200
+    assert world.hermes.received[-1] == (f"chat-{sid}", "/stop", [])
 
 
-async def test_pins_and_archives_reach_desktop(world):
+async def test_pins_and_archives_are_saved_on_the_session(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()
     await world.http.get(world.url(f"/api/sessions/{sid}"))
     assert (await world.post(f"/api/sessions/{sid}/pin", {"pinned": True})).status == 200
     listed = await (await world.http.get(world.url("/api/sessions"))).json()
     assert listed[0]["pinned"] is True
-    assert world.pins.pinned() == {sid}
+    assert world.hermes.sessions[sid]["pinned"] is True
     assert (await world.post(f"/api/sessions/{sid}/archive", {"archived": True})).status == 200
     assert world.hermes.sessions[sid]["archived"] is True
     assert await (await world.http.get(world.url("/api/sessions"))).json() == []

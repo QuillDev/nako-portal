@@ -1,9 +1,8 @@
-"""A stateful fake Hermes backend (the `/api/ws` JSON-RPC Desktop speaks) and a software passkey."""
+"""A stateful fake of the gateway behind the portal adapter, and a software passkey."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import json
 import struct
@@ -15,7 +14,6 @@ from pathlib import Path
 import aiohttp
 import pytest
 import pytest_asyncio
-from aiohttp import web
 from aiohttp.test_utils import TestServer
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -24,8 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "dashboard"))
 
 from portal import webauthn  # noqa: E402
+from portal import hub as hub_module  # noqa: E402
 from portal.hub import Hub  # noqa: E402
-from portal.rpc import Rpc  # noqa: E402
 from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
 
@@ -105,26 +103,28 @@ class Authenticator:
         }
 
 
-# --- the fake backend ---
+# --- the fake gateway ---
 
 
-class FakeHermes:
-    """Sessions, transcripts, turns and approvals, served over the backend's JSON-RPC shape."""
+class FakeGateway:
+    """Portal threads, transcripts and turns, behind the backend interface the hub uses.
+
+    A message in starts a turn the way the gateway does: the hub hears the turn start, the reply
+    arrives as an adapter send, then the turn ends. `hub` is set once the world is built."""
 
     def __init__(self):
-        self.slash = []
         self.sessions = {}
-        self.sockets = []
+        self.received = []
         self.answers = []
-        self.seq = 0
+        self.yolo = set()
         self.next_row = 1
         self.reply = "hello from hermes"
         self.ask_approval = False
-        self.images = {}
         self.image_dir = Path(tempfile.mkdtemp())
+        self.hub = None
 
-    def add_session(self, sid, title, source="desktop", messages=()):
-        self.sessions[sid] = {"id": sid, "title": title, "source": source, "rows": [], "started_at": time.time()}
+    def add_session(self, sid, title, chat=None, messages=()):
+        self.sessions[sid] = {"id": sid, "title": title, "chat": chat or f"chat-{sid}", "rows": [], "started_at": time.time(), "pinned": False, "archived": False}
         for role, text in messages:
             self._row(sid, role, text)
         return sid
@@ -136,152 +136,96 @@ class FakeHermes:
         self.sessions[sid]["rows"].append(row)
         return row
 
-    def runtime(self, sid):
-        return f"rt-{sid}"
-
-    def stored(self, runtime):
-        return runtime.removeprefix("rt-")
-
-    async def emit(self, sid, kind, payload=None):
-        self.seq += 1
-        frame = {"jsonrpc": "2.0", "method": "event", "params": {"type": kind, "session_id": self.runtime(sid), "payload": payload or {}, "seq": self.seq}}
-        for ws in list(self.sockets):
-            await ws.send_json(frame)
-
-    async def desktop_turn(self, sid, text):
-        """Someone types in Desktop: a user row, a streamed reply, a finished turn."""
+    async def post(self, sid, text):
+        """A delivery outside a turn (a cron post): the adapter's send, then the mirrored row."""
+        message_id = f"m{self.next_row}"
+        sending = asyncio.get_running_loop().create_task(self.hub.outgoing(self.sessions[sid]["chat"], message_id, text))
         self._row(sid, "user", text)
-        await self.emit(sid, "message.start")
-        await self.emit(sid, "message.delta", {"text": self.reply})
-        self._row(sid, "assistant", self.reply)
-        await self.emit(sid, "message.complete", {"status": "complete", "text": self.reply})
+        await sending
 
-    async def _turn(self, sid, text):
-        await self.emit(sid, "message.start")
+    # backend interface
+
+    def sessions_list(self):
+        return [
+            {"id": s["id"], "title": s["title"], "preview": _preview(s), "started_at": s["started_at"], "message_count": len(s["rows"]), "pinned": s["pinned"], "chat_id": s["chat"]}
+            for s in self.sessions.values()
+            if not s["archived"]
+        ]
+
+    def thread(self, sid):
+        s = self.sessions.get(sid)
+        return None if s is None else {"title": s["title"], "messages": list(s["rows"])}
+
+    def chat_of(self, sid):
+        s = self.sessions.get(sid)
+        return s["chat"] if s else None
+
+    def session_of(self, chat):
+        return next((s["id"] for s in self.sessions.values() if s["chat"] == chat), None)
+
+    async def new_thread(self, chat, title):
+        sid = f"20261024_000000_{len(self.sessions):06x}"
+        self.add_session(sid, title or "", chat=chat)
+        return sid
+
+    async def inbound(self, chat, text, files):
+        sid = self.session_of(chat)
+        paths = []
+        for upload in files:
+            path = self.image_dir / f"upload_{len(paths) + 1}_{upload['filename']}"
+            path.write_bytes(upload["data"])
+            paths.append(path)
+        self.received.append((chat, text, [p.name for p in paths]))
+        hints = "".join(f"\n\n[Image attached at: {p}]" if i == 0 else f"\n[Image attached at: {p}]" for i, p in enumerate(paths))
+        self._row(sid, "user", text + hints + ("\n[screenshot]" * len(paths)))
+        asyncio.get_running_loop().create_task(self._turn(chat, sid))
+
+    async def _turn(self, chat, sid):
+        await self.hub.turn_started(chat)
         if self.ask_approval:
-            frame = {"jsonrpc": "2.0", "id": "req-1", "method": "approval", "params": {"session_id": self.runtime(sid), "request_id": "req-1", "command": "rm -rf build", "description": "delete build", "choices": ["once", "session", "deny"]}}
-            for ws in list(self.sockets):
-                await ws.send_json(frame)
+            request = {"id": "req-1", "method": "approval", "params": {"command": "rm -rf build", "description": "delete build", "choices": ["once", "session", "deny"]}, "private": {"session_key": f"key-{chat}"}}
+            await self.hub.ask(chat, request)
             return
-        await self.emit(sid, "message.delta", {"text": self.reply})
+        await self.hub.outgoing(chat, "reply-1", self.reply)
         self._row(sid, "assistant", self.reply)
-        await self.emit(sid, "message.complete", {"status": "complete", "text": self.reply})
+        await self.hub.turn_finished(chat, "success")
 
-    async def handle(self, method, params):
-        if method in {"client.capabilities", "gateway.ping"}:
-            return {}
-        if method == "session.list":
-            rows = [
-                {"id": s["id"], "title": s["title"], "source": s["source"], "started_at": s["started_at"], "preview": _preview(s), "message_count": len(s["rows"])}
-                for s in self.sessions.values()
-                if not s.get("archived")
-            ]
-            return {"sessions": rows}
-        if method == "session.resume":
-            sid = params["session_id"]
-            if sid not in self.sessions:
-                raise KeyError("no such session")
-            return {"session_id": self.runtime(sid), "message_count": 0, "messages": [], "info": {}}
-        if method == "session.create":
-            sid = f"20261024_000000_{len(self.sessions):06x}"
-            self.add_session(sid, params.get("title") or "", source=params.get("source") or "")
-            self.sessions[sid]["cwd"] = params.get("cwd")
-            return {"session_id": self.runtime(sid), "stored_session_id": sid, "message_count": 0, "messages": [], "info": {}}
-        if method == "session.history":
-            rows = self.sessions[self.stored(params["session_id"])]["rows"]
-            return {"count": len(rows), "messages": rows}
-        if method == "commands.catalog":
-            # Hermes's shape: [name, description] pairs, a `desktop` reason for commands no app runs, skills by name.
-            pairs = [["/status", "Show session status"], ["/goal", "Set a standing goal"], ["/undo", "Undo the last turn"], ["/new", "Start a new chat"], ["/clear", "Clear the screen"], ["/work", "Do focused work"]]
-            return {"pairs": pairs, "commands": {"/clear": {"desktop": "terminal"}, "/status": {"desktop": None}}, "skills": {"/work": {"usage": 3}}}
-        if method == "slash.exec":
-            self.slash.append(params["command"])
-            name, _, arg = params["command"].partition(" ")
-            if name == "status":
-                return {"output": f"session {self.stored(params['session_id'])}"}
-            if name == "goal":
-                return {"type": "send", "message": arg, "notice": f"goal set: {arg}"}
-            if name == "undo":
-                return {"type": "prefill", "message": "the message you sent last"}
-            raise KeyError(f"slash worker: unknown command /{name}")
-        if method == "command.dispatch":
-            if params["name"] == "work":
-                return {"type": "skill", "name": "work", "message": f"[work skill] {params['arg']}", "display": f"/work {params['arg']}"}
-            raise KeyError("not a quick/plugin/skill command")
-        if method == "session.status":
-            return {"running": False}
-        if method == "image.attach_bytes":
-            path = self.image_dir / f"upload_{len(self.images) + 1}_{params['filename']}"
-            path.write_bytes(base64.b64decode(params["content_base64"]))
-            self.images.setdefault(params["session_id"], []).append(path)
-            return {"attached": True, "path": str(path)}
-        if method == "prompt.submit":
-            sid = self.stored(params["session_id"])
-            # Hermes appends a hint per attached image, then the session store's placeholder.
-            images = self.images.pop(params["session_id"], [])
-            hints = "".join(f"\n\n[Image attached at: {p}]" if i == 0 else f"\n[Image attached at: {p}]" for i, p in enumerate(images))
-            row = self._row(sid, "user", params["text"] + hints + ("\n[screenshot]" * len(images)))
-            asyncio.get_running_loop().create_task(self._turn(sid, params["text"]))
-            return {"status": "streaming", "user_row_id": row["row_id"]}
-        if method == "config.set" and params.get("key") == "yolo":
-            self.sessions[self.stored(params["session_id"])]["yolo"] = params.get("value") == "on"
-            return {"key": "yolo", "value": "1" if params.get("value") == "on" else "0"}
-        if method == "request.answer":
-            self.answers.append(params)
-            return {"status": "answered"}
-        if method == "session.archive":
-            self.sessions[self.stored(params["session_id"])]["archived"] = params.get("archived", True)
-            return {"archived": params.get("archived", True), "session_key": params["session_id"]}
-        if method == "session.interrupt":
-            return {"status": "interrupted"}
-        if method == "session.title":
-            stored = self.sessions[self.stored(params["session_id"])]
-            if params.get("title") is not None:
-                stored["title"] = params["title"]
-            return {"title": stored["title"]}
-        raise KeyError(f"unknown method {method}")
+    async def resolve(self, request, result):
+        self.answers.append({"id": request["id"], "private": request["private"], "result": result})
 
-    def app(self):
-        async def ws_handler(request):
-            ws = web.WebSocketResponse()
-            await ws.prepare(request)
-            self.sockets.append(ws)
-            try:
-                async for message in ws:
-                    frame = json.loads(message.data)
-                    try:
-                        result = await self.handle(frame["method"], frame.get("params") or {})
-                        await ws.send_json({"jsonrpc": "2.0", "id": frame["id"], "result": result})
-                    except KeyError as error:
-                        await ws.send_json({"jsonrpc": "2.0", "id": frame["id"], "error": {"code": 4004, "message": str(error)}})
-            finally:
-                self.sockets.remove(ws)
-            return ws
+    def set_title(self, sid, title):
+        self.sessions[sid]["title"] = title
 
-        app = web.Application()
-        app.router.add_get("/api/ws", ws_handler)
-        return app
+    def set_archived(self, sid, archived):
+        self.sessions[sid]["archived"] = archived
+
+    def set_pinned(self, sid, pinned):
+        self.sessions[sid]["pinned"] = pinned
+
+    def set_yolo(self, chat):
+        self.yolo.add(chat)
+
+    def commands(self):
+        return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]
 
 
-class Pins:
-    def __init__(self):
-        self.on = set()
+class Backend:
+    """FakeGateway as the hub sees it: its `sessions` dict is the backend's `sessions()` list."""
 
-    def pinned(self):
-        return set(self.on)
+    def __init__(self, fake):
+        self.fake = fake
 
-    def set(self, session, pinned):
-        (self.on.add if pinned else self.on.discard)(session)
+    def __getattr__(self, name):
+        return getattr(self.fake, "sessions_list" if name == "sessions" else name)
 
 
 class World:
-    def __init__(self, hermes, store, portal_server, http, hub, pins):
+    def __init__(self, hermes, store, portal_server, http, hub):
         self.hermes = hermes
         self.store = store
         self.server = portal_server
         self.http = http
         self.hub = hub
-        self.pins = pins
         self.alerts = []
 
     def url(self, path):
@@ -301,32 +245,26 @@ class World:
 
 
 @pytest_asyncio.fixture
-async def world(tmp_path):
-    hermes = FakeHermes()
-    backend = TestServer(hermes.app())
-    await backend.start_server()
-    async with aiohttp.ClientSession() as rpc_http:
-        store = Store(tmp_path / "portal" / "portal.db")
-        pins = Pins()
-        alerts = []
-        hub = Hub(Rpc(rpc_http, str(backend.make_url("/api/ws"))), pins=pins, alert=lambda *a: alerts.append(a))
-        portal = Portal(hub, store, origin=ORIGIN, web_root=ROOT / "dashboard" / "web")
-        portal_server = TestServer(portal.app())
-        await portal_server.start_server()
-        local_server = TestServer(portal.local_app(LOCAL_TOKEN))
-        await local_server.start_server()
-        serving = asyncio.create_task(hub.serve())
-        await asyncio.wait_for(hub.ready.wait(), 5)
-        jar = aiohttp.CookieJar(unsafe=True)
-        async with aiohttp.ClientSession(cookie_jar=jar) as http:
-            w = World(hermes, store, portal_server, http, hub, pins)
-            w.alerts = alerts
-            w.local = local_server
-            yield w
-        serving.cancel()
-        await local_server.close()
-        await portal_server.close()
-    await backend.close()
+async def world(tmp_path, monkeypatch):
+    monkeypatch.setattr(hub_module, "MIRROR_SETTLE", 0)
+    hermes = FakeGateway()
+    store = Store(tmp_path / "portal" / "portal.db")
+    alerts = []
+    hub = Hub(Backend(hermes), alert=lambda *a: alerts.append(a))
+    hermes.hub = hub
+    portal = Portal(hub, store, origin=ORIGIN, web_root=ROOT / "dashboard" / "web")
+    portal_server = TestServer(portal.app())
+    await portal_server.start_server()
+    local_server = TestServer(portal.local_app(LOCAL_TOKEN))
+    await local_server.start_server()
+    jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=jar) as http:
+        w = World(hermes, store, portal_server, http, hub)
+        w.alerts = alerts
+        w.local = local_server
+        yield w
+    await local_server.close()
+    await portal_server.close()
 
 
 async def next_message(ws, predicate, timeout=5):

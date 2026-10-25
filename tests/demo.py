@@ -6,33 +6,29 @@ import sys
 import tempfile
 from pathlib import Path
 
-import aiohttp
 from aiohttp import web
-from aiohttp.test_utils import TestServer
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import ROOT, FakeHermes, Pins  # noqa: E402
+from conftest import ROOT, Backend, FakeGateway  # noqa: E402
 from portal.hub import Hub  # noqa: E402
-from portal.rpc import Rpc  # noqa: E402
 from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
 
 
-class DemoHermes(FakeHermes):
-    """Turns that look like real ones: reasoning, tool calls and a reply streamed in pieces.
-    A message mentioning "delete" asks for approval; one with "ask" asks a question.
+class DemoGateway(FakeGateway):
+    """Turns that look like real ones on a gateway platform: a tool progress line, then a reply
+    streamed by edits. A message mentioning "delete" asks for approval; one with "ask" asks a question.
     History reads take a moment, like a long transcript on a real machine."""
 
-    async def handle(self, method, params):
-        if method == "session.history":
-            await asyncio.sleep(0.6)
-        return await super().handle(method, params)
+    def thread(self, sid):
+        import time
 
-    async def _turn(self, sid, text):
-        await self.emit(sid, "message.start")
-        for piece in ["Looking at ", "the shard logs ", "first."]:
-            await self.emit(sid, "reasoning.delta", {"text": piece})
-            await asyncio.sleep(0.3)
+        time.sleep(0.6)
+        return super().thread(sid)
+
+    async def _turn(self, chat, sid):
+        await self.hub.turn_started(chat)
+        text = self.sessions[sid]["rows"][-1]["text"]
         method = "approval" if "delete" in text else "clarify" if "ask" in text else None
         if method:
             params = (
@@ -40,24 +36,22 @@ class DemoHermes(FakeHermes):
                 if method == "approval"
                 else {"questions": [{"qid": "q1", "question": "Which branch?", "choices": ["main", "develop"]}]}
             )
-            frame = {"jsonrpc": "2.0", "id": "req-1", "method": method, "params": {"session_id": self.runtime(sid), "request_id": "req-1", **params}}
-            for ws in list(self.sockets):
-                await ws.send_json(frame)
+            await self.hub.ask(chat, {"id": "req-1", "method": method, "params": params, "private": {}})
             return
-        for i, (name, context) in enumerate([("terminal", "gh run view 123 --log-failed"), ("read_file", "tests/e2e/orders.spec.ts")]):
-            await self.emit(sid, "tool.start", {"tool_id": f"t{i}", "name": name, "context": context})
-            await asyncio.sleep(0.8)
-            self._row(sid, "tool", "", name=name, context=context, tool_call_id=f"t{i}")
-            await self.emit(sid, "tool.complete", {"tool_id": f"t{i}", "name": name, "summary": "done in 0.8s"})
+        await self.hub.outgoing(chat, "progress", "💻 gh run view 123 --log-failed")
+        await asyncio.sleep(0.8)
+        self._row(sid, "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id=f"t{self.next_row}")
+        shown = ""
         for word in self.reply.split(" "):
-            await self.emit(sid, "message.delta", {"text": word + " "})
+            shown += word + " "
+            await self.hub.outgoing(chat, "reply", shown.strip())
             await asyncio.sleep(0.04)
-        self._row(sid, "assistant", self.reply, reasoning="Looking at the shard logs first.")
-        await self.emit(sid, "message.complete", {"status": "complete", "text": self.reply})
+        self._row(sid, "assistant", self.reply)
+        await self.hub.turn_finished(chat, "success")
 
 
 async def main(port):
-    hermes = DemoHermes()
+    hermes = DemoGateway()
     hermes.reply = "Here's the plan:\n\n1. **Rebase** onto `main`\n2. Re-run CI\n\n```bash\ngit rebase origin/main\n```"
     hermes.add_session("20261024_090000_aaaaaa", "Fix the flaky CI shard", messages=[("user", "why is shard 3 failing?")])
     hermes._row("20261024_090000_aaaaaa", "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id="h1")
@@ -78,7 +72,7 @@ async def main(port):
     hermes.add_session(
         "20261024_093000_d00001",
         "Notifications",
-        source="portal",
+        chat="inbox",
         messages=[
             ("user", "[Cron delivery: build watch]\nci went red on main: the lint job fails on an unused import"),
             ("user", "[Cron delivery: build watch]\nci is green again on main"),
@@ -94,27 +88,19 @@ async def main(port):
         hermes._row(long, "tool", "", name="read_file", context=f"src/importer/stage_{turn}.ts", tool_call_id=f"l{turn}")
         body = " ".join(["The row parser and the batch writer disagree about blank lines, so this pass makes them share one reader."] * (1 + turn % 3))
         hermes._row(long, "assistant", f"**Step {turn}.** {body}")
-    backend = TestServer(hermes.app())
-    await backend.start_server()
     data = Path(tempfile.mkdtemp())
     store = Store(data / "portal.db")
-    async with aiohttp.ClientSession() as http:
-        hub = Hub(Rpc(http, str(backend.make_url("/api/ws"))), pins=Pins())
-        origin = f"http://localhost:{port}"
-        # NAKO_DESKTOP_RELEASE_DIR serves a desktop build for trying the app's self-update.
-        portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web", desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"))
-        runner = web.AppRunner(portal.app())
-        await runner.setup()
-        await web.TCPSite(runner, "127.0.0.1", port).start()
-        (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
-        print(f"setup link file: {data / 'setup-link'}", flush=True)
-
-        async def desktop_typing():
-            await hub.ready.wait()
-            while True:
-                await asyncio.sleep(3600)
-
-        await asyncio.gather(hub.serve(), desktop_typing())
+    hub = Hub(Backend(hermes))
+    hermes.hub = hub
+    origin = f"http://localhost:{port}"
+    # NAKO_DESKTOP_RELEASE_DIR serves a desktop build for trying the app's self-update.
+    portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web", desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"))
+    runner = web.AppRunner(portal.app())
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
+    print(f"setup link file: {data / 'setup-link'}", flush=True)
+    await asyncio.Event().wait()
 
 
 asyncio.run(main(int(sys.argv[1])))

@@ -51,17 +51,11 @@ export type OpenSession = {
   requests: PortalRequest[]
 }
 
-export type LiveTool = {
-  id: string
-  name: string
-  context: string
-  args?: Record<string, unknown>
-  done: boolean
-  failed: boolean
-  summary?: string
-}
+// What the gateway has sent in a chat and not saved yet: a reply streaming in (each edit
+// replaces its text), tool progress, a post. The transcript replaces it once saved.
+export type LiveMessage = { id: string; text: string }
 
-export type Live = { text: string; reasoning: string; tools: LiveTool[] }
+export type Live = { messages: LiveMessage[] }
 
 export type Passkey = { id: string; label: string; current?: boolean }
 

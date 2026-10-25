@@ -19,7 +19,6 @@ from aiohttp import WSMsgType, web
 from . import webauthn
 from .hub import page
 from .media import shown_files
-from .rpc import RpcError
 
 log = logging.getLogger("hermes.portal")
 
@@ -144,7 +143,7 @@ class Portal:
                 return web.json_response({"error": "bad token"}, status=401)
             try:
                 return await handler(request)
-            except (ValueError, RpcError) as error:
+            except ValueError as error:
                 return web.json_response({"error": str(error)}, status=400)
             except ConnectionError:
                 return web.json_response({"error": "Nako is offline right now"}, status=503)
@@ -184,7 +183,7 @@ class Portal:
         except web.HTTPException as error:
             self._secure(request, error)
             raise
-        except (ValueError, RpcError) as error:
+        except ValueError as error:
             response = web.json_response({"error": str(error)}, status=400)
         except ConnectionError:
             response = web.json_response({"error": "Nako is offline right now"}, status=503)
