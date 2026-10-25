@@ -2,6 +2,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { App } from "./app"
 import "./index.css"
+import "./lib/table-copy"
 import "./lib/theme"
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {})
