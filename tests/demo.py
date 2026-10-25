@@ -60,12 +60,13 @@ async def main(port):
     shots = Path(tempfile.mkdtemp())
     for name in ("layout.png", "error.png"):
         (shots / name).write_bytes((ROOT / "web" / "public" / "icon-512.png").read_bytes())
+    (shots / "barcode.png").write_bytes((ROOT / "web" / "public" / "icon-192.png").read_bytes())
     hermes.add_session(
         "20261024_085000_dddddd",
         "Label layout",
         messages=[
             ("user", f"this label prints wrong\n\n[Image attached at: {shots / 'error.png'}]\n[screenshot]\nVoice: a note a plugin added for the model"),
-            ("assistant", f"Here's the fixed layout MEDIA:{shots / 'layout.png'}, with the barcode on the right.\n\nMEDIA:{shots / 'gone.png'}"),
+            ("assistant", f"Here's the fixed layout MEDIA:{shots / 'layout.png'}, with the barcode on the right.\n\nMEDIA:{shots / 'gone.png'}\nMEDIA:{shots / 'barcode.png'}"),
         ],
     )
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
