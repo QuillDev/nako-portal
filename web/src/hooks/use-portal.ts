@@ -36,6 +36,8 @@ export function usePortal() {
   const [error, setError] = useState("")
   const [commands, setCommands] = useState<Command[]>([])
   const [notes, setNotes] = useState<CommandNote[]>([])
+  // Nako's line about the open chat's last finished turn.
+  const [signOff, setSignOff] = useState<{ session: string; text: string } | null>(null)
 
   const currentRef = useRef(current)
   currentRef.current = current
@@ -120,6 +122,7 @@ export function usePortal() {
       const p = frame.payload || {}
       switch (frame.type) {
         case "message.start":
+          setSignOff(null)
           setLive(emptyLive())
           setCurrent(c => c && { ...c, running: true })
           break
@@ -144,6 +147,9 @@ export function usePortal() {
         case "message.complete":
           setCurrent(c => c && { ...c, running: false })
           refresh(open.session)
+          break
+        case "signoff":
+          setSignOff({ session: open.session, text: String(p.text || "") })
           break
         case "session.title":
           if (p.title) setCurrent(c => c && { ...c, title: String(p.title) })
@@ -351,7 +357,7 @@ export function usePortal() {
     [refresh],
   )
 
-  return { me, setName, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, commands, command, notes }
+  return { me, setName, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, commands, command, notes, signOff }
 }
 
 export type Portal = ReturnType<typeof usePortal>

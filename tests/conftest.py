@@ -121,6 +121,8 @@ class FakeGateway:
         self.next_row = 1
         self.reply = "hello from hermes"
         self.ask_approval = False
+        self.sign_off_error = None
+        self.sign_off_route = {"provider": "auto", "model": ""}
         self.image_dir = Path(tempfile.mkdtemp())
         self.hub = None
 
@@ -213,6 +215,20 @@ class FakeGateway:
 
     def set_yolo(self, chat):
         self.yolo.add(chat)
+
+    def sign_off(self, reply):
+        if self.sign_off_error:
+            raise self.sign_off_error
+        return f"proud of: {reply}"
+
+    def sign_off_models(self):
+        return [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}]
+
+    def sign_off_model(self):
+        return dict(self.sign_off_route)
+
+    def set_sign_off_model(self, provider, model):
+        self.sign_off_route = {"provider": provider, "model": model}
 
     def commands(self):
         return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]

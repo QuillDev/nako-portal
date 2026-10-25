@@ -26,6 +26,18 @@ class DemoGateway(FakeGateway):
         time.sleep(0.6)
         return super().thread(sid)
 
+    def sign_off(self, reply):
+        import time
+
+        time.sleep(1.5)
+        return "tamed the flaky timer, fifty clean runs"
+
+    def sign_off_models(self):
+        return [
+            {"provider": "anthropic", "label": "Anthropic", "models": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]},
+            {"provider": "openrouter", "label": "OpenRouter", "models": ["meta-llama/llama-5-8b-instruct", "google/gemini-3-flash"]},
+        ]
+
     async def _turn(self, chat, sid):
         await self.hub.turn_started(chat)
         text = self.sessions[sid]["rows"][-1]["text"]
@@ -58,6 +70,7 @@ class DemoGateway(FakeGateway):
 async def main(port):
     hermes = DemoGateway()
     # Seconds per step of a demo turn; long enough to watch each state.
+    hermes.sign_off_route = {"provider": "anthropic", "model": "claude-sonnet-5-5"}
     hermes.pause = float(os.environ.get("DEMO_PAUSE", "1"))
     hermes.reply = "Here's the plan:\n\n1. **Rebase** onto `main`\n2. Re-run CI\n\n```bash\ngit rebase origin/main\n```"
     hermes.add_session("20261024_090000_aaaaaa", "Fix the flaky CI shard", messages=[("user", "why is shard 3 failing?")])

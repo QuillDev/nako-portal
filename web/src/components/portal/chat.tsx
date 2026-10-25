@@ -1,5 +1,5 @@
 import { MoreHorizontalIcon } from "lucide-react"
-import { useEffect, useLayoutEffect, useRef } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
 import { Button } from "@/components/ui/button"
@@ -134,6 +134,10 @@ function NewChat({ portal }: { portal: Portal }) {
 export function Chat({ portal }: { portal: Portal }) {
   const c = portal.current
   const presence = usePresence()
+  const draftKey = c ? `draft:${c.session}` : ""
+  const [typing, setTyping] = useState(false)
+  // A saved draft counts as typing when the chat opens.
+  useEffect(() => setTyping(Boolean(draftKey && localStorage.getItem(draftKey)?.trim())), [draftKey])
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
   if (!c)
     return (
@@ -168,8 +172,17 @@ export function Chat({ portal }: { portal: Portal }) {
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-      {presence && c.running && !c.requests.length && <Presence live={portal.live} />}
-      <Composer draftKey={`draft:${c.session}`} portal={portal} />
+      {presence && !c.loading && !c.requests.length && (
+        <Presence
+          key={c.session}
+          live={portal.live}
+          outcome={portal.sessions.find(s => s.id === c.session)?.status}
+          running={c.running}
+          signOff={portal.signOff?.session === c.session ? portal.signOff.text : ""}
+          typing={typing}
+        />
+      )}
+      <Composer draftKey={draftKey} onTyping={setTyping} portal={portal} />
     </>
   )
 }
