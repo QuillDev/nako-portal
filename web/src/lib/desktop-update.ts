@@ -23,3 +23,6 @@ export function useDesktopUpdate() {
 export function installDesktopUpdate() {
   window.location.assign("/desktop/update")
 }
+
+/** The installed desktop or Android app's version, from the agent the app tags; null in a browser. */
+export const appVersion = navigator.userAgent.match(/Nako(?:Desktop|Android)\/(\d+\.\d+\.\d+)/)?.[1] ?? null

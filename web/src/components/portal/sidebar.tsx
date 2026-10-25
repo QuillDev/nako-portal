@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
-import { installDesktopUpdate, useDesktopUpdate } from "@/lib/desktop-update"
+import { appVersion, installDesktopUpdate, useDesktopUpdate } from "@/lib/desktop-update"
 import type { SessionRow, Status } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useDrawer } from "./drawer"
@@ -109,7 +109,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         ))}
       </nav>
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <span className="px-2 text-muted-foreground text-xs">{portal.connected ? "" : "nako is offline"}</span>
+        <span className="px-2 text-muted-foreground text-xs tabular-nums">{portal.connected ? (appVersion ? `v${appVersion}` : "") : "nako is offline"}</span>
         <div className="flex items-center">
           {update && (
             <Button
