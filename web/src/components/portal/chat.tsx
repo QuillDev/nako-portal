@@ -165,7 +165,7 @@ export function Chat({ portal }: { portal: Portal }) {
               notes={portal.notes.filter(n => n.session === c.session && n.at >= c.start).map(n => ({ ...n, at: n.at - c.start }))}
               running={c.running}
               session={c.session}
-              working={!presence}
+              quiet={presence}
             />}
           <Requests answer={portal.answer} requests={c.requests} />
           {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}

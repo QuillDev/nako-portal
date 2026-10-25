@@ -1,37 +1,29 @@
-import { CheckIcon, XIcon } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { Shimmer } from "@/components/ai-elements/shimmer"
 import type { Live, Status } from "@/lib/types"
 
 export type Activity = "idle" | "thinking" | "tools" | "replying"
 
-// A tool running wins; otherwise a reply that has started streaming; otherwise she's thinking.
+// A running tool wins; then reply text written since the last tool; then the last tool she ran,
+// while she works out the next step; otherwise she's thinking.
 export function activity(live: Live | null): Exclude<Activity, "idle"> {
-  if (live?.tools.some(t => t.state === "running")) return "tools"
-  if (live?.messages.some(m => m.text.trim())) return "replying"
-  return "thinking"
+  const tools = live?.tools ?? []
+  if (tools.some(t => t.state === "running")) return "tools"
+  if (live?.messages.some(m => m.text.trim() && (m.after ?? 0) >= tools.length)) return "replying"
+  return tools.length ? "tools" : "thinking"
 }
 
-const SAYS = { thinking: "hmm, let me think", tools: "on it", replying: "writing it up" }
-// Said when no line comes back from the sign-off model in time, and after a failed turn.
+const SAYS = { idle: "ready when you are", thinking: "hmm, let me think", replying: "writing it up" }
+// Said while the sign-off line is on its way, when none comes back in time, and after a failed turn.
+const WRAPPING_UP = "wrapping up"
 const DONE = "done."
 const FAILED = "hmm, that didn't work"
-const SHOWN_TOOLS = 3
 // How long to wait for the model's line, and how long a sign-off stays up.
 const SIGN_OFF_WAIT_MS = 5000
 const SIGN_OFF_MS = 8000
 
-function Dots() {
-  return (
-    <span aria-hidden className="ml-0.5 inline-flex gap-[3px] align-middle">
-      {[0, 1, 2].map(i => (
-        <i className="size-1 animate-bounce rounded-full bg-primary/70" key={i} style={{ animationDelay: `${i * 0.15}s`, animationDuration: "1.1s" }} />
-      ))}
-    </span>
-  )
-}
-
-// What she says once the turn she was working on ends: the model's line about it when it comes
-// (dots while waiting), "done." if it doesn't, then quiet.
+// What she says once the turn she was working on ends: the model's line about it when it comes,
+// "done." if it doesn't, then back to waiting.
 function useSignOff(running: boolean, outcome: Status | null | undefined, line: string) {
   const [phase, setPhase] = useState<"none" | "waiting" | "shown" | "gone">("none")
   const [fallback, setFallback] = useState("")
@@ -60,14 +52,44 @@ function useSignOff(running: boolean, outcome: Status | null | undefined, line: 
     }
   }, [phase, line])
   // She keeps her happy face while she signs off, and only waves for the next message after.
-  if (phase === "waiting") return { text: "", waiting: true, proud: true }
+  // The render a turn ends in, before the effect above moves on: already signing off, so the
+  // bubble doesn't flash the waiting line first.
+  const ending = phase === "none" && was.current && !running
+  if (ending && outcome === "failed") return { text: FAILED, waiting: false, proud: false }
+  if (phase === "waiting" || ending) return { text: "", waiting: true, proud: true }
   if (phase === "shown") return { text: (fallback === FAILED ? "" : line) || fallback, waiting: false, proud: fallback !== FAILED }
   return { text: "", waiting: false, proud: false }
 }
 
-// Nako docked above the composer. During a turn her sticker shows what she's doing with a bubble
-// saying it (and the latest tool calls); afterwards she signs off and stays, quietly, until the
-// person starts typing.
+type Shown = { id: string; node: ReactNode }
+
+// Swaps what's inside when `id` changes: the old line slides up and out as the new one rises in.
+function Swap({ id, children }: { id: string; children: ReactNode }) {
+  const shown = useRef<Shown>({ id, node: children })
+  const [leaving, setLeaving] = useState<Shown | null>(null)
+  useLayoutEffect(() => {
+    if (shown.current.id !== id) setLeaving(shown.current)
+  }, [id])
+  useLayoutEffect(() => {
+    shown.current = { id, node: children }
+  })
+  return (
+    <span className="-my-1 grid min-w-0 overflow-hidden py-1">
+      {leaving && (
+        <span aria-hidden className="presence-out col-start-1 row-start-1 min-w-0" key={`out-${leaving.id}`} onAnimationEnd={() => setLeaving(null)}>
+          {leaving.node}
+        </span>
+      )}
+      <span className="presence-in col-start-1 row-start-1 min-w-0" key={id}>
+        {children}
+      </span>
+    </span>
+  )
+}
+
+// Nako docked above the composer, thinking out loud. During a turn her sticker shows what she's
+// doing and the bubble says it (the tool she's on, one at a time); afterwards she signs off and
+// waits, until the person starts typing.
 export function Presence({
   live,
   running,
@@ -78,39 +100,34 @@ export function Presence({
   const signOff = useSignOff(running, outcome, line)
   if (!running && typing) return null
   const now: Activity = running ? activity(live) : signOff.proud ? "replying" : "idle"
-  const tools = now === "tools" ? (live?.tools ?? []).slice(-SHOWN_TOOLS) : []
-  const said = running ? SAYS[now as keyof typeof SAYS] : signOff.text
-  const dots = (running && now !== "tools") || signOff.waiting
+  const tool = now === "tools" ? (live?.tools.findLast(t => t.state === "running") ?? live?.tools.at(-1)) : undefined
+  const busy = running || signOff.waiting
+  const said = tool
+    ? `${tool.name}${tool.context ? ` ${tool.context}` : ""}`
+    : running
+      ? SAYS[now as keyof typeof SAYS]
+      : signOff.waiting
+        ? WRAPPING_UP
+        : signOff.text || SAYS.idle
   return (
     <div aria-live="polite" className="mx-auto flex w-full max-w-3xl items-end gap-2.5 px-4 pb-1" data-activity={now}>
       <picture className="-ml-1.5 size-[76px] shrink-0">
         <source media="(prefers-reduced-motion: reduce)" srcSet={`/nako/${now}-still.png`} />
         <img alt="" className="size-full" src={`/nako/${now}.webp`} />
       </picture>
-      <div
-        className={`mb-1.5 max-w-[17rem] rounded-2xl rounded-bl-md border bg-card px-3.5 py-2 text-sm transition-opacity duration-500 ${said || dots ? "opacity-100" : "opacity-0"}`}
-      >
-        {said || (dots ? "" : " ")}
-        {dots && <Dots />}
-        {tools.length > 0 && (
-          <div className="mt-1.5 flex flex-col gap-1">
-            {tools.map(t => (
-              <div className="flex min-w-0 items-center gap-1.5 text-muted-foreground text-xs" key={t.id || t.name}>
-                {t.state === "running" ? (
-                  <span className="size-2.5 shrink-0 animate-spin rounded-full border-2 border-primary border-r-transparent" />
-                ) : t.state === "failed" ? (
-                  <XIcon className="size-3 shrink-0 text-destructive" />
-                ) : (
-                  <CheckIcon className="size-3 shrink-0 text-emerald-500" />
-                )}
-                <span className="truncate">
-                  <span className="font-medium text-foreground">{t.name}</span>
-                  {t.context && ` ${t.context}`}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* A thought bubble: raised beside her head, with two puffs trailing down to her. */}
+      <div className="relative mb-[50px] -ml-2 min-w-0 max-w-[17rem] rounded-3xl border bg-card px-4 py-2 text-sm">
+        <span aria-hidden className="absolute -bottom-4 left-1 size-3 rounded-full border bg-card" />
+        <span aria-hidden className="absolute bottom-[-29px] -left-1.5 size-[7px] rounded-full border bg-card" />
+        <Swap id={tool ? `tool:${tool.id || tool.name}` : said}>
+          {busy ? (
+            <Shimmer as="span" className={tool ? "block truncate" : undefined}>
+              {said}
+            </Shimmer>
+          ) : (
+            said
+          )}
+        </Swap>
       </div>
     </div>
   )

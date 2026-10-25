@@ -136,7 +136,10 @@ export function usePortal() {
           setLive(l => {
             const base = l || emptyLive()
             const at = base.messages.findIndex(m => m.id === message.id)
-            return { ...base, messages: at < 0 ? [...base.messages, message] : base.messages.map((m, i) => (i === at ? message : m)) }
+            return {
+              ...base,
+              messages: at < 0 ? [...base.messages, { ...message, after: base.tools.length }] : base.messages.map((m, i) => (i === at ? { ...m, text: message.text, after: m.text === message.text ? m.after : base.tools.length } : m)),
+            }
           })
           break
         }

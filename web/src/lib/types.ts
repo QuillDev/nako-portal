@@ -53,7 +53,9 @@ export type OpenSession = {
 
 // What the gateway has sent in a chat and not saved yet: a reply streaming in (each edit
 // replaces its text), tool progress, a post. The transcript replaces it once saved.
-export type LiveMessage = { id: string; text: string }
+// after: how many tools the turn had started when the message was last written to, so a message
+// followed by more tool calls reads as her working, not her reply.
+export type LiveMessage = { id: string; text: string; after?: number }
 
 // A tool call in the running turn, as it starts and ends.
 export type LiveTool = { id: string; name: string; context: string; state: "running" | "done" | "failed" }
