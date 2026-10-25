@@ -130,17 +130,28 @@ class Portal:
             except ConnectionError:
                 return web.json_response({"error": "Nako is offline right now"}, status=503)
 
-        async def start(request):
+        async def brief(request):
             body = await request.json()
             text = str(body.get("text") or "")
             if not text.strip():
                 raise ValueError("Write something first")
+            return body, text
+
+        async def start(request):
+            body, text = await brief(request)
             hub = await self._hub()
             started = await hub.create(text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")))
             return web.json_response(started)
 
+        async def send(request):
+            # Same turn lock as a typed message: a busy thread queues or steers it.
+            _, text = await brief(request)
+            hub = await self._hub()
+            return web.json_response(await hub.send(self._session(request), text))
+
         app = web.Application(client_max_size=MAX_BODY, middlewares=[guard])
         app.router.add_post("/sessions", start)
+        app.router.add_post("/sessions/{session}/messages", send)
         return app
 
     @web.middleware
