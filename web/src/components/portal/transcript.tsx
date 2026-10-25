@@ -48,7 +48,7 @@ function liveSteps(tools: LiveTool[]): Step[] {
 function Steps({ steps, live }: { steps: Step[]; live?: boolean }) {
   const label = `${steps.length} tool ${steps.length === 1 ? "call" : "calls"}`
   return (
-    <ChainOfThought defaultOpen={false}>
+    <ChainOfThought className="-my-2" defaultOpen={false}>
       <ChainOfThoughtHeader className="w-fit">{live && steps.at(-1)?.state === "running" ? `${steps.at(-1)!.name}…` : label}</ChainOfThoughtHeader>
       <ChainOfThoughtContent>
         {steps.map(s => (

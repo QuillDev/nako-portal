@@ -67,7 +67,7 @@ export const ChainOfThought = memo(
         {/* Portal: one Collapsible root so the trigger's aria-controls resolves. */}
         <Collapsible onOpenChange={setIsOpen} open={isOpen}>
           <div
-            className={cn("not-prose max-w-prose space-y-4", className)}
+            className={cn("not-prose flex max-w-prose flex-col", className)}
             {...props}
           >
             {children}
