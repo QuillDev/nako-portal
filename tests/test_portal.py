@@ -174,6 +174,46 @@ async def test_only_files_the_agent_delivered_can_be_downloaded(world, tmp_path)
         assert refused.status == 404
 
 
+async def test_a_photo_the_user_sends_can_be_viewed_back_from_the_chat(world):
+    sid = world.hermes.add_session("20261024_050606_abcabc", "photo")
+    await world.sign_up()
+    await world.http.get(world.url(f"/api/sessions/{sid}"))
+    form = aiohttp.FormData()
+    form.add_field("text", "what is this?")
+    form.add_field("file", b"\x89PNG fake", filename="cat.png", content_type="image/png")
+    sent = await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data=form, headers={"Origin": ORIGIN})
+    assert sent.status == 200
+
+    opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    text = next(m["text"] for m in opened["messages"] if m["role"] == "user")
+    path = text.split("[Image attached at: ")[1].split("]")[0]
+    shown = await world.http.get(world.url("/api/file"), params={"session": sid, "path": path})
+    assert (shown.status, await shown.read(), shown.content_type) == (200, b"\x89PNG fake", "image/png")
+
+
+async def test_images_shown_in_a_chat_are_viewable_but_nothing_else_is(world, tmp_path):
+    files = {name: tmp_path / name for name in ("inline.png", "own line.jpg", "hint.png", "ref.webp", "typed.txt", "example.png")}
+    for path in files.values():
+        path.write_bytes(b"x")
+    sid = world.hermes.add_session(
+        "20261024_050707_bcdbcd",
+        "shots",
+        messages=[
+            ("user", f"look\n\n[Image attached at: {files['hint.png']}]\n[screenshot]\nand @image:{files['typed.txt']}"),
+            ("user", f"again\n@image:`{files['ref.webp']}`"),
+            ("assistant", f"the layout is here MEDIA:{files['inline.png']}, then\nMEDIA:{files['own line.jpg']}\n`MEDIA:{files['example.png']}`"),
+        ],
+    )
+    await world.sign_up()
+    status = lambda r: r.status  # noqa: E731
+    for name in ("inline.png", "own line.jpg", "hint.png", "ref.webp"):
+        shown = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(files[name])})
+        assert (name, status(shown)) == (name, 200)
+    for name in ("typed.txt", "example.png"):
+        refused = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(files[name])})
+        assert (name, status(refused)) == (name, 404)
+
+
 async def test_pins_and_archives_reach_desktop(world):
     sid = world.hermes.add_session("20261024_060606_ffffff", "notes")
     await world.sign_up()
@@ -195,3 +235,4 @@ async def test_a_notification_shows_the_start_of_the_reply_as_plain_text():
     long = _preview("word " * 200)
     assert len(long) == 280 and long.endswith("…")
     assert _preview("MEDIA:/tmp/only.png") == ""
+    assert _preview("the layout is here MEDIA:/tmp/a b.png, then done") == "the layout is here, then done"

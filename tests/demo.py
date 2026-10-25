@@ -56,6 +56,17 @@ async def main(port):
     hermes._row("20261024_090000_aaaaaa", "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id="h1")
     hermes._row("20261024_090000_aaaaaa", "tool", "", name="search_files", context="seed.ts", tool_call_id="h2")
     hermes._row("20261024_090000_aaaaaa", "assistant", "The `orders` e2e test races the seed script. I'd add a wait on the seed job:\n\n| shard | status |\n| --- | --- |\n| 1 | passing |\n| 3 | flaky |", reasoning="Shard 3 runs orders.spec.ts, which reads seeded rows.")
+    shots = Path(tempfile.mkdtemp())
+    for name in ("layout.png", "error.png"):
+        (shots / name).write_bytes((ROOT / "web" / "public" / "icon-512.png").read_bytes())
+    hermes.add_session(
+        "20261024_085000_dddddd",
+        "Label layout",
+        messages=[
+            ("user", f"this label prints wrong\n\n[Image attached at: {shots / 'error.png'}]\n[screenshot]"),
+            ("assistant", f"Here's the fixed layout MEDIA:{shots / 'layout.png'}, with the barcode on the right.\n\nMEDIA:{shots / 'gone.png'}"),
+        ],
+    )
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
     backend = TestServer(hermes.app())
