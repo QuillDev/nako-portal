@@ -71,7 +71,7 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
     <aside className={cn("flex w-full flex-col border-r bg-sidebar", className)}>
       <div className="flex flex-col gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="flex items-center gap-2 pl-1" data-tauri-drag-region="deep">
-          <img alt="" className="size-6 rounded-full" src="/icon-192.png" />
+          <img alt="" className="size-6" src="/icon-192.png" />
           <span className="flex-1 font-medium text-sm">Nako</span>
           <Button aria-label="New chat" onClick={() => go("#/new")} size="icon" title="New chat" variant="ghost">
             <PlusIcon />
