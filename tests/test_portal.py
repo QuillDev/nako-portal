@@ -107,8 +107,9 @@ async def test_desktop_and_portal_see_one_conversation_both_ways(world):
     await next_message(ws, lambda m: m.get("type") == "message.complete")
     texts = [row["text"] for row in world.hermes.sessions[sid]["rows"]]
     assert texts[-2:] == ["ship it", "hello from hermes"]
-    # A turn started from the portal says so when it's done; Desktop's own turns stay quiet.
-    assert [alert[2] for alert in world.alerts] == ["done"]
+    # A turn started from the portal says so when it's done, with the start of the reply;
+    # Desktop's own turns stay quiet.
+    assert [alert[2] for alert in world.alerts] == ["hello from hermes"]
 
     listed = await (await world.http.get(world.url("/api/sessions"))).json()
     assert listed[0]["status"] == "done"
@@ -184,3 +185,13 @@ async def test_pins_and_archives_reach_desktop(world):
     assert (await world.post(f"/api/sessions/{sid}/archive", {"archived": True})).status == 200
     assert world.hermes.sessions[sid]["archived"] is True
     assert await (await world.http.get(world.url("/api/sessions"))).json() == []
+
+
+async def test_a_notification_shows_the_start_of_the_reply_as_plain_text():
+    from portal.hub import _preview
+
+    reply = "## Fixed\n\nThe **build** passes now, see [the run](https://example.com/run).\nMEDIA:/tmp/shot.png\n`git push` next."
+    assert _preview(reply) == "Fixed The build passes now, see the run. git push next."
+    long = _preview("word " * 200)
+    assert len(long) == 280 and long.endswith("…")
+    assert _preview("MEDIA:/tmp/only.png") == ""

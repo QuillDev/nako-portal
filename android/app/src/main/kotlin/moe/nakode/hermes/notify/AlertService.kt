@@ -128,6 +128,8 @@ class AlertService : Service() {
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(alert.title)
             .setContentText(alert.body)
+            // Expanded, the notification shows the whole reply preview, not one line of it.
+            .setStyle(NotificationCompat.BigTextStyle().bigText(alert.body))
             .setContentIntent(tap)
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)

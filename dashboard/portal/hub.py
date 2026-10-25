@@ -12,6 +12,7 @@ import asyncio
 import base64
 import contextlib
 import logging
+import re
 import time
 import uuid
 
@@ -29,6 +30,7 @@ NEEDS_YOU = "needs you"
 DONE = "done"
 FAILED = "failed"
 MAX_FILE = 25 * 1024 * 1024
+PREVIEW_CHARS = 280
 
 
 class Hub:
@@ -308,7 +310,7 @@ class Hub:
         if outcome == "error":
             self.notify(session, title, "hit an error")
         elif session in self.from_portal and outcome == "complete":
-            self.notify(session, title, "done")
+            self.notify(session, title, _preview(payload.get("text")) or "done")
         self.from_portal.discard(session)
 
     async def _server_request(self, frame):
@@ -382,6 +384,15 @@ def _request_view(frame):
     params = dict(frame.get("params") or {})
     params.pop("session_id", None)
     return {"id": str(frame.get("id")), "method": frame.get("method"), "params": params, "answerable": frame.get("method") in ANSWERABLE}
+
+
+def _preview(text, limit=PREVIEW_CHARS):
+    """The start of a reply as one plain line for a notification: no MEDIA lines or markdown marks."""
+    lines = [line for line in str(text or "").splitlines() if not line.startswith("MEDIA:")]
+    plain = re.sub(r"[`*_#>|]+", "", " ".join(lines))
+    plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
+    plain = " ".join(plain.split())
+    return plain if len(plain) <= limit else plain[: limit - 1].rstrip() + "…"
 
 
 def _title_from(text):
