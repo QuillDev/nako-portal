@@ -77,7 +77,7 @@ async def main(port):
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
     hermes.add_session(
         "20261024_093000_d00001",
-        "notifications",
+        "Notifications",
         source="portal",
         messages=[
             ("user", "[Cron delivery: build watch]\nci went red on main: the lint job fails on an unused import"),

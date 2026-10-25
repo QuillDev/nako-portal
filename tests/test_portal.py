@@ -264,7 +264,7 @@ async def test_a_long_chat_opens_on_its_latest_turns_and_pages_back_through_the_
 async def test_cron_posts_read_as_nakos_messages_and_per_post_copies_stay_out_of_the_list(world):
     inbox = world.hermes.add_session(
         "20261024_040404_dddddd",
-        "notifications",
+        "Notifications",
         source="portal",
         messages=[("user", "[Cron delivery: build watch]\nci went red on main"), ("user", "[Cron delivery: news digest]\nfive links"), ("user", "which first?"), ("assistant", "the sorting paper")],
     )

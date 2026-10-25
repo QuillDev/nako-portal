@@ -19,7 +19,7 @@ from pathlib import Path
 
 log = logging.getLogger("hermes.portal")
 HOME_CHANNEL = "inbox"
-CHAT_TITLE = "notifications"
+CHAT_TITLE = "Notifications"
 
 
 def _store_module():
