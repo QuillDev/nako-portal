@@ -20,3 +20,22 @@ jobs:
         run: pip install "aiohttp>=3.12,<4" cryptography pytest pytest-asyncio
       - name: Test
         run: python -m pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: web
+      - name: Typecheck and build
+        run: npm run build
+        working-directory: web
+      # The portal serves dashboard/web as committed, so it has to match the source.
+      - name: Built app is committed
+        run: git status --porcelain dashboard/web && test -z "$(git status --porcelain dashboard/web)"

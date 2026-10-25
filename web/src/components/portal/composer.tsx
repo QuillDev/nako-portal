@@ -1,0 +1,83 @@
+import { PaperclipIcon, SquareIcon } from "lucide-react"
+import { useState } from "react"
+import {
+  PromptInput,
+  PromptInputAttachment,
+  PromptInputAttachments,
+  PromptInputBody,
+  PromptInputButton,
+  PromptInputFooter,
+  PromptInputHeader,
+  PromptInputProvider,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+  usePromptInputAttachments,
+} from "@/components/ai-elements/prompt-input"
+import type { Portal } from "@/hooks/use-portal"
+
+const MAX_FILE = 25 * 1024 * 1024
+
+function AttachButton() {
+  const attachments = usePromptInputAttachments()
+  return (
+    <PromptInputButton aria-label="Attach files" onClick={() => attachments.openFileDialog()}>
+      <PaperclipIcon className="size-4" />
+    </PromptInputButton>
+  )
+}
+
+// Drafts live in this browser per chat, so switching chats or reloading keeps them.
+export function Composer({ portal, draftKey }: { portal: Portal; draftKey: string }) {
+  const running = Boolean(portal.current?.running)
+  const [sending, setSending] = useState(false)
+
+  return (
+    <PromptInputProvider initialInput={localStorage.getItem(draftKey) || ""} key={draftKey}>
+      <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <PromptInput
+          maxFileSize={MAX_FILE}
+          multiple
+          onError={e => portal.setError(e.message)}
+          onSubmit={async message => {
+            if (!message.text.trim() && !message.files.length) return
+            setSending(true)
+            try {
+              await portal.send(
+                message.text,
+                message.files.map(f => ({ url: f.url, filename: f.filename, mediaType: f.mediaType })),
+              )
+              localStorage.removeItem(draftKey)
+            } finally {
+              setSending(false)
+            }
+          }}
+        >
+          <PromptInputHeader>
+            <PromptInputAttachments>{file => <PromptInputAttachment data={file} />}</PromptInputAttachments>
+          </PromptInputHeader>
+          <PromptInputBody>
+            <PromptInputTextarea
+              enterKeyHint="send"
+              onChange={e => localStorage.setItem(draftKey, e.currentTarget.value)}
+              placeholder={running ? "Steer or queue a message" : "Message"}
+            />
+          </PromptInputBody>
+          <PromptInputFooter>
+            <PromptInputTools>
+              <AttachButton />
+            </PromptInputTools>
+            <div className="flex items-center gap-1">
+              {running && (
+                <PromptInputButton aria-label="Stop" onClick={() => portal.stop()} title="Stop" variant="outline">
+                  <SquareIcon className="size-4" />
+                </PromptInputButton>
+              )}
+              <PromptInputSubmit disabled={sending} status={sending ? "submitted" : undefined} />
+            </div>
+          </PromptInputFooter>
+        </PromptInput>
+      </div>
+    </PromptInputProvider>
+  )
+}
