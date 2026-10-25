@@ -12,6 +12,7 @@ import {
 } from "@/components/ai-elements/prompt-input"
 import { InputGroupAddon } from "@/components/ui/input-group"
 import type { Portal } from "@/hooks/use-portal"
+import { burstHearts, saysThanks } from "@/lib/hearts"
 
 const MAX_FILE = 25 * 1024 * 1024
 
@@ -45,8 +46,9 @@ export function Composer({ portal, draftKey }: { portal: Portal; draftKey: strin
           maxFileSize={MAX_FILE}
           multiple
           onError={e => portal.setError(e.message)}
-          onSubmit={async message => {
+          onSubmit={async (message, event) => {
             if (!message.text.trim() && !message.files.length) return
+            if (saysThanks(message.text)) burstHearts(event.currentTarget)
             setSending(true)
             try {
               await portal.send(
