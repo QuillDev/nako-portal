@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import struct
 import sys
 import tempfile
@@ -403,3 +404,11 @@ def _preview(session):
     first = next((row["text"] for row in session["rows"] if row["role"] == "user"), "")
     text = first.strip().replace("\n", " ")
     return text[:60] + "..." if len(text) > 60 else text
+
+
+def pytest_xdist_auto_num_workers(config):
+    """`-n auto` (pyproject): the whole suite spreads over up to 8 workers, since most of its time
+    is tests waiting on sockets; a run of chosen files or `-k` starts faster on its own."""
+    if config.option.keyword or config.option.markexpr or config.args_source == pytest.Config.ArgsSource.ARGS:
+        return 0
+    return min(8, os.cpu_count() or 1)

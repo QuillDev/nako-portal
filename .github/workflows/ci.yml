@@ -16,8 +16,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
       - name: Install
-        run: pip install "aiohttp>=3.12,<4" cryptography pytest pytest-asyncio
+        run: uv pip install --system "aiohttp>=3.12,<4" cryptography pytest pytest-asyncio pytest-xdist
       - name: Test
         run: python -m pytest -q
 

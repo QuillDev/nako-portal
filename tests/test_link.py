@@ -86,10 +86,21 @@ async def test_the_gateway_starts_the_server_when_nothing_answers():
         await asyncio.gather(task, return_exceptions=True)
 
 
+def free_pair():
+    """A free port whose next one is free too: the server listens on both (site, then gateway link)."""
+    while True:
+        with socket.socket() as first, socket.socket() as second:
+            first.bind(("127.0.0.1", 0))
+            port = first.getsockname()[1]
+            try:
+                second.bind(("127.0.0.1", port + 1))
+            except OSError:
+                continue
+            return port
+
+
 async def test_the_standalone_server_serves_and_takes_a_gateway(tmp_path):
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    port = free_pair()
     data = tmp_path / "nako-portal"
     data.mkdir()
     (data / "local-token").write_text(LOCAL_TOKEN + "\n")
@@ -113,8 +124,9 @@ async def test_the_standalone_server_serves_and_takes_a_gateway(tmp_path):
                     await asyncio.sleep(0.05)
                 raise AssertionError("the server never got there")
 
-            await wait_for(lambda m: m is not None and m["connected"] is False)
-            assert (data / "setup-link").read_text().startswith(f"{origin}/#setup=")
+            # It answers as soon as it listens and writes the first setup link just after.
+            link = data / "setup-link"
+            await wait_for(lambda m: m is not None and m["connected"] is False and link.exists() and link.read_text().startswith(f"{origin}/#setup="))
 
             hermes = FakeGateway()
             client = GatewayClient(f"http://127.0.0.1:{port + 1}/gateway", LOCAL_TOKEN, SERVER_CODE, Backend(hermes))
