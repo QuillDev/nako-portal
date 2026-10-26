@@ -60,3 +60,6 @@ button.quiet:hover { color: var(--text); }
 #titlebar button:hover { background: rgb(255 255 255 / 7%); color: var(--text); }
 #titlebar button.close:hover { background: #e81123; color: white; }
 #titlebar svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
+/* The window has no system title bar on Windows and Linux: these strips move it. */
+[data-tauri-drag-region] { -webkit-app-region: drag; }
+[data-tauri-drag-region] :is(button, input, a) { -webkit-app-region: no-drag; }

@@ -1,5 +1,5 @@
 // The app's own first screen: ask for the portal's address, or say it can't be reached.
-const { invoke } = window.__TAURI_INTERNALS__
+const { invoke } = window.nakoDesktop
 const $ = id => document.getElementById(id)
 
 function ask(origin, error) {
