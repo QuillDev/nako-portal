@@ -1,11 +1,29 @@
-// The desktop app's in-app browser searches with the engine picked in Settings. Apps that can
-// set it say so with window.nakoBrowser; browsers and older apps never set it.
+// The apps' in-app browser. The desktop app's searches with the engine picked in Settings; both
+// it and the Android app (on a wide screen) can open each chat's browser from the chat header.
+// Apps say what they can do with window.nakoBrowser; browsers and older apps never set it.
 import { useSyncExternalStore } from "react"
 
 declare global {
   interface Window {
-    nakoBrowser?: { search: boolean }
+    nakoBrowser?: { search?: boolean; toggle?: boolean; open?: boolean }
+    NakoApp?: { toggleBrowser?: () => void }
   }
+}
+
+// The app fires "nako-browser" when the browser opens or closes, or stops fitting the window.
+const subscribeBrowser = (changed: () => void) => {
+  window.addEventListener("nako-browser", changed)
+  return () => window.removeEventListener("nako-browser", changed)
+}
+
+/** "none" when there's no in-app browser to open from here, else whether it's open. */
+const browserState = () => (!window.nakoBrowser?.toggle ? "none" : window.nakoBrowser.open ? "open" : "closed")
+
+export const useAppBrowser = () => useSyncExternalStore(subscribeBrowser, browserState, () => "none" as const)
+
+export function toggleAppBrowser() {
+  if (window.NakoApp?.toggleBrowser) window.NakoApp.toggleBrowser()
+  else void window.__TAURI_INTERNALS__?.invoke("pane_toggle").catch(() => {})
 }
 
 export const SEARCH_ENGINES = { google: "Google", duckduckgo: "DuckDuckGo", bing: "Bing", brave: "Brave" } as const

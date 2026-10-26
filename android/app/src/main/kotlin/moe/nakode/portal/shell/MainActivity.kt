@@ -147,7 +147,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        pane?.close()
+        pane?.destroy()
         webView?.destroy()
         super.onDestroy()
     }
@@ -171,6 +171,18 @@ class MainActivity : ComponentActivity() {
         @JavascriptInterface
         fun notifications(): String = if (NotificationManagerCompat.from(this@MainActivity).areNotificationsEnabled()) "on" else "off"
 
+        /** The chat header's browser button, on a screen wide enough for the in-app browser. */
+        @JavascriptInterface
+        fun toggleBrowser() {
+            runOnUiThread { pane?.let { browser -> withPortalLook(browser) { browser.toggle() } } }
+        }
+
+        /** The portal shows chat [id] ("" for no chat): the in-app browser switches to that chat's tabs. */
+        @JavascriptInterface
+        fun chat(id: String?) {
+            runOnUiThread { pane?.chat(id?.takeIf { it.isNotEmpty() }) }
+        }
+
         @JavascriptInterface
         fun openNotificationSettings() {
             runOnUiThread {
@@ -184,6 +196,7 @@ class MainActivity : ComponentActivity() {
     // the new width, or hand its page to a Custom Tab when the screen is now too narrow for it.
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        tellPortal()
         val open = pane?.takeIf { it.isOpen } ?: return
         if (PaneLayout.fits(newConfig.screenWidthDp)) {
             open.resize(newConfig.screenWidthDp)
@@ -194,12 +207,26 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Opens [link] in the pane, asking the portal first whether it's showing its light theme. */
-    private fun openInPane(browser: BrowserPane, link: String) {
-        val web = webView ?: return browser.open(link, light = false)
-        web.evaluateJavascript("document.documentElement.classList.contains('light')") { light ->
-            browser.open(link, light = light == "true")
+    /** Asks the portal whether it's showing its light theme and which search engine it picked, then runs [then]. */
+    private fun withPortalLook(browser: BrowserPane, then: () -> Unit) {
+        val web = webView ?: return then()
+        web.evaluateJavascript("[document.documentElement.classList.contains('light'), localStorage.getItem('browser:search')].join(' ')") { look ->
+            val (light, engine) = look.trim('"').split(' ').let { it.getOrNull(0) to it.getOrNull(1) }
+            browser.light = light == "true"
+            browser.engine = engine?.takeUnless { it == "null" || it.isEmpty() }
+            then()
         }
+    }
+
+    /** Tells the portal whether it can open the browser from the chat header (wide screens) and whether it's open. */
+    private fun tellPortal() {
+        val fits = PaneLayout.fits(resources.configuration.screenWidthDp)
+        val open = pane?.isOpen == true
+        webView?.evaluateJavascript(
+            "window.nakoBrowser = Object.assign(window.nakoBrowser || {}, { search: $fits, toggle: $fits, open: $open }); " +
+                "window.dispatchEvent(new Event('nako-browser'))",
+            null,
+        )
     }
 
     private val backCallback = object : OnBackPressedCallback(true) {
@@ -243,7 +270,7 @@ class MainActivity : ComponentActivity() {
         val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         split.addView(web, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         root.addView(split, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        pane = BrowserPane(this, split, server, preferences, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally)
+        pane = BrowserPane(this, split, server, preferences, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally, changed = ::tellPortal)
         if (startUrl != null) {
             web.loadUrl(startUrl)
         } else if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) {
@@ -259,7 +286,7 @@ class MainActivity : ComponentActivity() {
             }
             val browser = pane
             if (browser != null && PaneLayout.fits(resources.configuration.screenWidthDp) && PaneLayout.browsesInPane(link)) {
-                openInPane(browser, link)
+                withPortalLook(browser) { browser.open(link) }
             } else {
                 openExternally(request.url)
             }
@@ -269,6 +296,10 @@ class MainActivity : ComponentActivity() {
         // Signing in sets the cookie the alert service needs; start it as soon as the page has one.
         override fun onPageFinished(view: WebView, url: String) {
             startListening()
+            if (server.opensInApp(url)) {
+                view.evaluateJavascript(CHAT_WATCH, null)
+                tellPortal()
+            }
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -304,7 +335,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun closePane() {
-        pane?.close()
+        pane?.destroy()
         pane = null
     }
 
@@ -396,6 +427,21 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_SESSION = "session"
+
+        /** Runs in the portal: reports the chat on screen as it changes, so the browser shows that chat's tabs. */
+        private const val CHAT_WATCH = """(() => {
+  if (window.__nakoChatWatch || !window.NakoApp || !window.NakoApp.chat) return
+  window.__nakoChatWatch = true
+  let last
+  const send = () => {
+    const chat = (location.hash.match(/^#\/c\/([\w.-]+)/) || [])[1] || ""
+    if (chat === last) return
+    last = chat
+    window.NakoApp.chat(chat)
+  }
+  addEventListener("hashchange", send)
+  send()
+})()"""
         private val BACKGROUND = "#0D0A11".toColorInt()
         private val MUTED = "#B6A4B1".toColorInt()
         private val ERROR = "#F87171".toColorInt()

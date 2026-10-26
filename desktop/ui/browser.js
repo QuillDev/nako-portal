@@ -1,4 +1,5 @@
-// The in-app browser's toolbar. The shell calls window.nakoPane({url, title}) as the page changes.
+// The in-app browser's toolbar. The shell calls window.nakoPane({url, title, active, tabs}) as
+// the page changes and as tabs open and close; each chat has its own tabs.
 const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args)
 
 document.querySelectorAll("[data-pane]").forEach(button =>
@@ -18,10 +19,43 @@ if (window.nakoWindow?.controls) {
 const address = document.getElementById("address")
 let shown = ""
 
-window.nakoPane = ({ url, title }) => {
-  shown = url
-  address.title = title ? `${title}\n${url}` : url
-  if (document.activeElement !== address) address.value = url
+window.nakoPane = ({ url, title, active, tabs }) => {
+  shown = url || ""
+  address.title = title && url ? `${title}\n${url}` : shown
+  if (document.activeElement !== address) address.value = shown
+  showTabs(tabs || [], active)
+}
+
+window.nakoFocusAddress = () => address.focus()
+
+// A row of tabs under the toolbar, once there's more than one.
+const strip = document.getElementById("tabs")
+function showTabs(tabs, active) {
+  strip.hidden = tabs.length < 2
+  strip.replaceChildren(
+    ...tabs.map(({ id, name }) => {
+      const tab = document.createElement("div")
+      tab.className = "tab"
+      tab.title = name
+      if (id === active) tab.setAttribute("aria-current", "page")
+      const pick = document.createElement("button")
+      pick.type = "button"
+      pick.className = "name"
+      pick.textContent = name
+      pick.addEventListener("click", () => invoke("pane", { action: "select", target: String(id) }))
+      tab.addEventListener("auxclick", event => {
+        if (event.button === 1) invoke("pane", { action: "close-tab", target: String(id) })
+      })
+      const close = document.createElement("button")
+      close.type = "button"
+      close.className = "shut"
+      close.setAttribute("aria-label", `Close ${name}`)
+      close.innerHTML = '<svg viewBox="0 0 16 16"><path d="m5 5 6 6M11 5l-6 6" /></svg>'
+      close.addEventListener("click", () => invoke("pane", { action: "close-tab", target: String(id) }))
+      tab.append(pick, close)
+      return tab
+    }),
+  )
 }
 
 document.getElementById("go").addEventListener("submit", event => {

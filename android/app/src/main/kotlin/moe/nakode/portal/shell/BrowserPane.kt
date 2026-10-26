@@ -8,16 +8,24 @@ import android.graphics.Bitmap
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.net.Uri
+import android.os.Message
+import android.text.InputType
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -29,7 +37,11 @@ import kotlin.math.roundToInt
 
 /**
  * The in-app browser on a wide screen: a toolbar over a page, in a column beside the chat.
- * [split] is the horizontal row the chat's WebView sits in; the pane joins it on [open].
+ * [split] is the horizontal row the chat's WebView sits in; the pane joins it while open.
+ *
+ * Every chat has a browser of its own with tabs ([BrowserTabs]). Each tab is a WebView; only the
+ * one on screen is attached and running, the rest are paused, and chats left a while ago are
+ * unloaded down to their addresses.
  */
 class BrowserPane(
     private val context: Context,
@@ -41,46 +53,72 @@ class BrowserPane(
     private val openInPortal: (String) -> Unit,
     /** Links that aren't web pages, and the toolbar's "open in browser". */
     private val openExternally: (Uri) -> Unit,
+    /** Told whenever the browser opens or closes, for the portal's browser button. */
+    private val changed: () -> Unit,
 ) {
-    private var column: LinearLayout? = null
-    private var page: WebView? = null
-    private var address: TextView? = null
-    private var light = false
+    private val tabs = BrowserTabs()
+    private val pages = HashMap<Long, WebView>()
+    /** The tab last put on screen. */
+    private var visible: Long? = null
+    private var chrome: Chrome? = null
 
-    val isOpen: Boolean get() = column != null
+    /** Drawn light or dark to match the portal beside it; the activity asks the portal before each change. */
+    var light = false
+
+    /** The search engine picked in the portal's Settings. */
+    var engine: String? = null
+
+    val isOpen: Boolean get() = chrome?.edge?.parent != null
 
     /** The page showing, so a fold can hand it to a Custom Tab. */
-    val currentUrl: String? get() = page?.url
+    val currentUrl: String? get() = visiblePage()?.url?.takeUnless { it.startsWith("about:") }
 
-    /** Opens [url] in the pane, drawn [light] or dark to match the portal beside it. */
-    fun open(url: String, light: Boolean) {
-        if (page != null && light != this.light) close()
-        this.light = light
-        val web = page ?: build()
-        web.loadUrl(url)
-        show(url)
+    private fun visiblePage(): WebView? = visible?.let(pages::get)
+
+    /** The portal moved to another chat (or off chats): the browser beside it follows. */
+    fun chat(id: String?) {
+        if (tabs.switch(id)) sync()
     }
 
+    /** A link clicked in the chat: a new tab in this chat's browser, or the tab already showing it. */
+    fun open(url: String) {
+        tabs.openLink(url)
+        sync()
+    }
+
+    /** The chat header's browser button. */
+    fun toggle() {
+        tabs.toggle()
+        sync()
+        focusAddressIfBlank()
+    }
+
+    /** Puts the browser away; its tabs stay for when it comes back. */
     fun close() {
-        val web = page
-        column?.let(split::removeView)
-        column = null
-        page = null
-        address = null
-        web?.destroy()
+        tabs.hide()
+        sync()
+    }
+
+    /** Drops every page, for when the activity or the chat's WebView goes. */
+    fun destroy() {
+        chrome?.edge?.let(split::removeView)
+        chrome = null
+        pages.values.forEach(WebView::destroy)
+        pages.clear()
+        visible = null
     }
 
     fun pause() {
-        page?.onPause()
+        visiblePage()?.onPause()
     }
 
     fun resume() {
-        page?.onResume()
+        visiblePage()?.onResume()
     }
 
     /** Back inside the pane; false when it has nowhere left to go. */
     fun goBack(): Boolean {
-        val web = page ?: return false
+        val web = visiblePage() ?: return false
         if (!web.canGoBack()) return false
         web.goBack()
         return true
@@ -88,8 +126,81 @@ class BrowserPane(
 
     /** Re-measures the pane after the window changes size (a fold, a rotation, split screen). */
     fun resize(widthDp: Int) {
-        val column = column ?: return
-        column.layoutParams = LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp, share)), ViewGroup.LayoutParams.MATCH_PARENT)
+        val edge = chrome?.edge?.takeIf { it.parent != null } ?: return
+        edge.layoutParams = LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp, share)), ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
+    /** Builds, shows, pauses and drops WebViews to match the tabs. */
+    private fun sync() {
+        for (id in tabs.discard()) {
+            pages.remove(id)?.let { page ->
+                (page.parent as? ViewGroup)?.removeView(page)
+                page.destroy()
+            }
+        }
+        val shown = tabs.shown()?.takeIf { PaneLayout.fits(widthDp()) }
+        val before = visible
+        if (shown == null) {
+            chrome?.edge?.let(split::removeView)
+        } else {
+            val chrome = chromeFor(light)
+            if (chrome.edge.parent == null) {
+                split.clipChildren = false
+                split.addView(chrome.edge, LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp(), share)), ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            val page = pages.getOrPut(shown.id) { page(shown) }
+            shown.live = true
+            if (page.parent !== chrome.holder) {
+                chrome.holder.removeAllViews()
+                (page.parent as? ViewGroup)?.removeView(page)
+                chrome.holder.addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            page.onResume()
+        }
+        visible = shown?.id
+        // The page going out of sight stops: its videos pause and the WebView pauses.
+        if (before != null && before != visible) pages[before]?.let(::suspend)
+        report()
+        changed()
+    }
+
+    private fun suspend(page: WebView) {
+        page.evaluateJavascript("document.querySelectorAll('video, audio').forEach(m => m.pause())", null)
+        page.onPause()
+    }
+
+    private fun focusAddressIfBlank() {
+        val address = chrome?.address ?: return
+        if (tabs.shown()?.url != null || !isOpen) return
+        address.requestFocus()
+        context.getSystemService(InputMethodManager::class.java)?.showSoftInput(address, InputMethodManager.SHOW_IMPLICIT)
+    }
+
+    /** The toolbar's address bar and the tab strip, for the tab on screen. */
+    private fun report() {
+        val chrome = chrome ?: return
+        val shown = tabs.shown()
+        if (!chrome.address.hasFocus()) chrome.address.setText(shown?.url?.let(::shortAddress).orEmpty())
+        chrome.address.contentDescription = shown?.url ?: "Address or search"
+        val strip = tabs.strip()
+        chrome.strip.visibility = if (strip.size > 1) View.VISIBLE else View.GONE
+        chrome.tabs.removeAllViews()
+        for (tab in strip) chrome.tabs.addView(tabView(tab, tab.id == shown?.id, chrome.palette))
+        // Keep the tab on screen in view, e.g. a new one past the right edge.
+        val active = strip.indexOfFirst { it.id == shown?.id }
+        if (active >= 0) {
+            chrome.strip.post {
+                val tab = chrome.tabs.getChildAt(active) ?: return@post
+                val left = chrome.strip.scrollX
+                if (tab.left < left || tab.right > left + chrome.strip.width) chrome.strip.smoothScrollTo(tab.right - chrome.strip.width.coerceAtMost(tab.right), 0)
+            }
+        }
+    }
+
+    private fun shortAddress(url: String): String {
+        val uri = Uri.parse(url)
+        val path = uri.encodedPath?.takeUnless { it == "/" }.orEmpty() + (uri.encodedQuery?.let { "?$it" } ?: "")
+        return uri.host.orEmpty() + path
     }
 
     private var share: Float
@@ -133,7 +244,7 @@ class BrowserPane(
                         divider.translationZ = 0f
                         drag(event.rawX)?.let { (dragged, width) ->
                             share = dragged
-                            column?.layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT)
+                            chrome?.edge?.layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT)
                         }
                     }
                 }
@@ -142,11 +253,11 @@ class BrowserPane(
         }
     }
 
-    private fun currentWidth() = column?.width ?: 0
+    private fun currentWidth() = chrome?.edge?.width ?: 0
 
     /** Where the divider would leave the pane for a finger at [rawX]: its share and width in px. */
     private fun drag(rawX: Float): Pair<Float, Int>? {
-        if (column == null) return null
+        if (!isOpen) return null
         val origin = IntArray(2).also(split::getLocationOnScreen)
         val density = context.resources.displayMetrics.density
         val widthDp = (split.width / density).roundToInt()
@@ -155,43 +266,83 @@ class BrowserPane(
         return dragged to dp(PaneLayout.paneWidthDp(widthDp, dragged))
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun build(): WebView {
-        val palette = Palette.of(light)
-        val web = WebView(context).apply {
-            setBackgroundColor(palette.background)
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            webViewClient = PaneClient()
+    /** The toolbar, tab strip and page holder; built again when the portal changes theme. */
+    private class Chrome(val light: Boolean, val palette: Palette, val edge: LinearLayout, val holder: FrameLayout, val address: EditText, val strip: HorizontalScrollView, val tabs: LinearLayout)
+
+    private fun chromeFor(light: Boolean): Chrome {
+        chrome?.takeIf { it.light == light }?.let { return it }
+        chrome?.let { old ->
+            old.holder.removeAllViews()
+            split.removeView(old.edge)
         }
-        val text = TextView(context).apply {
-            setTextColor(palette.muted)
+        return buildChrome(light).also { chrome = it }
+    }
+
+    private fun buildChrome(light: Boolean): Chrome {
+        val palette = Palette.of(light)
+        val address = EditText(context).apply {
+            setTextColor(palette.text)
+            setHintTextColor(palette.muted)
+            hint = "Search or enter address"
             textSize = 13f
             isSingleLine = true
             ellipsize = TextUtils.TruncateAt.END
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            imeOptions = EditorInfo.IME_ACTION_GO
+            setSelectAllOnFocus(true)
+            background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(android.graphics.Color.TRANSPARENT) }
             setPadding(dp(8), 0, dp(8), 0)
+            setOnFocusChangeListener { field, focused ->
+                (field.background as GradientDrawable).setColor(if (focused) palette.hover else android.graphics.Color.TRANSPARENT)
+                if (focused) (field as EditText).setText(tabs.shown()?.url.orEmpty()) else report()
+            }
+            setOnEditorActionListener { field, action, event ->
+                val go = action == EditorInfo.IME_ACTION_GO || (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
+                if (go) {
+                    Address.resolve(field.text.toString(), engine)?.let { url -> visiblePage()?.loadUrl(url) }
+                    field.clearFocus()
+                    context.getSystemService(InputMethodManager::class.java)?.hideSoftInputFromWindow(field.windowToken, 0)
+                }
+                go
+            }
         }
         val toolbar = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(4), 0, dp(4), 0)
             setBackgroundColor(palette.background)
-            addView(button(R.drawable.pane_back, "Back", palette) { page?.takeIf { it.canGoBack() }?.goBack() })
-            addView(button(R.drawable.pane_forward, "Forward", palette) { page?.takeIf { it.canGoForward() }?.goForward() })
-            addView(button(R.drawable.pane_reload, "Reload", palette) { page?.reload() })
-            addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            addView(button(R.drawable.pane_external, "Open in browser", palette) { page?.url?.let { openExternally(Uri.parse(it)) } })
+            addView(button(R.drawable.pane_back, "Back", palette) { visiblePage()?.takeIf { it.canGoBack() }?.goBack() })
+            addView(button(R.drawable.pane_forward, "Forward", palette) { visiblePage()?.takeIf { it.canGoForward() }?.goForward() })
+            addView(button(R.drawable.pane_reload, "Reload", palette) { visiblePage()?.reload() })
+            addView(address, LinearLayout.LayoutParams(0, dp(36), 1f))
+            addView(button(R.drawable.pane_new, "New tab", palette) {
+                tabs.newTab()
+                sync()
+                focusAddressIfBlank()
+            })
+            addView(button(R.drawable.pane_external, "Open in browser", palette) { currentUrl?.let { openExternally(Uri.parse(it)) } })
             addView(button(R.drawable.pane_close, "Close browser", palette) { close() })
         }
-        // Toolbar over the page, a hairline under the toolbar and one between the chat and the pane.
+        val tabRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), 0, dp(4), dp(4))
+        }
+        val strip = HorizontalScrollView(context).apply {
+            isHorizontalScrollBarEnabled = false
+            setBackgroundColor(palette.background)
+            visibility = View.GONE
+            addView(tabRow)
+        }
+        val holder = FrameLayout(context).apply { setBackgroundColor(palette.background) }
+        // Toolbar and tabs over the page, a hairline under them and one between the chat and the pane.
         val column = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(palette.background)
             addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+            addView(strip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
             addView(View(context).apply { setBackgroundColor(palette.border) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)))
-            addView(web, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(holder, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         }
         val edge = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -200,19 +351,79 @@ class BrowserPane(
             addView(divider(palette), LinearLayout.LayoutParams(dp(16), ViewGroup.LayoutParams.MATCH_PARENT))
             addView(column, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        split.clipChildren = false
-        split.addView(edge, LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp(), share)), ViewGroup.LayoutParams.MATCH_PARENT))
-        this.column = edge
-        this.page = web
-        this.address = text
-        return web
+        return Chrome(light, palette, edge, holder, address, strip, tabRow)
     }
 
-    private fun show(url: String) {
-        val uri = Uri.parse(url)
-        val path = uri.encodedPath?.takeUnless { it == "/" }.orEmpty() + (uri.encodedQuery?.let { "?$it" } ?: "")
-        address?.text = (uri.host.orEmpty() + path)
-        address?.contentDescription = url
+    /** One tab in the strip: its name to switch to it, and a cross to close it. */
+    private fun tabView(tab: BrowserTabs.Tab, current: Boolean, palette: Palette): View {
+        val name = TextView(context).apply {
+            text = tab.name
+            setTextColor(if (current) palette.text else palette.muted)
+            textSize = 13f
+            isSingleLine = true
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), 0, dp(2), 0)
+        }
+        val shut = ImageButton(context).apply {
+            setImageResource(R.drawable.pane_close)
+            imageTintList = ColorStateList.valueOf(palette.muted)
+            contentDescription = "Close ${tab.name}"
+            background = null
+            scaleX = 0.7f
+            scaleY = 0.7f
+            setOnClickListener {
+                if (tabs.closeTab(tab.id)) {
+                    pages.remove(tab.id)?.let { page ->
+                        (page.parent as? ViewGroup)?.removeView(page)
+                        page.destroy()
+                    }
+                    if (visible == tab.id) visible = null
+                    sync()
+                }
+            }
+        }
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            contentDescription = tab.name
+            background = GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setColor(if (current) palette.hover else android.graphics.Color.TRANSPARENT)
+            }
+            setOnClickListener {
+                tabs.select(tab.id)
+                sync()
+            }
+            addView(name, LinearLayout.LayoutParams(dp(120), ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(shut, LinearLayout.LayoutParams(dp(28), dp(28)))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { marginEnd = dp(2) }
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun page(tab: BrowserTabs.Tab): WebView = WebView(context).apply {
+        setBackgroundColor(Palette.of(light).background)
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
+        // Pages that open a window (target=_blank, window.open) get a new tab.
+        settings.setSupportMultipleWindows(true)
+        webViewClient = PaneClient(tab.id)
+        webChromeClient = PaneChrome(tab.id)
+        loadUrl(tab.url ?: "about:blank")
+    }
+
+    /** Keeps a tab's address and title as its page moves on, for the strip and for reloading it after it was unloaded. */
+    private fun remember(id: Long, url: String?, title: String?) {
+        val tab = tabs.tab(id) ?: return
+        // A new tab's blank page has no address worth keeping, and its title is just "about:blank".
+        if (url == null || url.startsWith("about:")) return
+        if (url != tab.url && title == null) tab.title = null
+        tab.url = url
+        if (title != null) tab.title = title
+        report()
     }
 
     private fun button(@DrawableRes icon: Int, label: String, palette: Palette, action: () -> Unit) = ImageButton(context).apply {
@@ -222,10 +433,10 @@ class BrowserPane(
         tooltipText = label
         background = RippleDrawable(ColorStateList.valueOf(palette.hover), null, GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(palette.text) })
         setOnClickListener { action() }
-        layoutParams = LinearLayout.LayoutParams(dp(44), dp(40))
+        layoutParams = LinearLayout.LayoutParams(dp(38), dp(40))
     }
 
-    private inner class PaneClient : WebViewClient() {
+    private inner class PaneClient(private val id: Long) : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val link = request.url.toString()
             return when {
@@ -241,14 +452,52 @@ class BrowserPane(
             }
         }
 
-        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = show(url)
+        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = remember(id, url, null)
 
-        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = show(url)
+        override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = remember(id, url, null)
 
-        // A crashed page closes the pane rather than the app.
+        // A crashed page closes its tab rather than the app.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            if (view === page) close()
+            if (pages[id] === view) {
+                pages.remove(id)
+                (view.parent as? ViewGroup)?.removeView(view)
+                view.destroy()
+                tabs.tab(id)?.live = false
+                if (visible == id) visible = null
+                sync()
+            }
             return true
+        }
+    }
+
+    private inner class PaneChrome(private val id: Long) : WebChromeClient() {
+        override fun onReceivedTitle(view: WebView, title: String?) = remember(id, view.url, title.orEmpty())
+
+        // A page asking for a new window: a throwaway WebView catches where it goes, and that opens as a tab.
+        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
+            if (!isUserGesture) return false
+            val catcher = WebView(context)
+            catcher.webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                    caught(view, request.url.toString())
+                    return true
+                }
+
+                override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) = caught(view, url)
+            }
+            (resultMsg.obj as WebView.WebViewTransport).webView = catcher
+            resultMsg.sendToTarget()
+            return true
+        }
+
+        private fun caught(catcher: WebView, url: String) {
+            catcher.stopLoading()
+            catcher.post { catcher.destroy() }
+            when {
+                server.opensInApp(url) -> openInPortal(url)
+                PaneLayout.browsesInPane(url) -> open(url)
+                else -> openExternally(Uri.parse(url))
+            }
         }
     }
 

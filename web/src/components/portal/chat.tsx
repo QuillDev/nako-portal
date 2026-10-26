@@ -1,4 +1,4 @@
-import { MoreHorizontalIcon } from "lucide-react"
+import { GlobeIcon, MoreHorizontalIcon } from "lucide-react"
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Portal } from "@/hooks/use-portal"
+import { toggleAppBrowser, useAppBrowser } from "@/lib/desktop-browser"
 import { useMarkdown } from "@/lib/markdown"
 import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
@@ -17,8 +18,22 @@ import { Transcript } from "./transcript"
 
 // The open chat's title and ⋯ menu; unchanged while a turn streams in below it.
 const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions }: { title: string; session: string; pinned: boolean; actions: ChatActions }) {
+  const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
+      {browser !== "none" && (
+        <Button
+          aria-label="Browser"
+          aria-pressed={browser === "open"}
+          className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+          onClick={toggleAppBrowser}
+          size="icon"
+          title="Browser"
+          variant="ghost"
+        >
+          <GlobeIcon />
+        </Button>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button aria-label="More" size="icon" variant="ghost">
