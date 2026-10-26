@@ -3,6 +3,7 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto"
 import { request } from "node:http"
 import { test } from "node:test"
 
+import { browserAgent, signInAgent } from "../src/agent.js"
 import { addressOrSearch } from "../src/address.js"
 import { backoff, parseAlert } from "../src/alerts.js"
 import { blake2b512, parsePublicKey, verifySignature } from "../src/minisign.js"
@@ -234,4 +235,12 @@ test("coming back checks again only after a while, and a failed check says what 
   assert.equal(reason("not signed in"), "Sign in to the portal first")
   assert.equal(reason("no release"), "This portal doesn't offer desktop updates")
   assert.equal(announcement('1.2.3"; alert(1); "'), 'window.nakoUpdate = {"version":"1.2.3\\"; alert(1); \\""}; window.dispatchEvent(new Event("nako-update"))')
+})
+
+test("pages see Chrome without the Electron and app tokens, and Google's sign-in sees Firefox", () => {
+  const fallback = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) nako/0.3.0 Chrome/146.0.0.0 Electron/45.0.0 Safari/537.36"
+  assert.equal(browserAgent(fallback), "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+  assert.match(signInAgent("darwin"), /^Mozilla\/5\.0 \(Macintosh; Intel Mac OS X 10\.15; rv:\d+\.0\) Gecko\/20100101 Firefox\/\d+\.0$/)
+  assert.match(signInAgent("win32"), /\(Windows NT 10\.0; Win64; x64; rv:/)
+  assert.match(signInAgent("linux"), /\(X11; Linux x86_64; rv:/)
 })

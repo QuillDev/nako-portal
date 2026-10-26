@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 
 import { BaseWindow, Menu, Notification, Tray, WebContentsView, app, ipcMain, nativeImage, session, shell } from "electron"
 
+import { GOOGLE_SIGN_IN, browserAgent as agentFrom, signInAgent } from "./agent.js"
 import { listen } from "./alerts.js"
 import { ServerOrigin } from "./origin.js"
 import { Pane } from "./pane.js"
@@ -199,8 +200,7 @@ function tellPortal() {
 const DRAG = `[data-tauri-drag-region] { -webkit-app-region: drag }
 [data-tauri-drag-region] :is(button, a, input, select, textarea, [role="button"], [role="menuitem"], [data-radix-collection-item]) { -webkit-app-region: no-drag }`
 
-/** Chromium's agent without the Electron and app tokens some sites refuse to sign in with. */
-const browserAgent = () => app.userAgentFallback.replace(/ Electron\/\S+/, "").replace(/ nako\/\S+/i, "")
+const browserAgent = () => agentFrom(app.userAgentFallback)
 
 function createWindow() {
   window = new BaseWindow({
@@ -370,6 +370,11 @@ app.on("window-all-closed", () => {})
 app.whenReady().then(() => {
   app.setAppUserModelId(IDENTIFIER)
   // Downloads from the portal or the in-app browser go to the Downloads folder.
+  const signIn = signInAgent()
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: GOOGLE_SIGN_IN }, (details, callback) => {
+    details.requestHeaders["User-Agent"] = signIn
+    callback({ requestHeaders: details.requestHeaders })
+  })
   session.defaultSession.on("will-download", (_event, item) => {
     item.setSavePath(join(app.getPath("downloads"), item.getFilename()))
     item.once("done", (_e, state) => {
