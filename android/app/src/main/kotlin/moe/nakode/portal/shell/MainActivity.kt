@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
     private var webView: WebView? = null
     /** The in-app browser beside the chat, on screens wide enough for it. */
     private var pane: BrowserPane? = null
+    /** Chrome docked beside the chat, preferred over [pane] when the browser supports it. */
+    private val sheet by lazy { ChromeSheet(this) { width -> split?.updatePadding(right = width) } }
+    private var split: LinearLayout? = null
     private var pendingFiles: ValueCallback<Array<Uri>>? = null
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -92,6 +95,7 @@ class MainActivity : ComponentActivity() {
             WindowInsetsCompat.CONSUMED
         }
         setContentView(root)
+        sheet.bind()
         onBackPressedDispatcher.addCallback(this, backCallback)
 
         val server = origin
@@ -129,6 +133,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        sheet.unbind()
         pane?.close()
         webView?.destroy()
         super.onDestroy()
@@ -176,11 +181,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Opens [link] in the pane, asking the portal first whether it's showing its light theme. */
+    /**
+     * Opens [link] beside the chat: in Chrome's side sheet when it can, else in the pane. Asks the
+     * portal first whether it's showing its light theme.
+     */
     private fun openInPane(browser: BrowserPane, link: String) {
         val web = webView ?: return browser.open(link, light = false)
-        web.evaluateJavascript("document.documentElement.classList.contains('light')") { light ->
-            browser.open(link, light = light == "true")
+        web.evaluateJavascript("document.documentElement.classList.contains('light')") { result ->
+            val light = result == "true"
+            val widthDp = resources.configuration.screenWidthDp
+            val widthPx = (PaneLayout.paneWidthDp(widthDp) * resources.displayMetrics.density).toInt()
+            if (!sheet.open(link, widthPx, light)) browser.open(link, light)
         }
     }
 
@@ -223,6 +234,7 @@ class MainActivity : ComponentActivity() {
         webView = web
         // The chat fills a row the in-app browser can join on a wide screen.
         val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        this.split = split
         split.addView(web, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         root.addView(split, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         pane = BrowserPane(this, split, server, preferences, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally)
