@@ -32,7 +32,7 @@ fn due(last: Option<Instant>, now: Instant, after: Duration) -> bool {
 
 /// Whether this install replaces itself. The AppImage and the Windows installer's app do; the
 /// .deb and the Homebrew app update through their package manager.
-fn self_updates() -> bool {
+pub(crate) fn self_updates() -> bool {
     if cfg!(target_os = "linux") {
         std::env::var_os("APPIMAGE").is_some()
     } else {
@@ -50,26 +50,69 @@ pub fn watch(app: AppHandle, origin: ServerOrigin) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(20)).await;
         while GENERATION.load(Ordering::SeqCst) == generation && PENDING.lock().unwrap().is_none() {
-            let wait = if run_check(&app, &origin).await { 6 * 3600 } else { 600 };
+            let wait = if run_check(&app, &origin, false).await.is_ok() { 6 * 3600 } else { 600 };
             tokio::time::sleep(Duration::from_secs(wait)).await;
         }
     });
 }
 
-/// Checks for a release now, unless another check is running; true when the check got an answer.
-async fn run_check(app: &AppHandle, origin: &ServerOrigin) -> bool {
+/// Checks for a release now, unless another check is running (then Ok(false) without waiting).
+/// A found release downloads, then installs right away when [now] (the tray's "Check for
+/// updates"), or else once nobody is using the window. Ok(true) when a release was found.
+async fn run_check(app: &AppHandle, origin: &ServerOrigin, now: bool) -> Result<bool, String> {
     if CHECKING.swap(true, Ordering::SeqCst) {
-        return true;
+        return Ok(false);
     }
     *LAST_CHECK.lock().unwrap() = Some(Instant::now());
-    let result = check(app, origin).await;
+    let result = check(app, origin, now).await.map_err(|error| error.to_string());
     CHECKING.store(false, Ordering::SeqCst);
-    match result {
-        Ok(()) => true,
-        Err(error) => {
-            eprintln!("nako: no update: {error}");
-            false
+    if let Err(error) = &result {
+        eprintln!("nako: no update: {error}");
+    }
+    result
+}
+
+/// The tray's "Check for updates": checks now and installs what it finds, or says why not.
+pub fn check_now(app: &AppHandle) {
+    if !self_updates() {
+        return;
+    }
+    if PENDING.lock().unwrap().is_some() {
+        install_now(app);
+        return;
+    }
+    let Some(origin) = app.state::<crate::Shell>().origin() else {
+        crate::notify::message(app, "Can't check for updates", "Connect to a portal first");
+        return;
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // A check already under way (e.g. the window just got focus) finishes first.
+        while CHECKING.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(200)).await;
         }
+        if PENDING.lock().unwrap().is_some() {
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || install_now(&handle));
+            return;
+        }
+        match run_check(&app, &origin, true).await {
+            Ok(true) => {}
+            Ok(false) => crate::notify::message(&app, "Nako is up to date", &format!("Version {}", app.package_info().version)),
+            Err(error) => crate::notify::message(&app, "Couldn't check for updates", &reason(&error)),
+        }
+    });
+}
+
+/// What to tell someone whose check failed.
+fn reason(error: &str) -> String {
+    if error == "not signed in" {
+        "Sign in to the portal first".into()
+    } else if error.contains("valid release JSON") {
+        // The portal answers 404 when it has no desktop release set up.
+        "This portal doesn't offer desktop updates".into()
+    } else {
+        format!("The portal didn't answer: {error}")
     }
 }
 
@@ -82,11 +125,11 @@ pub fn check_if_due(app: &AppHandle) {
     let Some(origin) = app.state::<crate::Shell>().origin() else { return };
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        run_check(&app, &origin).await;
+        let _ = run_check(&app, &origin, false).await;
     });
 }
 
-async fn check(app: &AppHandle, origin: &ServerOrigin) -> Result<(), Box<dyn std::error::Error>> {
+async fn check(app: &AppHandle, origin: &ServerOrigin, now: bool) -> Result<bool, Box<dyn std::error::Error>> {
     let cookie = crate::cookie_header(app, origin).ok_or("not signed in")?;
     let updater = app.updater_builder().endpoints(vec![origin.page("/api/desktop/release")])?.header("Cookie", cookie)?.build()?;
     if let Some(update) = updater.check().await? {
@@ -95,10 +138,15 @@ async fn check(app: &AppHandle, origin: &ServerOrigin) -> Result<(), Box<dyn std
         let handle = app.clone();
         app.run_on_main_thread(move || {
             announce(&handle);
-            install_if_idle(&handle);
+            if now {
+                install_now(&handle);
+            } else {
+                install_if_idle(&handle);
+            }
         })?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Tells the portal page an update is ready, so it can offer a restart. Runs again on every
@@ -162,7 +210,14 @@ fn relaunch(app: &AppHandle, _hidden: bool) {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{announcement, due};
+    use super::{announcement, due, reason};
+
+    #[test]
+    fn a_failed_check_says_what_to_do() {
+        assert_eq!(reason("not signed in"), "Sign in to the portal first");
+        assert_eq!(reason("Could not fetch a valid release JSON from the remote"), "This portal doesn't offer desktop updates");
+        assert!(reason("error sending request").starts_with("The portal didn't answer"));
+    }
 
     #[test]
     fn coming_back_checks_again_only_after_a_while() {

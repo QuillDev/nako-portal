@@ -37,6 +37,12 @@ pub fn show(app: &AppHandle, alert: Alert) {
     });
 }
 
+/// A plain one-off notice from the app itself (e.g. an update check's answer).
+pub fn message(app: &AppHandle, title: &str, body: &str) {
+    let notification = base(app, title, body);
+    std::thread::spawn(move || platform::post(notification));
+}
+
 pub fn saved(app: &AppHandle, path: &Path) {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let notification = base(app, &format!("Saved {name}"), "In your Downloads folder");
