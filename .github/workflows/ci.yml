@@ -27,11 +27,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@v7
+        id: node
         with:
           node-version: "26"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+      # The installed tree itself, so an unchanged lockfile skips npm ci altogether.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: modules
+        with:
+          path: web/node_modules
+          key: node-modules-${{ runner.os }}-${{ steps.node.outputs.node-version }}-${{ hashFiles('web/package-lock.json') }}
       - name: Install
+        if: steps.modules.outputs.cache-hit != 'true'
         run: npm ci
         working-directory: web
       - name: Typecheck and build
