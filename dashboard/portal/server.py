@@ -31,6 +31,13 @@ ANDROID_APK_PATH = "/android/nako.apk"
 ANDROID_PACKAGE = "moe.nakode.portal"
 # How long the desktop app has to collect a sign-in the browser approved.
 HANDOFF_TTL = 120
+# Built files carry their content hash in the name, so a browser can keep them for good.
+IMMUTABLE = "public, max-age=31536000, immutable"
+# A file shown in a chat rarely changes at its path; the browser keeps it a day instead of
+# reading it (and the transcript that allows it) again every time the chat opens.
+SHOWN_FILE_CACHE = "private, max-age=86400"
+# How long the files a transcript shows are remembered before it's read again to check one.
+SHOWN_FILES_TTL = 30
 PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 # Tauri updater platform keys, and the release files they point at (no paths).
@@ -91,6 +98,8 @@ class Portal:
         # __Host- cookies need https; plain http is only ever a local test.
         self.cookie = "__Host-portal" if parsed.scheme == "https" else "portal"
         self.secure = parsed.scheme == "https"
+        # session -> (expires, files its transcript shows), so a chat's images don't each reread it.
+        self.shown = {}
 
     async def gateway_changed(self, connected):
         """A gateway connected (show the saved profile, then say so) or went away. Turns and
@@ -331,6 +340,8 @@ class Portal:
         except ValueError as error:
             raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
         self.store.set_meta("profile", shown["profile"])
+        self.hub.inboxes = None
+        self.shown.clear()
         await self.hub.broadcast({"kind": "profile.changed", "profile": shown["profile"]})
         return web.json_response(shown)
 
@@ -480,9 +491,11 @@ class Portal:
         hub = await self._hub()
         session = self._session(request)
         opened = await hub.open(session)
-        listed = next((row for row in await hub.sessions() if row["id"] == session), None)
-        if listed and listed["notifications"]:
-            self.store.set_meta(f"seen:{session}", listed["message_count"])
+        # Only the notifications chat keeps a read mark, so other chats skip relisting every chat.
+        if hub.inboxes is None or session in hub.inboxes:
+            listed = next((row for row in await hub.sessions() if row["id"] == session), None)
+            if listed and listed["notifications"]:
+                self.store.set_meta(f"seen:{session}", listed["message_count"])
         query = request.query
         window = {key: _index(query[key]) for key in ("before", "since") if key in query}
         opened["start"], opened["messages"] = page(opened["messages"], **window)
@@ -568,16 +581,27 @@ class Portal:
         raw = request.query.get("path", "")
         if not SESSION_ID.match(session) or not raw.startswith(("/", "~/")):
             raise web.HTTPNotFound()
-        opened = await hub.open(session)
         path = Path(raw).expanduser()
-        if raw not in shown_files(opened["messages"]) or not path.is_file() or path.stat().st_size > MAX_FILE:
+        if raw not in await self._shown_files(hub, session, raw) or not path.is_file() or path.stat().st_size > MAX_FILE:
             raise web.HTTPNotFound()
         kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         inline = kind.startswith("image/") or kind.startswith("audio/") or kind.startswith("video/") or kind == "application/pdf"
         disposition = "inline" if inline else "attachment"
         return web.FileResponse(
-            path, headers={"Content-Type": kind, "Content-Disposition": f'{disposition}; filename="{path.name}"'}
+            path, headers={"Content-Type": kind, "Content-Disposition": f'{disposition}; filename="{path.name}"', "Cache-Control": SHOWN_FILE_CACHE}
         )
+
+    async def _shown_files(self, hub, session, wanted):
+        """The files a session's transcript shows. Remembered for a short while; a file that isn't
+        among them rereads the transcript, so one a newer reply delivered still opens."""
+        now = self.clock()
+        expires, files = self.shown.get(session, (0, frozenset()))
+        if expires < now or wanted not in files:
+            files = frozenset(shown_files((await hub.open(session))["messages"]))
+            for stale in [key for key, (until, _) in self.shown.items() if until < now]:
+                del self.shown[stale]
+            self.shown[session] = (now + SHOWN_FILES_TTL, files)
+        return files
 
     async def inbox(self, request):
         self._require(request)
@@ -755,7 +779,8 @@ class Portal:
             if "." in Path(rel).name:
                 raise web.HTTPNotFound()
             path = self.web_root / "index.html"
-        headers = {"Cache-Control": "no-cache"}
+        hashed = path.parent == self.web_root / "assets"
+        headers = {"Cache-Control": IMMUTABLE if hashed else "no-cache"}
         if path.name == "sw.js":
             headers["Service-Worker-Allowed"] = "/"
         return web.FileResponse(path, headers=headers)

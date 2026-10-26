@@ -78,6 +78,8 @@ class Hub:
         self.requests = {}
         self.running = set()
         self.titles = {}
+        # The notification chats the last listing found; None until the first listing.
+        self.inboxes = None
         self.last_text = {}
         # Whether a gateway is there to run turns. The standalone server's link keeps this.
         self.connected = True
@@ -107,8 +109,15 @@ class Hub:
             watchers.discard(client)
 
     def watch(self, client, session):
+        """The chat a socket shows now. It hears that chat's live events and no longer the last
+        one's, so a tab that has opened many chats isn't sent every reply streaming in them."""
+        shown = self.viewing.pop(client, None)
+        if shown is not None:
+            watchers = self.subscribers.get(shown, set())
+            watchers.discard(client)
+            if not watchers:
+                self.subscribers.pop(shown, None)
         if session is None:
-            self.viewing.pop(client, None)
             return
         self.subscribers.setdefault(session, set()).add(client)
         self.viewing[client] = session
@@ -149,9 +158,12 @@ class Hub:
 
     async def sessions(self):
         rows = []
+        inboxes = set()
         for row in await asyncio.to_thread(self.backend.sessions):
             session = row["id"]
             self.titles[session] = row.get("title") or ""
+            if row.get("chat_id") == INBOX:
+                inboxes.add(session)
             rows.append(
                 {
                     "id": session,
@@ -166,6 +178,7 @@ class Hub:
                     "status": self.status.get(session),
                 }
             )
+        self.inboxes = inboxes
         return rows
 
     async def open(self, session):

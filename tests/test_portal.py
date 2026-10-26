@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 import pytest
 
-from conftest import ORIGIN, Authenticator, next_message
+from conftest import ORIGIN, ROOT, Authenticator, next_message, until
 
 pytestmark = pytest.mark.asyncio
 
@@ -116,8 +116,13 @@ async def test_no_alert_for_a_chat_open_in_front_of_you(world):
     ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
 
     async def reply_in(session):
+        # Another tab that only listens (never in front of you) sees the turn end.
+        listener = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+        await listener.send_json({"watch": session})
+        await asyncio.sleep(0.05)
         await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
-        await next_message(ws, lambda m: m.get("session") == session and m.get("type") == "message.complete")
+        await next_message(listener, lambda m: m.get("session") == session and m.get("type") == "message.complete")
+        await listener.close()
 
     await ws.send_json({"watch": sid, "looking": True})
     await asyncio.sleep(0.05)
@@ -234,9 +239,62 @@ async def test_only_files_the_agent_delivered_can_be_downloaded(world, tmp_path)
 
     delivered = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(report)})
     assert (delivered.status, await delivered.text()) == (200, "quarterly numbers")
+    # The browser keeps it for this signed-in user instead of fetching it every time the chat opens.
+    assert delivered.headers["Cache-Control"] == "private, max-age=86400"
     for path in (secret, "/etc/passwd"):
         refused = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(path)})
         assert refused.status == 404
+
+
+async def test_a_file_a_newer_reply_delivers_opens_right_after_an_older_one(world, tmp_path):
+    first, second = tmp_path / "first.png", tmp_path / "second.png"
+    for path in (first, second):
+        path.write_bytes(b"x")
+    sid = world.hermes.add_session("20261024_050505_ababab", "charts", messages=[("assistant", f"MEDIA:{first}")])
+    await world.sign_up()
+
+    async def status(path):
+        return (await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(path)})).status
+
+    assert (await status(first), await status(second)) == (200, 404)
+    world.hermes._row(sid, "assistant", f"and another MEDIA:{second}")
+    assert (await status(second), await status(first)) == (200, 200)
+
+
+async def test_built_files_are_kept_by_the_browser_and_the_page_is_always_checked(world):
+    built = next((ROOT / "dashboard" / "web" / "assets").iterdir()).name
+    asset = await world.http.get(world.url(f"/assets/{built}"))
+    assert (asset.status, asset.headers["Cache-Control"]) == (200, "public, max-age=31536000, immutable")
+    # The page and the service worker name the current build, so they're checked on every load.
+    for path in ("/", "/sw.js", "/c/some-chat"):
+        assert (await world.http.get(world.url(path))).headers["Cache-Control"] == "no-cache", path
+
+
+async def test_a_tab_hears_live_events_only_for_the_chat_it_shows(world):
+    left = world.hermes.add_session("20261024_030303_aaaaaa", "left behind")
+    shown = world.hermes.add_session("20261024_040404_bbbbbb", "on screen")
+    await world.sign_up()
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": left})
+    await ws.send_json({"watch": shown})
+    await asyncio.sleep(0.05)
+    for session in (left, shown):
+        await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+        await until(lambda: session not in world.hub.running and world.hermes.sessions[session]["rows"][-1]["role"] == "assistant")
+    heard = []
+    await next_message(ws, lambda m: heard.append(m) or (m.get("session") == shown and m.get("type") == "message.complete"))
+    assert [m["session"] for m in heard if m.get("kind") == "event"] == [shown] * len([m for m in heard if m.get("kind") == "event"])
+    # Its chat list still hears every chat's status.
+    assert {m["session"] for m in heard if m.get("kind") == "status"} == {left, shown}
+    await ws.close()
+
+
+async def test_opening_the_notifications_chat_before_listing_chats_still_marks_it_read(world):
+    inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox", messages=[("user", "[Cron delivery: build watch]\nci red")])
+    await world.sign_up()
+    assert (await world.http.get(world.url(f"/api/sessions/{inbox}"))).status == 200
+    rows = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [(row["id"], row["unread"]) for row in rows] == [(inbox, False)]
 
 
 async def test_a_photo_the_user_sends_can_be_viewed_back_from_the_chat(world):
