@@ -2,9 +2,9 @@
 //! Tauri's updater, which verifies the download against the key built into the app. The update
 //! downloads in the background and installs once nobody is using the window.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
@@ -14,6 +14,21 @@ use crate::origin::ServerOrigin;
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 /// A verified download waiting for the window to lose focus.
 static PENDING: Mutex<Option<(Update, Vec<u8>)>> = Mutex::new(None);
+/// When the last check started, and whether one is running now.
+static LAST_CHECK: Mutex<Option<Instant>> = Mutex::new(None);
+static CHECKING: AtomicBool = AtomicBool::new(false);
+
+/// Coming back to the app checks again once this long has passed since the last check, so a
+/// window that has sat in the tray for hours finds a new release without waiting out the timer.
+/// Debug builds take `NAKO_RECHECK_SECS`, so a local test needn't wait ten minutes.
+fn recheck_after() -> Duration {
+    let secs = cfg!(debug_assertions).then(|| std::env::var("NAKO_RECHECK_SECS").ok()?.parse().ok()).flatten();
+    Duration::from_secs(secs.unwrap_or(10 * 60))
+}
+
+fn due(last: Option<Instant>, now: Instant, after: Duration) -> bool {
+    last.is_none_or(|last| now.duration_since(last) >= after)
+}
 
 /// Whether this install replaces itself. The AppImage and the Windows installer's app do; the
 /// .deb and the Homebrew app update through their package manager.
@@ -35,15 +50,39 @@ pub fn watch(app: AppHandle, origin: ServerOrigin) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(20)).await;
         while GENERATION.load(Ordering::SeqCst) == generation && PENDING.lock().unwrap().is_none() {
-            let wait = match check(&app, &origin).await {
-                Ok(()) => 6 * 3600,
-                Err(error) => {
-                    eprintln!("nako: no update: {error}");
-                    600
-                }
-            };
+            let wait = if run_check(&app, &origin).await { 6 * 3600 } else { 600 };
             tokio::time::sleep(Duration::from_secs(wait)).await;
         }
+    });
+}
+
+/// Checks for a release now, unless another check is running; true when the check got an answer.
+async fn run_check(app: &AppHandle, origin: &ServerOrigin) -> bool {
+    if CHECKING.swap(true, Ordering::SeqCst) {
+        return true;
+    }
+    *LAST_CHECK.lock().unwrap() = Some(Instant::now());
+    let result = check(app, origin).await;
+    CHECKING.store(false, Ordering::SeqCst);
+    match result {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!("nako: no update: {error}");
+            false
+        }
+    }
+}
+
+/// The window came back (focused, reopened from the tray, the portal reloaded): check for a
+/// release if the last check was a while ago and nothing is waiting to install.
+pub fn check_if_due(app: &AppHandle) {
+    if !self_updates() || PENDING.lock().unwrap().is_some() || !due(*LAST_CHECK.lock().unwrap(), Instant::now(), recheck_after()) {
+        return;
+    }
+    let Some(origin) = app.state::<crate::Shell>().origin() else { return };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        run_check(&app, &origin).await;
     });
 }
 
@@ -121,7 +160,18 @@ fn relaunch(app: &AppHandle, _hidden: bool) {
 
 #[cfg(test)]
 mod tests {
-    use super::announcement;
+    use std::time::{Duration, Instant};
+
+    use super::{announcement, due};
+
+    #[test]
+    fn coming_back_checks_again_only_after_a_while() {
+        let (now, after) = (Instant::now(), Duration::from_secs(10 * 60));
+        assert!(due(None, now, after), "never checked");
+        assert!(!due(Some(now - Duration::from_secs(60)), now, after), "checked a minute ago");
+        assert!(due(Some(now - Duration::from_secs(10 * 60)), now, after), "ten minutes ago");
+        assert!(due(Some(now - Duration::from_secs(6 * 3600)), now, after), "hours in the tray");
+    }
 
     #[test]
     fn announcement_hands_the_page_the_version_as_data() {
