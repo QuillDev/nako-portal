@@ -34,6 +34,11 @@ webbrowser = "1"
 webkit2gtk = "2"
 gtk = "0.18"
 
+# Suspends the browser's hidden tabs.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+
 [profile.release]
 lto = true
 codegen-units = 1

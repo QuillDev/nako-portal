@@ -34,3 +34,14 @@ svg.caption { width: 10px; height: 10px; stroke-width: 1; stroke-linecap: butt; 
 #address:focus { background: var(--hover); border-color: rgb(244 114 182 / 45%); color: var(--text); }
 #address::placeholder { color: var(--muted); }
 #window { display: flex; gap: 2px; margin-left: 4px; }
+/* One chat's tabs, under the toolbar. */
+header:has(+ #tabs:not([hidden])) { border-bottom: 0; }
+#tabs { height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 6px 4px; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+.tab { flex: 0 1 180px; min-width: 72px; height: 26px; display: flex; align-items: center; border-radius: 8px; color: var(--muted); }
+.tab:hover { background: var(--hover); }
+.tab[aria-current] { background: var(--hover); color: var(--text); }
+.tab .name { flex: 1; width: auto; min-width: 0; height: 26px; padding: 0 4px 0 10px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; font: inherit; color: inherit; }
+.tab .name:hover { background: transparent; color: inherit; }
+.tab .shut { width: 22px; height: 22px; margin-right: 2px; border-radius: 6px; visibility: hidden; }
+.tab:hover .shut, .tab[aria-current] .shut { visibility: visible; }
+.tab .shut svg { width: 12px; height: 12px; }

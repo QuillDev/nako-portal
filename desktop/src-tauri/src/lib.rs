@@ -7,6 +7,7 @@ mod notify;
 pub mod origin;
 mod pane;
 pub mod signin;
+mod tabs;
 mod update;
 
 use std::path::PathBuf;
@@ -26,7 +27,7 @@ use tokio::sync::Notify;
 
 use origin::ServerOrigin;
 
-/// The window, and the portal's webview in it (the in-app browser adds two more beside it).
+/// The window, and the portal's webview in it (the in-app browser adds its toolbar and a page per tab).
 const MAIN: &str = "main";
 
 /// Tells every page (the connect page and the portal) to draw its own minimize/maximize/close
@@ -143,7 +144,9 @@ fn allow_window_controls(app: &AppHandle, origin: &ServerOrigin) {
         .permission("core:window:allow-close")
         // and tell the in-app browser which chat is on screen and what to search with.
         .permission("allow-pane-chat")
-        .permission("allow-pane-search");
+        .permission("allow-pane-search")
+        // and open or put away the chat's browser from its header.
+        .permission("allow-pane-toggle");
     if let Err(error) = app.add_capability(capability) {
         eprintln!("nako: no window controls for {}: {error}", origin.as_str());
     }
@@ -391,7 +394,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Shell::default())
-        .invoke_handler(tauri::generate_handler![start, connect, pane::pane, pane::pane_chat, pane::pane_search])
+        .invoke_handler(tauri::generate_handler![start, connect, pane::pane, pane::pane_chat, pane::pane_search, pane::pane_toggle])
         .setup(move |app| {
             let handle = app.handle();
             let tray_ok = match tray(handle) {
