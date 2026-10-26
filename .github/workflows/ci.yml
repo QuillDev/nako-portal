@@ -46,3 +46,18 @@ jobs:
       # The portal serves dashboard/web as committed, so it has to match the source.
       - name: Built app is committed
         run: git status --porcelain dashboard/web && test -z "$(git status --porcelain dashboard/web)"
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+      # Only the shell's own tests: no Electron binary, no app build.
+      - name: Install
+        run: npm ci --ignore-scripts
+        working-directory: desktop
+      - name: Test
+        run: npm test
+        working-directory: desktop

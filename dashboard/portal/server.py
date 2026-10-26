@@ -671,7 +671,7 @@ class Portal:
         }
         return web.json_response([statement])
 
-    # Desktop app. Its webview can't use passkeys (WebKitGTK has no WebAuthn), so the browser signs
+    # Desktop app. It can't use the portal's passkeys (they live in the browser), so the browser signs
     # in and hands the session over: the app sends the browser here with a PKCE challenge and a
     # loopback port, the signed-in page approves and passes a one-time code to the loopback, and
     # the app's webview trades the code plus its secret verifier for its own login cookie.
@@ -735,7 +735,7 @@ class Portal:
         if release is None:
             raise web.HTTPNotFound()
         version, files = release
-        # Tauri's updater format; the app checks the signature against the key built into it.
+        # Tauri's updater format, which the app still reads; it checks the signature against the key built into it.
         platforms = {p: {"url": f"{self.origin}/desktop/{name}", "signature": sig} for p, (name, sig) in files.items()}
         return web.json_response({"version": version, "platforms": platforms})
 

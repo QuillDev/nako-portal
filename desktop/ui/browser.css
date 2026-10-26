@@ -45,3 +45,6 @@ header:has(+ #tabs:not([hidden])) { border-bottom: 0; }
 .tab .shut { width: 22px; height: 22px; margin-right: 2px; border-radius: 6px; visibility: hidden; }
 .tab:hover .shut, .tab[aria-current] .shut { visibility: visible; }
 .tab .shut svg { width: 12px; height: 12px; }
+/* The window has no system title bar on Windows and Linux: these strips move it. */
+[data-tauri-drag-region] { -webkit-app-region: drag; }
+[data-tauri-drag-region] :is(button, input, a) { -webkit-app-region: no-drag; }

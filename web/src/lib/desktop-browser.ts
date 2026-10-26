@@ -2,6 +2,7 @@
 // it and the Android app (on a wide screen) can open each chat's browser from the chat header.
 // Apps say what they can do with window.nakoBrowser; browsers and older apps never set it.
 import { useSyncExternalStore } from "react"
+import { desktopApp } from "./desktop-window"
 
 declare global {
   interface Window {
@@ -23,7 +24,7 @@ export const useAppBrowser = () => useSyncExternalStore(subscribeBrowser, browse
 
 export function toggleAppBrowser() {
   if (window.NakoApp?.toggleBrowser) window.NakoApp.toggleBrowser()
-  else void window.__TAURI_INTERNALS__?.invoke("pane_toggle").catch(() => {})
+  else void desktopApp()?.invoke("pane_toggle").catch(() => {})
 }
 
 export const SEARCH_ENGINES = { google: "Google", duckduckgo: "DuckDuckGo", bing: "Bing", brave: "Brave" } as const
@@ -40,7 +41,7 @@ const stored = (): SearchEngine => {
 }
 
 // The app forgets the pick when it quits, so every page load hands it over again.
-const tellApp = () => void window.__TAURI_INTERNALS__?.invoke("pane_search", { engine: stored() }).catch(() => {})
+const tellApp = () => void desktopApp()?.invoke("pane_search", { engine: stored() }).catch(() => {})
 if (canPickSearch()) tellApp()
 
 export function setSearchEngine(engine: SearchEngine) {

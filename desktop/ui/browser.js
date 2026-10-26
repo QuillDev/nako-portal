@@ -1,6 +1,6 @@
 // The in-app browser's toolbar. The shell calls window.nakoPane({url, title, active, tabs}) as
 // the page changes and as tabs open and close; each chat has its own tabs.
-const invoke = (command, args) => window.__TAURI_INTERNALS__.invoke(command, args)
+const invoke = (command, args) => window.nakoDesktop.invoke(command, args)
 
 document.querySelectorAll("[data-pane]").forEach(button =>
   button.addEventListener("click", () => invoke("pane", { action: button.dataset.pane })),

@@ -1,10 +1,75 @@
 {
-  "name": "nako-desktop",
+  "name": "nako",
+  "productName": "Nako",
+  "version": "0.0.0",
+  "description": "Nako Portal for the desktop",
   "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "author": "QuillDev",
+  "homepage": "https://github.com/QuillDev/nako-portal",
   "scripts": {
-    "tauri": "tauri"
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "blakejs": "^1.2.1",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2.12.4",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "moe.nakode.portal",
+    "productName": "Nako",
+    "executableName": "nako",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**",
+      "ui/**",
+      "icons/**",
+      "pubkey.txt",
+      "package.json"
+    ],
+    "asar": true,
+    "artifactName": "nako-${version}-${arch}.${ext}",
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icons/icon.png",
+      "category": "Office",
+      "synopsis": "Nako Portal for the desktop",
+      "maintainer": "QuillDev"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "include": "packaging/installer.nsh"
+    },
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "icon": "icons/icon.icns",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "minimumSystemVersion": "11.0"
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
+    }
   }
 }

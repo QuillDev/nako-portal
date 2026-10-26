@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Builds the signed Linux and Windows desktop apps on this machine and publishes them as the
-# GitHub release desktop-v<version>, with the desktop-release.json the portal serves to the apps.
+# Builds the Linux and Windows desktop apps on this machine and publishes them as the GitHub
+# release desktop-v<version>, with the desktop-release.json the portal serves to the apps.
 # macOS installs from the Homebrew tap, which builds the tagged source.
 #
 #   desktop/release.sh 1.2.3            build and publish
 #   DRY_RUN=1 desktop/release.sh 1.2.3  build any commit, keep the files, publish nothing
 #
-# Needs: docker (Linux builds in an Ubuntu 24.04 container, see linux-build.Dockerfile), plus
-# cargo-xwin, nsis, clang, lld and llvm and the x86_64-pc-windows-msvc rust target for the Windows
-# cross-build. The updater key comes from
-# TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), or from NAKO_UPDATER_KEY (default
+# Needs node/npm, and docker for the Windows installer: electron-builder's NSIS step runs under
+# wine, in its electronuserland/builder:wine image. Each download is signed with the updater key
+# installed apps check (minisign; the earlier Tauri app checks the same key, so it updates into
+# this one): TAURI_SIGNING_PRIVATE_KEY(_PASSWORD), or NAKO_UPDATER_KEY (default
 # ~/.config/nako-desktop/updater.key) and the same path with .password.
 set -euo pipefail
 
@@ -44,30 +44,30 @@ if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
   export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 fi
 
-# Build caches live outside the checkout, so a fresh worktree builds warm.
+# Downloads (Electron itself, NSIS) are cached outside the checkout, so a fresh worktree builds warm.
 cache=${XDG_CACHE_HOME:-$HOME/.cache}/nako-desktop-release
-export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-$cache/target}
-mkdir -p "$cache/linux-target" "$cache/linux-cargo"
-config="{\"version\":\"$version\",\"bundle\":{\"createUpdaterArtifacts\":true}}"
+mkdir -p "$cache/electron" "$cache/electron-builder" "$cache/wine-home"
+export ELECTRON_CACHE=$cache/electron ELECTRON_BUILDER_CACHE=$cache/electron-builder
+set_version="-c.extraMetadata.version=$version"
 
 npm ci --silent
-(cd src-tauri && cargo test --locked --quiet && cargo clippy --locked --quiet --all-targets -- -D warnings)
-docker build -q -t nako-desktop-linux-build - < linux-build.Dockerfile >/dev/null
-docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/src" -w /src \
-  -v "$cache/linux-target:/target" -e CARGO_TARGET_DIR=/target -v "$cache/linux-cargo:/usr/local/cargo/registry" \
-  -e TAURI_SIGNING_PRIVATE_KEY -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
-  nako-desktop-linux-build npx tauri build --ci --bundles appimage,deb --config "$config"
-npx tauri build --ci --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --config "$config"
+npm test --silent
+rm -rf dist
+npx electron-builder --linux AppImage deb "$set_version" --publish never
+# wine wants a home it owns; its prefix stays there between builds.
+docker run --rm -u "$(id -u):$(id -g)" -v "$cache/wine-home:/home/builder" -e HOME=/home/builder -v "$PWD:/project" -w /project \
+  -v "$cache/electron:/cache/electron" -e ELECTRON_CACHE=/cache/electron \
+  -v "$cache/electron-builder:/cache/electron-builder" -e ELECTRON_BUILDER_CACHE=/cache/electron-builder \
+  electronuserland/builder:wine npx electron-builder --win nsis "$set_version" --publish never
 
 out=$(mktemp -d)
 [ -n "${DRY_RUN:-}" ] || trap 'rm -rf "$out"' EXIT
-linux=$cache/linux-target/release/bundle
-windows=$CARGO_TARGET_DIR/x86_64-pc-windows-msvc/release/bundle
-cp "$linux/appimage/Nako_${version}_amd64.AppImage" "$out/nako.AppImage"
-cp "$linux/appimage/Nako_${version}_amd64.AppImage.sig" "$out/nako.AppImage.sig"
-cp "$linux/deb/Nako_${version}_amd64.deb" "$out/nako.deb"
-cp "$windows/nsis/Nako_${version}_x64-setup.exe" "$out/nako-setup.exe"
-cp "$windows/nsis/Nako_${version}_x64-setup.exe.sig" "$out/nako-setup.exe.sig"
+cp "dist/nako-$version-x86_64.AppImage" "$out/nako.AppImage"
+cp "dist/nako-$version-amd64.deb" "$out/nako.deb"
+cp "dist/nako-$version-x64.exe" "$out/nako-setup.exe"
+for file in nako.AppImage nako-setup.exe; do
+  npx tauri signer sign "$out/$file" >/dev/null
+done
 
 entry() {
   jq -n --arg file "$1" --arg signature "$(cat "$out/$1.sig")" --argjson sizeBytes "$(stat -c %s "$out/$1")" \
