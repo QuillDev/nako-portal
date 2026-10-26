@@ -26,7 +26,7 @@ export type HistoryMessage =
   | { role: "user"; text: string; row_id?: string | number; images?: string[] }
   // label: the cron job that posted it, when it's a cron post
   | { role: "assistant"; text: string; reasoning?: string; label?: string; row_id?: string | number }
-  | { role: "tool"; name: string; context?: string; args?: Record<string, unknown>; tool_call_id?: string }
+  | { role: "tool"; name: string; context?: string; tool_call_id?: string }
 
 export type PortalRequest = {
   id: string
