@@ -25,6 +25,38 @@ pub struct Pane {
     /// Only one pane gets built, even when two links are clicked at once.
     building: Mutex<()>,
     chats: Mutex<Chats>,
+    search: Mutex<Engine>,
+}
+
+/// What the address bar searches with, picked in the portal's Settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Engine {
+    #[default]
+    Google,
+    DuckDuckGo,
+    Bing,
+    Brave,
+}
+
+impl Engine {
+    fn named(name: &str) -> Option<Self> {
+        Some(match name {
+            "google" => Self::Google,
+            "duckduckgo" => Self::DuckDuckGo,
+            "bing" => Self::Bing,
+            "brave" => Self::Brave,
+            _ => return None,
+        })
+    }
+
+    fn base(self) -> &'static str {
+        match self {
+            Self::Google => "https://www.google.com/search",
+            Self::DuckDuckGo => "https://duckduckgo.com/",
+            Self::Bing => "https://www.bing.com/search",
+            Self::Brave => "https://search.brave.com/search",
+        }
+    }
 }
 
 /// Each chat keeps its own page: switching chats puts the pane away and brings back the page
@@ -52,11 +84,8 @@ impl Chats {
     }
 }
 
-/// Searches go here when the address bar holds something that isn't an address.
-const SEARCH: &str = "https://duckduckgo.com/";
-
-/// What the address bar's text means: an address (a scheme is optional) or a search.
-pub fn address_or_search(text: &str) -> Option<Url> {
+/// What the address bar's text means: an address (a scheme is optional) or a search with `engine`.
+pub fn address_or_search(text: &str, engine: Engine) -> Option<Url> {
     let text = text.trim();
     if text.is_empty() {
         return None;
@@ -77,7 +106,7 @@ pub fn address_or_search(text: &str) -> Option<Url> {
             }
         }
     }
-    Url::parse_with_params(SEARCH, [("q", text)]).ok()
+    Url::parse_with_params(engine.base(), [("q", text)]).ok()
 }
 
 /// Where each part goes for a window `width` wide: (portal width, pane x, pane width).
@@ -145,9 +174,18 @@ pub async fn pane_chat(app: AppHandle, chat: Option<String>) {
     }
 }
 
+/// The portal hands over the search engine picked in its Settings on every load and change.
+#[tauri::command]
+pub fn pane_search(app: AppHandle, engine: String) {
+    if let Some(engine) = Engine::named(&engine) {
+        *app.state::<Shell>().pane.search.lock().unwrap() = engine;
+    }
+}
+
 /// Runs in the portal: reports the chat on screen to `pane_chat` as it changes. Older apps
 /// don't inject it, and older portals still use `#/c/<id>` routes, so it needs nothing from them.
 pub const CHAT_WATCH: &str = r#"(() => {
+  window.nakoBrowser = { search: true }
   let last
   const send = () => {
     const chat = (location.hash.match(/^#\/c\/([\w.-]+)/) || [])[1] || null
@@ -255,7 +293,8 @@ pub fn pane(app: AppHandle, action: String, target: Option<String>) {
         }
         "close" => close(&app),
         "go" => {
-            if let Some(url) = target.as_deref().and_then(address_or_search) {
+            let engine = *app.state::<Shell>().pane.search.lock().unwrap();
+            if let Some(url) = target.as_deref().and_then(|text| address_or_search(text, engine)) {
                 let _ = page.navigate(url);
             }
         }
@@ -418,7 +457,7 @@ mod tests {
 
     #[test]
     fn the_address_bar_takes_addresses_with_or_without_a_scheme() {
-        let go = |text: &str| address_or_search(text).map(|u| u.to_string());
+        let go = |text: &str| address_or_search(text, Engine::Google).map(|u| u.to_string());
         assert_eq!(go("https://github.com/QuillDev").as_deref(), Some("https://github.com/QuillDev"));
         assert_eq!(go("  example.com/a?b=1 ").as_deref(), Some("https://example.com/a?b=1"));
         assert_eq!(go("localhost:3000").as_deref(), Some("https://localhost:3000/"));
@@ -428,12 +467,21 @@ mod tests {
 
     #[test]
     fn anything_else_in_the_address_bar_is_a_search() {
-        let go = |text: &str| address_or_search(text).unwrap();
+        let go = |text: &str| address_or_search(text, Engine::DuckDuckGo).unwrap();
         for text in ["rust tauri webview", "tauri", "what is 2.5 + 1", "file:///etc/passwd", "javascript:alert(1)"] {
             let url = go(text);
-            assert_eq!(url.as_str().split('?').next(), Some(SEARCH), "{text}");
+            assert_eq!(url.as_str().split('?').next(), Some("https://duckduckgo.com/"), "{text}");
             assert_eq!(url.query_pairs().find(|(k, _)| k == "q").map(|(_, v)| v.into_owned()).as_deref(), Some(text));
         }
+    }
+
+    #[test]
+    fn searches_go_to_the_picked_engine_and_google_until_one_is_picked() {
+        let search = |engine: Engine| address_or_search("nako app", engine).unwrap().to_string();
+        assert_eq!(search(Engine::default()), "https://www.google.com/search?q=nako+app");
+        assert_eq!(search(Engine::named("bing").unwrap()), "https://www.bing.com/search?q=nako+app");
+        assert_eq!(search(Engine::named("brave").unwrap()), "https://search.brave.com/search?q=nako+app");
+        assert_eq!(Engine::named("https://evil.example/?q="), None, "only the listed engines");
     }
 
     fn url(s: &str) -> Url {
