@@ -33,6 +33,10 @@ ANDROID_PACKAGE = "moe.nakode.portal"
 HANDOFF_TTL = 120
 # Built files carry their content hash in the name, so a browser can keep them for good.
 IMMUTABLE = "public, max-age=31536000, immutable"
+# The page's head waits on these two small scripts before the app can run. A browser runs the copy
+# it has and checks for a new one in the background, so a load doesn't wait a round trip on them.
+HEAD_SCRIPTS = {"theme.js", "early.js"}
+CHECK_IN_BACKGROUND = "max-age=0, stale-while-revalidate=604800"
 # A file shown in a chat rarely changes at its path; the browser keeps it a day instead of
 # reading it (and the transcript that allows it) again every time the chat opens.
 SHOWN_FILE_CACHE = "private, max-age=86400"
@@ -779,8 +783,12 @@ class Portal:
             if "." in Path(rel).name:
                 raise web.HTTPNotFound()
             path = self.web_root / "index.html"
-        hashed = path.parent == self.web_root / "assets"
-        headers = {"Cache-Control": IMMUTABLE if hashed else "no-cache"}
+        if path.parent == self.web_root / "assets":
+            headers = {"Cache-Control": IMMUTABLE}
+        elif path.parent == self.web_root and path.name in HEAD_SCRIPTS:
+            headers = {"Cache-Control": CHECK_IN_BACKGROUND}
+        else:
+            headers = {"Cache-Control": "no-cache"}
         if path.name == "sw.js":
             headers["Service-Worker-Allowed"] = "/"
         return web.FileResponse(path, headers=headers)

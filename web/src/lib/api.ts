@@ -12,6 +12,20 @@ export function whenSignedOut(handler: () => void) {
   onSignedOut = handler
 }
 
+// Reads public/early.js started from the page's head, before this code had loaded.
+const early: Record<string, Promise<Response | null> | undefined> = (window as { __early?: typeof early }).__early ?? {}
+// After this long the page has moved on from its first load, and a fresh read is the right one.
+const EARLY_MS = 10_000
+
+// The early read of a path, once, when it worked; anything else is read again normally.
+async function takeEarly(path: string) {
+  const pending = early[path]
+  delete early[path]
+  if (!pending || performance.now() > EARLY_MS) return null
+  const response = await pending
+  return response?.ok ? response : null
+}
+
 export async function api<T = unknown>(path: string, { method = "GET", body, form }: { method?: string; body?: unknown; form?: FormData } = {}): Promise<T> {
   const init: RequestInit = { method, credentials: "same-origin", headers: {} }
   if (form) {
@@ -20,7 +34,7 @@ export async function api<T = unknown>(path: string, { method = "GET", body, for
     init.headers = { "Content-Type": "application/json" }
     init.body = JSON.stringify(body)
   }
-  const response = await fetch(path, init)
+  const response = (method === "GET" && (await takeEarly(path))) || (await fetch(path, init))
   const text = await response.text()
   const data = text ? JSON.parse(text) : null
   if (response.status === 401 && path !== "/api/me") onSignedOut()

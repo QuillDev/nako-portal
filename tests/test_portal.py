@@ -268,6 +268,10 @@ async def test_built_files_are_kept_by_the_browser_and_the_page_is_always_checke
     # The page and the service worker name the current build, so they're checked on every load.
     for path in ("/", "/sw.js", "/c/some-chat"):
         assert (await world.http.get(world.url(path))).headers["Cache-Control"] == "no-cache", path
+    # The head's scripts run from the copy the browser has while it checks for a newer one.
+    for path in ("/theme.js", "/early.js"):
+        response = await world.http.get(world.url(path))
+        assert (response.status, response.headers["Cache-Control"]) == (200, "max-age=0, stale-while-revalidate=604800"), path
 
 
 async def test_a_tab_hears_live_events_only_for_the_chat_it_shows(world):
