@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -62,6 +63,8 @@ class MainActivity : ComponentActivity() {
     private val updater by lazy { AppUpdater(this) }
     private lateinit var root: FrameLayout
     private var webView: WebView? = null
+    /** The in-app browser beside the chat, on screens wide enough for it. */
+    private var pane: BrowserPane? = null
     private var pendingFiles: ValueCallback<Array<Uri>>? = null
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -126,6 +129,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        pane?.close()
         webView?.destroy()
         super.onDestroy()
     }
@@ -158,10 +162,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // Folding, rotating or resizing the window keeps the activity (configChanges): fit the pane to
+    // the new width, or hand its page to a Custom Tab when the screen is now too narrow for it.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val open = pane?.takeIf { it.isOpen } ?: return
+        if (PaneLayout.fits(newConfig.screenWidthDp)) {
+            open.resize(newConfig.screenWidthDp)
+        } else {
+            val url = open.currentUrl
+            open.close()
+            url?.let { openExternally(Uri.parse(it)) }
+        }
+    }
+
+    /** Opens [link] in the pane, asking the portal first whether it's showing its light theme. */
+    private fun openInPane(browser: BrowserPane, link: String) {
+        val web = webView ?: return browser.open(link, light = false)
+        web.evaluateJavascript("document.documentElement.classList.contains('light')") { light ->
+            browser.open(link, light = light == "true")
+        }
+    }
+
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             val web = webView
-            if (web != null && web.canGoBack()) {
+            val browser = pane?.takeIf { it.isOpen }
+            if (browser != null) {
+                if (!browser.goBack()) browser.close()
+            } else if (web != null && web.canGoBack()) {
                 web.goBack()
             } else {
                 isEnabled = false
@@ -173,6 +202,7 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun showWebApp(server: ServerOrigin, savedInstanceState: Bundle?, startUrl: String? = null) {
+        closePane()
         root.removeAllViews()
         val web = WebView(this).apply {
             setBackgroundColor(BACKGROUND)
@@ -191,7 +221,11 @@ class MainActivity : ComponentActivity() {
         }
         CookieManager.getInstance().setAcceptCookie(true)
         webView = web
-        root.addView(web, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // The chat fills a row the in-app browser can join on a wide screen.
+        val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        split.addView(web, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+        root.addView(split, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        pane = BrowserPane(this, split, server, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally)
         if (startUrl != null) {
             web.loadUrl(startUrl)
         } else if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) {
@@ -201,10 +235,16 @@ class MainActivity : ComponentActivity() {
 
     private inner class ShellWebViewClient(private val server: ServerOrigin) : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (server.opensInApp(request.url.toString())) {
+            val link = request.url.toString()
+            if (server.opensInApp(link)) {
                 return false
             }
-            openExternally(request.url)
+            val browser = pane
+            if (browser != null && PaneLayout.fits(resources.configuration.screenWidthDp) && PaneLayout.browsesInPane(link)) {
+                openInPane(browser, link)
+            } else {
+                openExternally(request.url)
+            }
             return true
         }
 
@@ -215,7 +255,8 @@ class MainActivity : ComponentActivity() {
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             if (view === webView) {
-                root.removeView(view)
+                closePane()
+                root.removeAllViews()
                 webView = null
                 view.destroy()
                 showWebApp(server, null)
@@ -244,6 +285,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun closePane() {
+        pane?.close()
+        pane = null
+    }
+
     private fun openExternally(uri: Uri) {
         runCatching { CustomTabsIntent.Builder().build().launchUrl(this, uri) }
             .recoverCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
@@ -251,6 +297,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showServerPrompt(error: String?) {
+        closePane()
         webView?.destroy()
         webView = null
         root.removeAllViews()
@@ -285,6 +332,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showUnreachable(server: ServerOrigin, detail: String?) {
+        closePane()
         root.removeAllViews()
         webView?.stopLoading()
         val retry = Button(this).apply {
