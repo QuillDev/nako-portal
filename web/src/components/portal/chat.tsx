@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { Portal } from "@/hooks/use-portal"
+import { useMarkdown } from "@/lib/markdown"
 import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
@@ -173,6 +174,9 @@ function NewChat({ portal }: { portal: Portal }) {
 export function Chat({ portal }: { portal: Portal }) {
   const c = portal.current
   const presence = usePresence()
+  // Held on the skeleton until the renderer is in too, so the chat mounts once, at its bottom.
+  const renderer = useMarkdown()
+  const loading = !c || c.loading || !renderer
   const draftKey = c ? `draft:${c.session}` : ""
   const rename = useRenameDialog(portal)
   const { pin, archive } = portal
@@ -195,13 +199,13 @@ export function Chat({ portal }: { portal: Portal }) {
       {rename.dialog}
       {offline}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
-      <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${c.loading}`}>
+      <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>
         {/* Scrollable from the first layout (StickToBottom only sets overflow later), so OlderTurns can pin the bottom before paint. */}
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
-          {c.loading && <TurnSkeletons count={3} />}
-          {!c.loading && <OlderTurns portal={portal} />}
-          {!c.loading && <KeepBottom />}
-          {!c.loading && <Transcript
+          {loading && <TurnSkeletons count={3} />}
+          {!loading && <OlderTurns portal={portal} />}
+          {!loading && <KeepBottom />}
+          {!loading && <Transcript
               live={portal.live}
               messages={c.messages}
               notes={notes}
@@ -214,7 +218,7 @@ export function Chat({ portal }: { portal: Portal }) {
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-      {presence && !c.loading && !c.requests.length && (
+      {presence && !loading && !c.requests.length && (
         <Presence
           key={c.session}
           live={portal.live}
