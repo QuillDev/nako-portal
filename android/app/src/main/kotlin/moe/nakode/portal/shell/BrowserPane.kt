@@ -70,6 +70,14 @@ class BrowserPane(
         web?.destroy()
     }
 
+    fun pause() {
+        page?.onPause()
+    }
+
+    fun resume() {
+        page?.onResume()
+    }
+
     /** Back inside the pane; false when it has nowhere left to go. */
     fun goBack(): Boolean {
         val web = page ?: return false

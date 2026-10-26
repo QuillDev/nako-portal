@@ -128,6 +128,24 @@ class MainActivity : ComponentActivity() {
         super.onPause()
     }
 
+    // Out of sight, the pages stop: scripts, timers and rendering pause until the app is back, so a
+    // reply streaming into the open chat isn't parsed and laid out in the background. Alerts keep
+    // coming through AlertService's own socket, and the page catches up when it's shown again.
+    override fun onStop() {
+        webView?.onPause()
+        pane?.pause()
+        // Instance method, but it stops timers in every WebView of the app.
+        webView?.pauseTimers()
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        webView?.resumeTimers()
+        webView?.onResume()
+        pane?.resume()
+    }
+
     override fun onDestroy() {
         pane?.close()
         webView?.destroy()
