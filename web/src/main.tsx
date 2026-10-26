@@ -5,6 +5,7 @@ import "@fontsource-variable/inter/opsz.css"
 import "@fontsource/instrument-serif/latin-400.css"
 import "@fontsource/instrument-serif/latin-400-italic.css"
 import "./index.css"
+import "./lib/desktop-browser"
 import "./lib/table-copy"
 import "./lib/theme"
 

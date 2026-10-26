@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
+import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
 import { cancelled, register } from "@/lib/passkeys"
 import { appAlerts, enablePush, openAppNotificationSettings, pushState } from "@/lib/push"
 import { setPresence, usePresence } from "@/lib/presence"
@@ -93,6 +94,30 @@ function ProfileRow({ state, onPick: pick }: { state: Profiles; onPick: (profile
   )
 }
 
+// The desktop app's in-app browser: what the address bar searches with.
+function BrowserSection() {
+  const engine = useSearchEngine()
+  if (!canPickSearch()) return null
+  return (
+    <Section title="Browser">
+      <Row label="Search engine">
+        <Select onValueChange={value => setSearchEngine(value as SearchEngine)} value={engine}>
+          <SelectTrigger aria-label="Search engine" className="w-40" size="sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent onCloseAutoFocus={e => e.preventDefault()}>
+            {Object.entries(SEARCH_ENGINES).map(([id, name]) => (
+              <SelectItem key={id} value={id}>
+                {name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Row>
+    </Section>
+  )
+}
+
 // One settings group: a title row that folds its rows away.
 function Section({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
   return (
@@ -159,6 +184,7 @@ export function Settings({ portal }: { portal: Portal }) {
           </Row>
           <SignOffSettings onError={setError} />
         </Section>
+        <BrowserSection />
         <Section title="Notifications">
           {app ? (
             <Row label="Alerts">
