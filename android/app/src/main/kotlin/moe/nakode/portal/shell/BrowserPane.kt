@@ -107,16 +107,26 @@ class BrowserPane(
             contentDescription = "Drag to resize"
             addView(line, FrameLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
             addView(grip, FrameLayout.LayoutParams(dp(4), dp(36), Gravity.CENTER))
-            setOnTouchListener { _, event ->
+            // Only the divider follows the finger; the chat and the page resize once, on release.
+            // Resizing them on every move queues a reflow per step in each WebView, and those
+            // keep playing out after the finger has lifted.
+            setOnTouchListener { divider, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         grip.alpha = 1f
+                        // Drawn over the page while it slides across it.
+                        divider.translationZ = dp(4).toFloat()
                         parent.requestDisallowInterceptTouchEvent(true)
                     }
-                    MotionEvent.ACTION_MOVE -> drag(event.rawX)
+                    MotionEvent.ACTION_MOVE -> drag(event.rawX)?.let { (_, width) -> divider.translationX = (currentWidth() - width).toFloat() }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         grip.alpha = 0.6f
-                        drag(event.rawX)?.let { share = it }
+                        divider.translationX = 0f
+                        divider.translationZ = 0f
+                        drag(event.rawX)?.let { (dragged, width) ->
+                            share = dragged
+                            column?.layoutParams = LinearLayout.LayoutParams(width, ViewGroup.LayoutParams.MATCH_PARENT)
+                        }
                     }
                 }
                 true
@@ -124,16 +134,17 @@ class BrowserPane(
         }
     }
 
-    /** Moves the divider to [rawX] on screen; returns the share it now leaves the pane. */
-    private fun drag(rawX: Float): Float? {
-        val column = column ?: return null
+    private fun currentWidth() = column?.width ?: 0
+
+    /** Where the divider would leave the pane for a finger at [rawX]: its share and width in px. */
+    private fun drag(rawX: Float): Pair<Float, Int>? {
+        if (column == null) return null
         val origin = IntArray(2).also(split::getLocationOnScreen)
         val density = context.resources.displayMetrics.density
         val widthDp = (split.width / density).roundToInt()
         val paneDp = ((origin[0] + split.width - rawX) / density).roundToInt()
         val dragged = PaneLayout.shareFor(widthDp, paneDp)
-        column.layoutParams = LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp, dragged)), ViewGroup.LayoutParams.MATCH_PARENT)
-        return dragged
+        return dragged to dp(PaneLayout.paneWidthDp(widthDp, dragged))
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -176,9 +187,12 @@ class BrowserPane(
         }
         val edge = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
+            // The divider slides past the pane's edge while it's dragged.
+            clipChildren = false
             addView(divider(palette), LinearLayout.LayoutParams(dp(16), ViewGroup.LayoutParams.MATCH_PARENT))
             addView(column, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
+        split.clipChildren = false
         split.addView(edge, LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp(), share)), ViewGroup.LayoutParams.MATCH_PARENT))
         this.column = edge
         this.page = web
