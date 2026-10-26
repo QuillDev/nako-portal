@@ -11,6 +11,13 @@
     <!-- Required for USER_ACTION_NOT_REQUIRED self-updates (Android 12+). -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
+    <!-- Finds the browser that draws the side sheet (Custom Tabs service) on Android 11+. -->
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
