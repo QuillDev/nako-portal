@@ -1,5 +1,5 @@
 import { CheckIcon, FileIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
-import { useState } from "react"
+import { createContext, memo, useContext, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
@@ -22,20 +22,25 @@ type Block =
 // A command's output, placed after the message it followed (`at` counts from messages[0]).
 export type Note = { at: number; text: string; key: string }
 
-// Whether an assistant row is the reply that ended its turn: nothing she did follows it before the
-// next prompt. Rows a tool call or another message came after were her working along the way.
-function endsTurn(messages: HistoryMessage[], i: number) {
-  for (const m of messages.slice(i + 1)) {
-    if (m.role === "user") return true
-    if (m.role === "tool" || m.text.trim()) return false
+// For each row, whether it ended its turn: nothing she did follows it before the next prompt.
+// Rows a tool call or another message came after were her working along the way.
+function turnEnds(messages: HistoryMessage[]) {
+  const ends: boolean[] = new Array(messages.length)
+  let clear = true
+  for (let i = messages.length - 1; i >= 0; i--) {
+    ends[i] = clear
+    const m = messages[i]
+    if (m.role === "user") clear = true
+    else if (m.role === "tool" || m.text.trim()) clear = false
   }
-  return true
+  return ends
 }
 
 // quiet: Nako's presence shows the work as it happens, so the chat keeps only prompts and the
 // replies that ended each turn (and posts), not tool calls, thoughts or messages along the way.
 function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): Block[] {
   const out: Block[] = []
+  const ends = quiet ? turnEnds(messages) : []
   let steps: Step[] = []
   const flush = () => {
     if (steps.length) out.push({ kind: "tools", key: `tools-${out.length}`, steps })
@@ -55,7 +60,7 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
       return
     }
     if (m.role === "assistant" && !m.text.trim() && !m.reasoning) return
-    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !endsTurn(messages, i)))) return
+    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !ends[i]))) return
     flush()
     const key = String(m.row_id ?? i)
     out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
@@ -65,8 +70,12 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
   return out
 }
 
+// Stops following the bottom while a disclosure opens, so its header stays under the finger. The
+// scroller's own context changes as it scrolls; this one never does, so rows can skip rendering.
+const StopScroll = createContext<() => void>(() => {})
+
 // Shown in the chat like Desktop's command lines: the invocation, then what it printed.
-function CommandNote({ text }: { text: string }) {
+const CommandNote = memo(function CommandNote({ text }: { text: string }) {
   const [invocation, ...output] = text.split("\n")
   return (
     <div className="flex flex-col gap-1 text-muted-foreground text-xs">
@@ -74,14 +83,14 @@ function CommandNote({ text }: { text: string }) {
       {output.length > 0 && <pre className="whitespace-pre-wrap break-words font-sans text-sm">{output.join("\n")}</pre>}
     </div>
   )
-}
+})
 
 function oneLine(text?: string) {
   return String(text || "").replace(/\s+/g, " ").trim()
 }
 
-function Steps({ steps }: { steps: Step[] }) {
-  const { stopScroll } = useStickToBottomContext()
+const Steps = memo(function Steps({ steps }: { steps: Step[] }) {
+  const stopScroll = useContext(StopScroll)
   const label = `${steps.length} tool ${steps.length === 1 ? "call" : "calls"}`
   return (
     <ChainOfThought className="-my-2" defaultOpen={false}>
@@ -104,7 +113,7 @@ function Steps({ steps }: { steps: Step[] }) {
       </ChainOfThoughtContent>
     </ChainOfThought>
   )
-}
+})
 
 type Item = { url: string; name: string; path: string }
 
@@ -172,7 +181,7 @@ function Files({ urls }: { urls: Item[] }) {
 
 const named = (path: string) => path.split("/").pop() || path
 
-function User({ session, text, images }: { session: string; text: string; images?: string[] }) {
+const User = memo(function User({ session, text, images }: { session: string; text: string; images?: string[] }) {
   const turn = splitUserTurn(text)
   const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => ({ url: fileUrl(session, path), name: named(path), path }))]
   return (
@@ -183,11 +192,11 @@ function User({ session, text, images }: { session: string; text: string; images
       </MessageContent>
     </Message>
   )
-}
+})
 
-function Assistant({ session, text, reasoning, label, streaming }: { session: string; text: string; reasoning?: string; label?: string; streaming?: boolean }) {
+const Assistant = memo(function Assistant({ session, text, reasoning, label, streaming }: { session: string; text: string; reasoning?: string; label?: string; streaming?: boolean }) {
   const { body, files } = splitReply(text)
-  const { stopScroll } = useStickToBottomContext()
+  const stopScroll = useContext(StopScroll)
   return (
     <Message from="assistant">
       <MessageContent className="w-full">
@@ -207,7 +216,7 @@ function Assistant({ session, text, reasoning, label, streaming }: { session: st
       </MessageContent>
     </Message>
   )
-}
+})
 
 export function Transcript({
   session,
@@ -217,12 +226,16 @@ export function Transcript({
   notes,
   quiet = false,
 }: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; quiet?: boolean }) {
-  const shown = blocks(messages, notes, quiet)
+  const shown = useMemo(() => blocks(messages, notes, quiet), [messages, notes, quiet])
+  const { stopScroll } = useStickToBottomContext()
+  const latest = useRef(stopScroll)
+  latest.current = stopScroll
+  const [stop] = useState(() => () => latest.current())
   const written = live?.messages.filter(m => m.text.trim()) ?? []
   // Quiet: only text she's written since her last tool call, which may be the reply.
   const pending = quiet ? written.filter(m => (m.after ?? 0) >= (live?.tools.length ?? 0)).slice(-1) : written
   return (
-    <>
+    <StopScroll.Provider value={stop}>
       {shown.map(b =>
         b.kind === "user" ? (
           <User images={b.images} key={b.key} session={session} text={b.text} />
@@ -238,6 +251,6 @@ export function Transcript({
         <Assistant key={m.id} session={session} streaming={running && i === pending.length - 1} text={m.text} />
       ))}
       {!quiet && running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
-    </>
+    </StopScroll.Provider>
   )
 }

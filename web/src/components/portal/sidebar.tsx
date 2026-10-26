@@ -1,5 +1,5 @@
 import { ArrowDownToLineIcon, BellIcon, ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
-import { useRef, useState } from "react"
+import { memo, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
@@ -8,7 +8,7 @@ import { appVersion, installDesktopUpdate, useDesktopUpdate } from "@/lib/deskto
 import type { SessionRow, Status } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useDrawer } from "./drawer"
-import { sessionActions, useRenameDialog } from "./session-actions"
+import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 
 function age(seconds: number) {
   const days = (Date.now() / 1000 - seconds) / 86400
@@ -37,39 +37,34 @@ const HOVER_MS = 80
 
 const DOT: Partial<Record<Status, string>> = { working: "bg-primary animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
 
-export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
-  const { go, phone, toggle } = useDrawer()
-  const [filter, setFilter] = useState("")
-  const rename = useRenameDialog(portal)
-  const hover = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const update = useDesktopUpdate()
-  const needle = filter.trim().toLowerCase()
-  const rows = portal.sessions.filter(s => !s.notifications && (!needle || s.title.toLowerCase().includes(needle)))
-  const inbox = portal.sessions.find(s => s.notifications)
-  const open = portal.route.view === "chat" ? portal.route.session : null
+type RowProps = { row: SessionRow; selected: boolean; go: (hash: string) => void; prefetch: (session: string) => void; actions: ChatActions }
 
-  const item = (s: SessionRow) => (
-    <ContextMenu key={s.id}>
+// One chat in the list. It renders again only when its own row, selection or handlers change,
+// so a status dot or a streaming turn elsewhere doesn't redraw the whole list.
+const ChatRow = memo(function ChatRow({ row, selected, go, prefetch, actions }: RowProps) {
+  const hover = useRef<ReturnType<typeof setTimeout>>(undefined)
+  return (
+    <ContextMenu>
       <ContextMenuTrigger asChild>
         <button
-          className={cn("flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent", open === s.id && "bg-accent")}
-          onClick={() => go(`#/c/${s.id}`)}
+          className={cn("flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent", selected && "bg-accent")}
+          onClick={() => go(`#/c/${row.id}`)}
           // Read the chat while the pointer settles on it, so the click opens it at once.
-          onFocus={() => portal.prefetch(s.id)}
-          onPointerDown={() => portal.prefetch(s.id)}
+          onFocus={() => prefetch(row.id)}
+          onPointerDown={() => prefetch(row.id)}
           onPointerEnter={() => {
             clearTimeout(hover.current)
-            hover.current = setTimeout(() => portal.prefetch(s.id), HOVER_MS)
+            hover.current = setTimeout(() => prefetch(row.id), HOVER_MS)
           }}
           onPointerLeave={() => clearTimeout(hover.current)}
           type="button"
         >
-          <span className="min-w-0 flex-1 truncate">{s.title}</span>
-          {s.status && DOT[s.status] && <span className={cn("size-2 shrink-0 rounded-full", DOT[s.status])} title={s.status} />}
+          <span className="min-w-0 flex-1 truncate">{row.title}</span>
+          {row.status && DOT[row.status] && <span className={cn("size-2 shrink-0 rounded-full", DOT[row.status])} title={row.status} />}
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        {sessionActions(portal, s.id, () => rename.start(s.id)).map(a => (
+        {sessionActions(actions, row.id, Boolean(row.pinned)).map(a => (
           <ContextMenuItem key={a.label} onSelect={a.run}>
             <a.icon className="size-4 text-muted-foreground" />
             {a.label}
@@ -78,6 +73,19 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
       </ContextMenuContent>
     </ContextMenu>
   )
+})
+
+export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
+  const { go, phone, toggle } = useDrawer()
+  const [filter, setFilter] = useState("")
+  const rename = useRenameDialog(portal)
+  const update = useDesktopUpdate()
+  const needle = filter.trim().toLowerCase()
+  const { sessions, pin, archive, prefetch } = portal
+  const listed = useMemo(() => groups(sessions.filter(s => !s.notifications && (!needle || s.title.toLowerCase().includes(needle)))), [sessions, needle])
+  const actions = useMemo(() => ({ pin, archive, rename: rename.start }), [pin, archive, rename.start])
+  const inbox = sessions.find(s => s.notifications)
+  const open = portal.route.view === "chat" ? portal.route.session : null
 
   return (
     <aside className={cn("flex w-full flex-col border-r bg-sidebar", className)}>
@@ -112,11 +120,13 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
             inbox?.unread && open !== inbox.id && <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="new notification" />
           )}
         </button>
-        {rows.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
-        {groups(rows).map(([label, items]) => (
+        {listed.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
+        {listed.map(([label, items]) => (
           <div key={label}>
             <p className="px-2 pt-3 pb-1 text-muted-foreground text-xs">{label}</p>
-            {items.map(item)}
+            {items.map(row => (
+              <ChatRow actions={actions} go={go} key={row.id} prefetch={prefetch} row={row} selected={open === row.id} />
+            ))}
           </div>
         ))}
       </nav>

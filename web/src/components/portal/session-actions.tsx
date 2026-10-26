@@ -1,7 +1,7 @@
 // Rename, pin and archive for one chat: the open chat's ⋯ menu and the list's
 // right-click / long-press menu offer the same actions.
 import { ArchiveIcon, type LucideIcon, PencilIcon, PinIcon, PinOffIcon } from "lucide-react"
-import { useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -9,22 +9,27 @@ import type { Portal } from "@/hooks/use-portal"
 
 export type SessionAction = { label: string; icon: LucideIcon; run: () => void }
 
-export function sessionActions(portal: Portal, session: string, rename: () => void): SessionAction[] {
-  const pinned = Boolean(portal.sessions.find(s => s.id === session)?.pinned)
+// What the menus call. Every function keeps its identity, so menus can skip rendering again.
+export type ChatActions = Pick<Portal, "pin" | "archive"> & { rename: (session: string) => void }
+
+export function sessionActions({ pin, archive, rename }: ChatActions, session: string, pinned: boolean): SessionAction[] {
   return [
-    { label: "Rename", icon: PencilIcon, run: rename },
-    { label: pinned ? "Unpin" : "Pin", icon: pinned ? PinOffIcon : PinIcon, run: () => portal.pin(session, !pinned) },
-    { label: "Archive", icon: ArchiveIcon, run: () => portal.archive(session) },
+    { label: "Rename", icon: PencilIcon, run: () => rename(session) },
+    { label: pinned ? "Unpin" : "Pin", icon: pinned ? PinOffIcon : PinIcon, run: () => pin(session, !pinned) },
+    { label: "Archive", icon: ArchiveIcon, run: () => archive(session) },
   ]
 }
 
 /** The chat being renamed, if any, and the dialog that renames it. */
 export function useRenameDialog(portal: Portal) {
   const [target, setTarget] = useState<{ session: string; title: string } | null>(null)
-  const start = (session: string) => {
-    const title = portal.current?.session === session ? portal.current.title : portal.sessions.find(s => s.id === session)?.title
+  const latest = useRef(portal)
+  latest.current = portal
+  const start = useCallback((session: string) => {
+    const { current, sessions } = latest.current
+    const title = current?.session === session ? current.title : sessions.find(s => s.id === session)?.title
     setTarget({ session, title: title || "" })
-  }
+  }, [])
   const dialog = (
     <Dialog onOpenChange={open => !open && setTarget(null)} open={target !== null}>
       <DialogContent>

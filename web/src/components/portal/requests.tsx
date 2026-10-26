@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { memo, useState } from "react"
 import { Confirmation, ConfirmationAction, ConfirmationActions, ConfirmationRequest, ConfirmationTitle } from "@/components/ai-elements/confirmation"
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion"
 import { Button } from "@/components/ui/button"
@@ -65,7 +65,7 @@ function Clarify({ request, answer }: { request: PortalRequest; answer: Portal["
   )
 }
 
-export function Requests({ requests, answer }: { requests: PortalRequest[]; answer: Portal["answer"] }) {
+export const Requests = memo(function Requests({ requests, answer }: { requests: PortalRequest[]; answer: Portal["answer"] }) {
   return requests.map(r =>
     r.method === "approval" ? (
       <Approval answer={answer} key={r.id} request={r} />
@@ -77,4 +77,4 @@ export function Requests({ requests, answer }: { requests: PortalRequest[]; answ
       </p>
     ),
   )
-}
+})
