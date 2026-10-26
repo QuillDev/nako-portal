@@ -1,5 +1,6 @@
 package moe.nakode.portal.shell
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ComponentName
 import android.net.Uri
@@ -54,6 +55,8 @@ class ChromeSheet(
     }
 
     /** Opens [url] in the sheet, [widthPx] wide, in the portal's [light] or dark colors. */
+    // androidx.browser annotates the rounded-corners setter with the decoration-type constants.
+    @SuppressLint("WrongConstant")
     fun open(url: String, widthPx: Int, light: Boolean): Boolean {
         val session = session ?: return false
         val toolbar = if (light) LIGHT else DARK
