@@ -29,6 +29,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from contextlib import closing
@@ -46,6 +47,8 @@ DEFAULT_PROFILE = "default"
 # The one person portal threads belong to; passkey sign-in already decided who that is.
 OWNER = "owner"
 INBOX_POLL = 2
+# Transcripts kept projected for chats read lately; a long one holds a few MB.
+CACHED_THREADS = 8
 ROOT = Path(__file__).parent
 SERVER = ROOT / "dashboard" / "serve.py"
 # The server's code: a change here means the running server is stale and gets replaced.
@@ -197,6 +200,9 @@ class HermesBackend:
         self.profile = DEFAULT_PROFILE
         # chat -> the profile its thread lives in, so a reply goes back to the right one.
         self.owner = {}
+        # (home, session) -> (revision, transcript) for chats read lately; see thread().
+        self.threads = {}
+        self.threads_lock = threading.Lock()
 
     @property
     def store(self):
@@ -296,8 +302,26 @@ class HermesBackend:
         home = self._home()
 
         def read():
-            history = self.db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
-            return {"title": self.db.get_session_title(session) or "", "messages": _history_to_messages(history, profile_home=home)}
+            db = self.db
+            # Reading and projecting a long transcript takes the better part of a second, and every
+            # open, refresh and older page reads it again. Hermes's revision moves on any append,
+            # undo, compaction or in-place rewrite, so the last projection stands while it holds.
+            revision = db.conversation_revision(session, include_ancestors=True) if hasattr(db, "conversation_revision") else None
+            key = (str(home), session)
+            with self.threads_lock:
+                cached = self.threads.get(key)
+            if revision is not None and cached is not None and cached[0] == revision:
+                messages = cached[1]
+            else:
+                history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
+                messages = _history_to_messages(history, profile_home=home)
+                if revision is not None:
+                    with self.threads_lock:
+                        self.threads.pop(key, None)
+                        self.threads[key] = (revision, messages)
+                        while len(self.threads) > CACHED_THREADS:
+                            self.threads.pop(next(iter(self.threads)))
+            return {"title": db.get_session_title(session) or "", "messages": list(messages)}
 
         return self._scoped(read)
 
