@@ -1,5 +1,5 @@
 import { ArrowDownToLineIcon, BellIcon, ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
@@ -32,12 +32,16 @@ function groups(rows: SessionRow[]) {
   return out
 }
 
+// How long the pointer rests on a chat before it's read ahead of the click.
+const HOVER_MS = 80
+
 const DOT: Partial<Record<Status, string>> = { working: "bg-primary animate-pulse", "needs you": "bg-amber-500", failed: "bg-destructive" }
 
 export function Sidebar({ portal, className }: { portal: Portal; className?: string }) {
   const { go, phone, toggle } = useDrawer()
   const [filter, setFilter] = useState("")
   const rename = useRenameDialog(portal)
+  const hover = useRef<ReturnType<typeof setTimeout>>(undefined)
   const update = useDesktopUpdate()
   const needle = filter.trim().toLowerCase()
   const rows = portal.sessions.filter(s => !s.notifications && (!needle || s.title.toLowerCase().includes(needle)))
@@ -50,6 +54,14 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         <button
           className={cn("flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent", open === s.id && "bg-accent")}
           onClick={() => go(`#/c/${s.id}`)}
+          // Read the chat while the pointer settles on it, so the click opens it at once.
+          onFocus={() => portal.prefetch(s.id)}
+          onPointerDown={() => portal.prefetch(s.id)}
+          onPointerEnter={() => {
+            clearTimeout(hover.current)
+            hover.current = setTimeout(() => portal.prefetch(s.id), HOVER_MS)
+          }}
+          onPointerLeave={() => clearTimeout(hover.current)}
           type="button"
         >
           <span className="min-w-0 flex-1 truncate">{s.title}</span>

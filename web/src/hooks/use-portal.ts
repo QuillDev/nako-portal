@@ -2,7 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
-import type { Command, CommandNote, Frame, Live, Me, OpenSession, SessionRow } from "@/lib/types"
+import type { Command, CommandNote, Frame, HistoryMessage, Live, Me, OpenSession, SessionRow } from "@/lib/types"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
@@ -26,6 +26,44 @@ export function navigate(hash: string) {
 
 const emptyLive = (): Live => ({ messages: [], tools: [] })
 
+// Chats opened or hovered lately, kept so going back to one shows it at once while it rereads.
+const CACHED_CHATS = 24
+// A prefetch this fresh opens the chat without reading it again.
+const FRESH_MS = 3000
+
+type Cached = { opened: OpenSession; at: number }
+
+// at: when it was last read whole; a read that recent opens the chat without reading it again.
+function remember(cache: Map<string, Cached>, opened: OpenSession, at: number) {
+  cache.delete(opened.session)
+  cache.set(opened.session, { opened, at })
+  while (cache.size > CACHED_CHATS) cache.delete(cache.keys().next().value!)
+}
+
+function sameMessage(a: HistoryMessage, b: HistoryMessage) {
+  if (a === b) return true
+  const keys = Object.keys(a) as (keyof HistoryMessage)[]
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every(k => {
+    const x = a[k] as unknown
+    const y = b[k] as unknown
+    return x === y || (Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => v === y[i]))
+  })
+}
+
+// The reread messages, reusing the ones already on screen that didn't change, so only new or
+// edited rows render again.
+function reuse(shown: HistoryMessage[], fresh: HistoryMessage[]) {
+  let changed = shown.length !== fresh.length
+  const out = fresh.map((m, i) => {
+    const old = shown[i]
+    if (old && sameMessage(old, m)) return old
+    changed = true
+    return m
+  })
+  return changed ? out : shown
+}
+
 export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
@@ -43,10 +81,34 @@ export function usePortal() {
   currentRef.current = current
   const socketRef = useRef<WebSocket | null>(null)
   const retryRef = useRef(1000)
+  const cacheRef = useRef(new Map<string, Cached>())
+  const inflightRef = useRef(new Map<string, Promise<OpenSession>>())
+
+  // One read of a chat's latest page at a time; a hover and the click after it share it.
+  const read = useCallback((session: string) => {
+    const pending = inflightRef.current.get(session)
+    if (pending) return pending
+    const reading = api<OpenSession>(sessionPath(session)).finally(() => inflightRef.current.delete(session))
+    inflightRef.current.set(session, reading)
+    reading.then(opened => remember(cacheRef.current, opened, Date.now()), () => {})
+    return reading
+  }, [])
+
+  // Reads a chat the pointer is on, so opening it is instant.
+  const prefetch = useCallback(
+    (session: string) => {
+      const cached = cacheRef.current.get(session)
+      if (currentRef.current?.session === session || (cached && Date.now() - cached.at < FRESH_MS)) return
+      read(session).catch(() => {})
+    },
+    [read],
+  )
 
   const loadSessions = useCallback(async () => {
     try {
-      setSessions(await api<SessionRow[]>("/api/sessions"))
+      const rows = await api<SessionRow[]>("/api/sessions")
+      // The same list again (a reconnect, another tab's change elsewhere) leaves the sidebar as it is.
+      setSessions(shown => (JSON.stringify(shown) === JSON.stringify(rows) ? shown : rows))
       setConnected(true)
     } catch (e) {
       if (/offline/i.test(String((e as Error).message))) setConnected(false)
@@ -58,12 +120,14 @@ export function usePortal() {
     const open = currentRef.current
     const since = open?.session === session && !open.loading ? `?since=${open.start}` : ""
     try {
-      const opened = await api<OpenSession>(sessionPath(session) + since)
+      const opened = await (since ? api<OpenSession>(sessionPath(session) + since) : read(session))
       setCurrent(c => {
         if (c?.session !== session) return c
         // An older page that landed while this was in flight sits before opened.start.
         const kept = !c.loading && c.start < opened.start ? c.messages.slice(0, opened.start - c.start) : []
-        return { ...opened, start: opened.start - kept.length, messages: [...kept, ...opened.messages], loading: false, loadingOlder: c.loadingOlder }
+        const start = opened.start - kept.length
+        const messages = c.loading ? opened.messages : c.start === start ? reuse(c.messages, [...kept, ...opened.messages]) : [...kept, ...opened.messages]
+        return { ...opened, start, messages, loading: false, loadingOlder: c.loadingOlder }
       })
       if (!opened.running) setLive(null)
       // Opening the notifications chat marks its posts seen on the server too.
@@ -71,7 +135,7 @@ export function usePortal() {
     } catch (e) {
       setError((e as Error).message)
     }
-  }, [])
+  }, [read])
 
   const loadOlder = useCallback(async () => {
     const open = currentRef.current
@@ -111,6 +175,7 @@ export function usePortal() {
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.
           if (currentRef.current) navigate("#/")
+          cacheRef.current.clear()
           loadSessions()
           return
       }
@@ -246,10 +311,15 @@ export function usePortal() {
     }
     if (currentRef.current?.session === routedSession) return
     const title = sessions.find(s => s.id === routedSession)?.title || ""
-    setCurrent({ session: routedSession, title, messages: [], start: 0, requests: [], running: false, loading: true, loadingOlder: false })
+    const cached = cacheRef.current.get(routedSession)
+    const reading = inflightRef.current.has(routedSession)
+    // Seen lately: show it as it was straight away, then catch up from where its pages start.
+    if (cached) setCurrent({ ...cached.opened, title: cached.opened.title || title, loading: false, loadingOlder: false })
+    else setCurrent({ session: routedSession, title, messages: [], start: 0, requests: [], running: false, loading: true, loadingOlder: false })
     setLive(null)
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ watch: routedSession }))
-    refresh(routedSession)
+    // A read already on its way (the pointer was on the row) or just finished is the latest page.
+    if (!(cached && !reading && Date.now() - cached.at < FRESH_MS)) refresh(routedSession)
     // sessions is only read for a placeholder title
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routedSession, me?.signed_in, refresh])
@@ -332,6 +402,7 @@ export function usePortal() {
     (session: string) =>
       act(async () => {
         await api(sessionPath(session, "/archive"), { method: "POST", body: { archived: true } })
+        cacheRef.current.delete(session)
         if (currentRef.current?.session === session) navigate("#/")
         await loadSessions()
       }),
@@ -365,7 +436,15 @@ export function usePortal() {
     [refresh],
   )
 
-  return { me, setName, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, commands, command, notes, signOff }
+  // What's on screen is what going back to a chat shows next time.
+  useEffect(() => {
+    if (current && !current.loading) {
+      const { loading: _loading, loadingOlder: _older, ...opened } = current
+      remember(cacheRef.current, opened, cacheRef.current.get(current.session)?.at ?? 0)
+    }
+  }, [current])
+
+  return { me, setName, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, prefetch, commands, command, notes, signOff }
 }
 
 export type Portal = ReturnType<typeof usePortal>
