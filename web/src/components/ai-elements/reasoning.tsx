@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { BrainIcon, ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
-import { Streamdown } from "streamdown";
+import { useMarkdown } from "@/lib/markdown";
 import { Shimmer } from "./shimmer";
 
 type ReasoningContextValue = {
@@ -161,7 +161,9 @@ export type ReasoningContentProps = ComponentProps<
 };
 
 export const ReasoningContent = memo(
-  ({ className, children, ...props }: ReasoningContentProps) => (
+  ({ className, children, ...props }: ReasoningContentProps) => {
+    const markdown = useMarkdown();
+    return (
     <CollapsibleContent
       className={cn(
         "pt-4 text-sm",
@@ -170,10 +172,11 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      {/* Portal: upstream also spread the collapsible's props onto Streamdown. */}
-      <Streamdown>{children}</Streamdown>
+      {/* Portal: upstream also spread the collapsible's props onto Streamdown, which loads on its own. */}
+      {markdown ? <markdown.Streamdown>{children}</markdown.Streamdown> : <div className="whitespace-pre-wrap">{children}</div>}
     </CollapsibleContent>
-  )
+    );
+  }
 );
 
 Reasoning.displayName = "Reasoning";

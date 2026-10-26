@@ -21,7 +21,8 @@ import {
 } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
 import { createContext, memo, useContext, useEffect, useState } from "react";
-import { Streamdown } from "streamdown";
+import type { Streamdown } from "streamdown";
+import { useMarkdown } from "@/lib/markdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -306,16 +307,19 @@ export const MessageBranchPage = ({
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
+// Portal: Streamdown loads as its own chunk (lib/markdown); until it's in, the text shows as is.
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className
-      )}
-      {...props}
-    />
-  ),
+  ({ className, ...props }: MessageResponseProps) => {
+    const markdown = useMarkdown();
+    const classes = cn(
+      "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+      className
+    );
+    if (!markdown) {
+      return <div className={cn(classes, "whitespace-pre-wrap")}>{props.children}</div>;
+    }
+    return <markdown.Streamdown className={classes} {...props} />;
+  },
   (prevProps, nextProps) => prevProps.children === nextProps.children
 );
 
