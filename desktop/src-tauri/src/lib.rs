@@ -5,6 +5,7 @@ pub mod alerts;
 mod browser;
 mod notify;
 pub mod origin;
+mod pane;
 pub mod signin;
 mod update;
 
@@ -18,12 +19,14 @@ use tauri::async_runtime::JoinHandle;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent};
+use tauri::window::WindowBuilder;
 use tauri::ipc::CapabilityBuilder;
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder, WebviewUrl, Window, WindowEvent};
 use tokio::sync::Notify;
 
 use origin::ServerOrigin;
 
+/// The window, and the portal's webview in it (the in-app browser adds two more beside it).
 const MAIN: &str = "main";
 
 /// Tells every page (the connect page and the portal) to draw its own minimize/maximize/close
@@ -40,6 +43,7 @@ struct Shell {
     sign_in: Mutex<Option<JoinHandle<()>>>,
     /// Closing the window hides it to the tray (when there is one), so alerts keep coming.
     tray: AtomicBool,
+    pane: pane::Pane,
 }
 
 impl Shell {
@@ -150,14 +154,18 @@ fn open_portal(app: &AppHandle, origin: ServerOrigin) {
         listen(app, origin.clone());
         update::watch(app.clone(), origin.clone());
     }
-    if let Some(window) = app.get_webview_window(MAIN) {
-        let _ = window.navigate(origin.url());
+    if let Some(portal) = app.get_webview(MAIN) {
+        let _ = portal.navigate(origin.url());
     }
 }
 
+pub(crate) fn window(app: &AppHandle) -> Option<Window> {
+    app.get_window(MAIN)
+}
+
 pub(crate) fn cookie_header(app: &AppHandle, origin: &ServerOrigin) -> Option<String> {
-    let window = app.get_webview_window(MAIN)?;
-    let cookies = window.cookies_for_url(origin.url()).ok()?;
+    let portal = app.get_webview(MAIN)?;
+    let cookies = portal.cookies_for_url(origin.url()).ok()?;
     let header = cookies.iter().map(|c| format!("{}={}", c.name(), c.value())).collect::<Vec<_>>().join("; ");
     (!header.is_empty()).then_some(header)
 }
@@ -185,8 +193,8 @@ fn sign_in(app: &AppHandle, origin: ServerOrigin) {
             return;
         }
         if let Some(finish) = handoff.wait(Duration::from_secs(300)).await {
-            if let Some(window) = handle.get_webview_window(MAIN) {
-                let _ = window.navigate(finish);
+            if let (Some(window), Some(portal)) = (window(&handle), handle.get_webview(MAIN)) {
+                let _ = portal.navigate(finish);
                 show(&window);
             }
         }
@@ -198,14 +206,19 @@ fn sign_in(app: &AppHandle, origin: ServerOrigin) {
     }
 }
 
-/// Same-origin pages stay in the app; everything else opens in the browser.
+/// Same-origin pages stay in the app; other web pages open in the in-app browser beside it, and
+/// everything else (mailto:, app links) goes to the system.
 fn navigation_allowed(app: &AppHandle, url: &Url) -> bool {
     if is_local(url) {
         return true;
     }
     let Some(origin) = app.state::<Shell>().origin() else { return false };
     if !origin.opens_in_app(url) {
-        let _ = browser::open(url.as_str());
+        if url.scheme() == "http" || url.scheme() == "https" {
+            pane::open_later(app, url.clone());
+        } else {
+            let _ = browser::open(url.as_str());
+        }
         return false;
     }
     // The sign-in page's button for the desktop app.
@@ -221,29 +234,29 @@ fn navigation_allowed(app: &AppHandle, url: &Url) -> bool {
     true
 }
 
-fn show(window: &WebviewWindow) {
+fn show(window: &Window) {
     let _ = window.show();
     let _ = window.unminimize();
     let _ = window.set_focus();
 }
 
 fn show_main(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(MAIN) {
+    if let Some(window) = window(app) {
         show(&window);
     }
 }
 
 /// A clicked notification opens its chat, without reloading the page when it's already the portal.
 pub(crate) fn open_chat(app: &AppHandle, session: &str) {
-    let (Some(window), Some(origin)) = (app.get_webview_window(MAIN), app.state::<Shell>().origin()) else { return };
+    let (Some(window), Some(portal), Some(origin)) = (window(app), app.get_webview(MAIN), app.state::<Shell>().origin()) else { return };
     let Some(page) = origin.chat_page(session) else { return };
     show(&window);
-    let on_portal = window.url().map(|u| origin.opens_in_app(&u)).unwrap_or(false);
+    let on_portal = portal.url().map(|u| origin.opens_in_app(&u)).unwrap_or(false);
     if on_portal {
         let hash = serde_json::to_string(&format!("#/c/{session}")).unwrap();
-        let _ = window.eval(format!("location.hash = {hash}"));
+        let _ = portal.eval(format!("location.hash = {hash}"));
     } else {
-        let _ = window.navigate(page);
+        let _ = portal.navigate(page);
     }
 }
 
@@ -264,8 +277,9 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open" => show_main(app),
             "server" => {
-                if let Some(window) = app.get_webview_window(MAIN) {
-                    let _ = window.navigate(local_page("?change=1"));
+                if let (Some(window), Some(portal)) = (window(app), app.get_webview(MAIN)) {
+                    pane::close(app);
+                    let _ = portal.navigate(local_page("?change=1"));
                     show(&window);
                 }
             }
@@ -281,7 +295,24 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
+/// Saves downloads (from the portal or the in-app browser) to the Downloads folder.
+pub(crate) fn download(webview: Webview, event: DownloadEvent<'_>) -> bool {
+    match event {
+        DownloadEvent::Requested { destination, .. } => {
+            if let (Ok(dir), Some(name)) = (webview.app_handle().path().download_dir(), destination.file_name()) {
+                *destination = dir.join(name);
+            }
+        }
+        DownloadEvent::Finished { path: Some(path), success: true, .. } => notify::saved(webview.app_handle(), &path),
+        DownloadEvent::Finished { .. } => {}
+        _ => {}
+    }
+    true
+}
+
+/// The window, with the portal (first the connect page) filling it. The window is built bare and
+/// the portal added as a child webview, so the in-app browser can sit beside it.
+fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<Window> {
     let navigating = app.clone();
     let opening = app.clone();
     let version = app.package_info().version.to_string();
@@ -291,57 +322,48 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
         let screen = monitor.work_area().size.to_logical::<f64>(monitor.scale_factor());
         (width, height) = (f64::min(width, screen.width * 0.92), f64::min(height, screen.height * 0.92));
     }
-    let builder = WebviewWindowBuilder::new(app, MAIN, WebviewUrl::App("index.html".into()));
+    let background = tauri::webview::Color(0x0d, 0x0a, 0x11, 0xff);
+    let window = WindowBuilder::new(app, MAIN).title("Nako").inner_size(width, height).center().min_inner_size(380.0, 480.0).visible(!hidden).background_color(background);
+    // Windows and Linux drop the system title bar for the page's own controls (macOS keeps its native one).
+    #[cfg(not(target_os = "macos"))]
+    let window = window.decorations(false);
+    let window = window.build()?;
+
+    let builder = WebviewBuilder::new(MAIN, WebviewUrl::App("index.html".into()));
     // Tag the user agent so the portal offers browser sign-in instead of passkeys. WebKitGTK's own
     // agent is extended after creation (below); elsewhere the webview takes a whole agent.
     #[cfg(target_os = "macos")]
     let builder = builder.user_agent(&format!("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) NakoDesktop/{version}"));
     #[cfg(windows)]
     let builder = builder.user_agent(&format!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) NakoDesktop/{version}"));
-    // Windows and Linux drop the system title bar for the page's own controls (macOS keeps its native one).
     #[cfg(not(target_os = "macos"))]
-    let builder = builder.decorations(false).initialization_script(WINDOW_CONTROLS);
-    let window = builder
-        .title("Nako")
-        .inner_size(width, height)
-        .center()
-        .min_inner_size(380.0, 480.0)
-        .visible(!hidden)
-        .background_color(tauri::webview::Color(0x0d, 0x0a, 0x11, 0xff))
+    let builder = builder.initialization_script(WINDOW_CONTROLS);
+    let builder = builder
+        .background_color(background)
         .on_navigation(move |url| navigation_allowed(&navigating, url))
         .on_new_window(move |url, _| {
             if navigation_allowed(&opening, &url) {
-                if let Some(window) = opening.get_webview_window(MAIN) {
-                    let _ = window.navigate(url);
+                if let Some(portal) = opening.get_webview(MAIN) {
+                    let _ = portal.navigate(url);
                 }
             }
             NewWindowResponse::Deny
         })
-        .on_page_load(|window, payload| {
-            let app = window.app_handle();
+        .on_page_load(|portal, payload| {
+            let app = portal.app_handle();
             let on_portal = app.state::<Shell>().origin().is_some_and(|o| o.opens_in_app(payload.url()));
             if payload.event() == PageLoadEvent::Finished && on_portal {
                 app.state::<Shell>().wake.notify_one();
                 update::announce(app);
+                pane::tell_portal(app);
             }
         })
-        .on_download(|webview, event| {
-            match event {
-                DownloadEvent::Requested { destination, .. } => {
-                    if let (Ok(dir), Some(name)) = (webview.app_handle().path().download_dir(), destination.file_name()) {
-                        *destination = dir.join(name);
-                    }
-                }
-                DownloadEvent::Finished { path: Some(path), success: true, .. } => notify::saved(webview.app_handle(), &path),
-                DownloadEvent::Finished { .. } => {}
-                _ => {}
-            }
-            true
-        })
-        .build()?;
+        .on_download(download);
+    let portal = window.add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(width, height))?;
+    pane::layout(app);
 
     #[cfg(target_os = "linux")]
-    window.with_webview(move |webview| {
+    portal.with_webview(move |webview| {
         use webkit2gtk::{SettingsExt, WebViewExt};
         if let Some(settings) = webview.inner().settings() {
             let agent = settings.user_agent().map(|u| u.to_string()).unwrap_or_default();
@@ -349,7 +371,7 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<WebviewWindow> {
         }
     })?;
     #[cfg(not(target_os = "linux"))]
-    let _ = version;
+    let _ = (version, portal);
     Ok(window)
 }
 
@@ -359,7 +381,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Shell::default())
-        .invoke_handler(tauri::generate_handler![start, connect])
+        .invoke_handler(tauri::generate_handler![start, connect, pane::pane])
         .setup(move |app| {
             let handle = app.handle();
             let tray_ok = match tray(handle) {
@@ -382,6 +404,9 @@ pub fn run() {
             }
             if let WindowEvent::Focused(false) = event {
                 update::install_if_idle(window.app_handle());
+            }
+            if let WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } = event {
+                pane::layout(window.app_handle());
             }
         })
         .build(tauri::generate_context!())

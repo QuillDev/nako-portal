@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Browser</title>
+    <link rel="stylesheet" href="browser.css" />
+    <script type="module" src="browser.js"></script>
+  </head>
+  <body>
+    <header data-tauri-drag-region="deep">
+      <button type="button" data-pane="back" aria-label="Back" title="Back"><svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5" /></svg></button>
+      <button type="button" data-pane="forward" aria-label="Forward" title="Forward"><svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg></button>
+      <button type="button" data-pane="reload" aria-label="Reload" title="Reload"><svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.56M13 2.5v3h-3" /></svg></button>
+      <p id="address" title=""><span id="host"></span><span id="path"></span></p>
+      <button type="button" data-pane="external" aria-label="Open in browser" title="Open in browser"><svg viewBox="0 0 16 16"><path d="M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5" /></svg></button>
+      <button type="button" data-pane="close" aria-label="Close browser" title="Close browser"><svg viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8" /></svg></button>
+      <span id="window" hidden>
+        <button type="button" data-window="minimize" aria-label="Minimize" title="Minimize"><svg class="caption" viewBox="0 0 10 10"><path d="M0 5.5h10" /></svg></button>
+        <button type="button" data-window="toggle_maximize" aria-label="Maximize" title="Maximize"><svg class="caption" viewBox="0 0 10 10"><path d="M.5.5h9v9h-9z" /></svg></button>
+        <button type="button" data-window="close" aria-label="Close" title="Close" class="close"><svg class="caption" viewBox="0 0 10 10"><path d="M.5.5l9 9M9.5.5l-9 9" /></svg></button>
+      </span>
+    </header>
+  </body>
+</html>
