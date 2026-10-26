@@ -61,6 +61,20 @@ function useSignOff(running: boolean, outcome: Status | null | undefined, line: 
   return { text: "", waiting: false, proud: false }
 }
 
+// The busy stickers are animations of a few hundred kB each. Fetching them while she's idle means
+// the first turn shows her thinking at once instead of an empty frame while the file downloads.
+let warmed = false
+function warmStickers() {
+  if (warmed) return
+  warmed = true
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches
+  const load = () => {
+    for (const state of ["thinking", "tools", "replying"] satisfies Activity[]) new Image().src = `/nako/${state}${still ? "-still.png" : ".webp"}`
+  }
+  if ("requestIdleCallback" in window) requestIdleCallback(load, { timeout: 3000 })
+  else setTimeout(load, 1500)
+}
+
 type Shown = { id: string; node: ReactNode }
 
 // Swaps what's inside when `id` changes: the old line slides up and out as the new one rises in.
@@ -97,6 +111,7 @@ export function Presence({
   signOff: line,
 }: { live: Live | null; running: boolean; outcome?: Status | null; signOff: string }) {
   const signOff = useSignOff(running, outcome, line)
+  useEffect(warmStickers, [])
   const now: Activity = running ? activity(live) : signOff.proud ? "replying" : "idle"
   const tool = now === "tools" ? (live?.tools.findLast(t => t.state === "running") ?? live?.tools.at(-1)) : undefined
   const busy = running || signOff.waiting
