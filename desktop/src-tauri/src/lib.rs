@@ -140,7 +140,9 @@ fn allow_window_controls(app: &AppHandle, origin: &ServerOrigin) {
         .permission("core:window:allow-internal-toggle-maximize")
         .permission("core:window:allow-minimize")
         .permission("core:window:allow-toggle-maximize")
-        .permission("core:window:allow-close");
+        .permission("core:window:allow-close")
+        // and tell the in-app browser which chat is on screen.
+        .permission("allow-pane-chat");
     if let Err(error) = app.add_capability(capability) {
         eprintln!("nako: no window controls for {}: {error}", origin.as_str());
     }
@@ -341,6 +343,7 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<Window> {
     #[cfg(not(target_os = "macos"))]
     let builder = builder.initialization_script(WINDOW_CONTROLS);
     let builder = builder
+        .initialization_script(pane::CHAT_WATCH)
         .background_color(background)
         .on_navigation(move |url| navigation_allowed(&navigating, url))
         .on_new_window(move |url, _| {
@@ -384,7 +387,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Shell::default())
-        .invoke_handler(tauri::generate_handler![start, connect, pane::pane])
+        .invoke_handler(tauri::generate_handler![start, connect, pane::pane, pane::pane_chat])
         .setup(move |app| {
             let handle = app.handle();
             let tray_ok = match tray(handle) {
