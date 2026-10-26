@@ -265,15 +265,17 @@ pub(crate) fn open_chat(app: &AppHandle, session: &str) {
 }
 
 fn tray(app: &AppHandle) -> tauri::Result<()> {
-    let menu = Menu::with_items(
-        app,
-        &[
-            &MenuItem::with_id(app, "open", "Open Nako", true, None::<&str>)?,
-            &MenuItem::with_id(app, "server", "Change server", true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
-        ],
-    )?;
+    let open = MenuItem::with_id(app, "open", "Open Nako", true, None::<&str>)?;
+    let server = MenuItem::with_id(app, "server", "Change server", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", "Check for updates", true, None::<&str>)?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    // Only installs that replace themselves; the .deb and Homebrew update through their package manager.
+    let menu = if update::self_updates() {
+        Menu::with_items(app, &[&open, &server, &update, &separator, &quit])?
+    } else {
+        Menu::with_items(app, &[&open, &server, &separator, &quit])?
+    };
     TrayIconBuilder::with_id("nako")
         .icon(app.default_window_icon().cloned().expect("bundled icon"))
         .tooltip("Nako")
@@ -287,6 +289,7 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
                     show(&window);
                 }
             }
+            "update" => update::check_now(app),
             "quit" => app.exit(0),
             _ => {}
         })
