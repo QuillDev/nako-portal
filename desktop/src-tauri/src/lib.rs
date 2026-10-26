@@ -244,6 +244,8 @@ fn show_main(app: &AppHandle) {
     if let Some(window) = window(app) {
         show(&window);
     }
+    // Reopened from the tray or the launcher: it may have sat there through a release.
+    update::check_if_due(app);
 }
 
 /// A clicked notification opens its chat, without reloading the page when it's already the portal.
@@ -355,6 +357,7 @@ fn main_window(app: &AppHandle, hidden: bool) -> tauri::Result<Window> {
             if payload.event() == PageLoadEvent::Finished && on_portal {
                 app.state::<Shell>().wake.notify_one();
                 update::announce(app);
+                update::check_if_due(app);
                 pane::tell_portal(app);
             }
         })
@@ -404,6 +407,9 @@ pub fn run() {
             }
             if let WindowEvent::Focused(false) = event {
                 update::install_if_idle(window.app_handle());
+            }
+            if let WindowEvent::Focused(true) = event {
+                update::check_if_due(window.app_handle());
             }
             if let WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } = event {
                 pane::layout(window.app_handle());
