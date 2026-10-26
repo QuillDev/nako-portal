@@ -4,6 +4,7 @@
 //! Windows and macOS place the three webviews with bounds. Linux packs webviews into GTK boxes
 //! (bounds do nothing there), so the pane's toolbar and page go in a column beside the portal.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
@@ -23,6 +24,60 @@ pub struct Pane {
     open: Mutex<bool>,
     /// Only one pane gets built, even when two links are clicked at once.
     building: Mutex<()>,
+    chats: Mutex<Chats>,
+}
+
+/// Each chat keeps its own page: switching chats puts the pane away and brings back the page
+/// that chat had open, if any. `None` is everything that isn't a chat (the list, settings).
+#[derive(Default)]
+struct Chats {
+    current: Option<String>,
+    pages: HashMap<Option<String>, Url>,
+}
+
+impl Chats {
+    /// Moves to chat `to`, remembering `showing` (the pane's page, if it's open) for the chat
+    /// being left. Returns the page `to` had open, or None when the pane should be put away.
+    /// `None` too when `to` is already current: nothing changes.
+    fn switch(&mut self, to: Option<String>, showing: Option<Url>) -> Option<Option<Url>> {
+        if to == self.current {
+            return None;
+        }
+        let left = std::mem::replace(&mut self.current, to.clone());
+        match showing {
+            Some(url) => self.pages.insert(left, url),
+            None => self.pages.remove(&left),
+        };
+        Some(self.pages.remove(&to))
+    }
+}
+
+/// Searches go here when the address bar holds something that isn't an address.
+const SEARCH: &str = "https://duckduckgo.com/";
+
+/// What the address bar's text means: an address (a scheme is optional) or a search.
+pub fn address_or_search(text: &str) -> Option<Url> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if !text.contains(char::is_whitespace) {
+        if let Ok(url) = Url::parse(text) {
+            if matches!(url.scheme(), "http" | "https") {
+                return Some(url);
+            }
+        }
+        // example.com, localhost:3000, 10.0.0.2/admin: no scheme, but clearly a place.
+        let host = text.split(['/', '?', '#']).next().unwrap_or_default();
+        let name = host.rsplit_once(':').filter(|(_, port)| port.parse::<u16>().is_ok()).map_or(host, |(name, _)| name);
+        let looks_like_host = name == "localhost" || (name.contains('.') && !name.starts_with('.') && !name.ends_with('.'));
+        if looks_like_host {
+            if let Ok(url) = Url::parse(&format!("https://{text}")) {
+                return Some(url);
+            }
+        }
+    }
+    Url::parse_with_params(SEARCH, [("q", text)]).ok()
 }
 
 /// Where each part goes for a window `width` wide: (portal width, pane x, pane width).
@@ -61,6 +116,13 @@ pub fn open_later(app: &AppHandle, url: Url) {
 }
 
 pub fn close(app: &AppHandle) {
+    put_away(app);
+    if let Some(portal) = app.get_webview(MAIN) {
+        let _ = portal.set_focus();
+    }
+}
+
+fn put_away(app: &AppHandle) {
     *app.state::<Shell>().pane.open.lock().unwrap() = false;
     if let Some(page) = app.get_webview(PAGE) {
         let _ = page.navigate(Url::parse("about:blank").unwrap());
@@ -68,10 +130,34 @@ pub fn close(app: &AppHandle) {
     show_parts(app, false);
     layout(app);
     tell_portal(app);
-    if let Some(portal) = app.get_webview(MAIN) {
-        let _ = portal.set_focus();
+}
+
+/// Told by the portal whenever it shows another chat (or no chat): the pane follows.
+#[tauri::command]
+pub async fn pane_chat(app: AppHandle, chat: Option<String>) {
+    let showing = if is_open(&app) { app.get_webview(PAGE).and_then(|page| page.url().ok()).filter(|url| url.scheme() != "about") } else { None };
+    let next = app.state::<Shell>().pane.chats.lock().unwrap().switch(chat, showing);
+    match next {
+        None => {}
+        Some(Some(url)) => open(&app, url),
+        Some(None) if is_open(&app) => put_away(&app),
+        Some(None) => {}
     }
 }
+
+/// Runs in the portal: reports the chat on screen to `pane_chat` as it changes. Older apps
+/// don't inject it, and older portals still use `#/c/<id>` routes, so it needs nothing from them.
+pub const CHAT_WATCH: &str = r#"(() => {
+  let last
+  const send = () => {
+    const chat = (location.hash.match(/^#\/c\/([\w.-]+)/) || [])[1] || null
+    if (chat === last || !window.__TAURI_INTERNALS__) return
+    last = chat
+    window.__TAURI_INTERNALS__.invoke("pane_chat", { chat }).catch(() => {})
+  }
+  addEventListener("hashchange", send)
+  addEventListener("DOMContentLoaded", send)
+})()"#;
 
 pub fn is_open(app: &AppHandle) -> bool {
     *app.state::<Shell>().pane.open.lock().unwrap()
@@ -150,7 +236,7 @@ fn status_script(url: &str, title: Option<&str>) -> String {
 
 /// The toolbar's buttons.
 #[tauri::command]
-pub fn pane(app: AppHandle, action: String) {
+pub fn pane(app: AppHandle, action: String, target: Option<String>) {
     let Some(page) = app.get_webview(PAGE) else { return };
     match action.as_str() {
         "back" => {
@@ -168,6 +254,11 @@ pub fn pane(app: AppHandle, action: String) {
             }
         }
         "close" => close(&app),
+        "go" => {
+            if let Some(url) = target.as_deref().and_then(address_or_search) {
+                let _ = page.navigate(url);
+            }
+        }
         // The toolbar asks once it has loaded, in case the page finished first.
         "status" => report(&page, None),
         _ => {}
@@ -323,6 +414,50 @@ mod tests {
         let script = status_script("https://example.com/\"); alert(1); (\"", Some("</script>"));
         assert!(script.starts_with("window.nakoPane && window.nakoPane({"));
         assert!(script.contains(r#""url":"https://example.com/\"); alert(1); (\"""#), "{script}");
+    }
+
+    #[test]
+    fn the_address_bar_takes_addresses_with_or_without_a_scheme() {
+        let go = |text: &str| address_or_search(text).map(|u| u.to_string());
+        assert_eq!(go("https://github.com/QuillDev").as_deref(), Some("https://github.com/QuillDev"));
+        assert_eq!(go("  example.com/a?b=1 ").as_deref(), Some("https://example.com/a?b=1"));
+        assert_eq!(go("localhost:3000").as_deref(), Some("https://localhost:3000/"));
+        assert_eq!(go("http://10.0.0.2:8080/x").as_deref(), Some("http://10.0.0.2:8080/x"));
+        assert_eq!(go(""), None);
+    }
+
+    #[test]
+    fn anything_else_in_the_address_bar_is_a_search() {
+        let go = |text: &str| address_or_search(text).unwrap();
+        for text in ["rust tauri webview", "tauri", "what is 2.5 + 1", "file:///etc/passwd", "javascript:alert(1)"] {
+            let url = go(text);
+            assert_eq!(url.as_str().split('?').next(), Some(SEARCH), "{text}");
+            assert_eq!(url.query_pairs().find(|(k, _)| k == "q").map(|(_, v)| v.into_owned()).as_deref(), Some(text));
+        }
+    }
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).unwrap()
+    }
+
+    #[test]
+    fn each_chat_gets_back_the_page_it_had_open() {
+        let mut chats = Chats::default();
+        let a = Some("a".to_string());
+        let b = Some("b".to_string());
+        assert_eq!(chats.switch(a.clone(), None), Some(None), "first chat: nothing open");
+        assert_eq!(chats.switch(b.clone(), Some(url("https://one.example/"))), Some(None), "b has no page: put the pane away");
+        assert_eq!(chats.switch(a.clone(), Some(url("https://two.example/"))), Some(Some(url("https://one.example/"))));
+        assert_eq!(chats.switch(b.clone(), None), Some(Some(url("https://two.example/"))), "a closed its pane");
+        assert_eq!(chats.switch(a, None), Some(None), "a stays closed");
+        assert_eq!(chats.switch(None, None), Some(None), "the chat list has its own slot");
+    }
+
+    #[test]
+    fn staying_on_the_same_chat_changes_nothing() {
+        let mut chats = Chats::default();
+        chats.switch(Some("a".into()), None);
+        assert_eq!(chats.switch(Some("a".into()), Some(url("https://one.example/"))), None);
     }
 
     #[test]

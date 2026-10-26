@@ -14,20 +14,39 @@ if (window.nakoWindow?.controls) {
   )
 }
 
-const host = document.getElementById("host")
-const path = document.getElementById("path")
+// The address bar: shows where the page is, and takes an address or a search on Enter.
 const address = document.getElementById("address")
+let shown = ""
 
 window.nakoPane = ({ url, title }) => {
-  let parsed
-  try {
-    parsed = new URL(url)
-  } catch {
-    return
-  }
-  host.textContent = parsed.host
-  path.textContent = parsed.pathname === "/" && !parsed.search ? "" : parsed.pathname + parsed.search
+  shown = url
   address.title = title ? `${title}\n${url}` : url
+  if (document.activeElement !== address) address.value = url
 }
+
+document.getElementById("go").addEventListener("submit", event => {
+  event.preventDefault()
+  const target = address.value.trim()
+  if (!target) return
+  invoke("pane", { action: "go", target })
+  address.blur()
+})
+// Clicking into the bar selects the whole address, like a browser's; the click's own mouseup
+// would otherwise drop the selection and leave a caret mid-address.
+let selecting = false
+address.addEventListener("mousedown", () => (selecting = document.activeElement !== address))
+address.addEventListener("mouseup", event => {
+  if (selecting) event.preventDefault()
+  selecting = false
+})
+address.addEventListener("focus", () => address.select())
+address.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return
+  address.value = shown
+  address.blur()
+})
+address.addEventListener("blur", () => {
+  if (address.value.trim() === "") address.value = shown
+})
 
 invoke("pane", { action: "status" })
