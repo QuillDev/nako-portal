@@ -225,7 +225,7 @@ class MainActivity : ComponentActivity() {
         val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         split.addView(web, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         root.addView(split, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        pane = BrowserPane(this, split, server, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally)
+        pane = BrowserPane(this, split, server, preferences, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally)
         if (startUrl != null) {
             web.loadUrl(startUrl)
         } else if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) {

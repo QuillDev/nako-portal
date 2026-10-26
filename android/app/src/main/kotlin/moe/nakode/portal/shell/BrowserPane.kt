@@ -2,6 +2,7 @@ package moe.nakode.portal.shell
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.drawable.GradientDrawable
@@ -9,18 +10,22 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.annotation.DrawableRes
+import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
 import moe.nakode.portal.R
+import kotlin.math.roundToInt
 
 /**
  * The in-app browser on a wide screen: a toolbar over a page, in a column beside the chat.
@@ -30,6 +35,8 @@ class BrowserPane(
     private val context: Context,
     private val split: LinearLayout,
     private val server: ServerOrigin,
+    /** Where the divider was last dragged to, kept across launches. */
+    private val preferences: SharedPreferences,
     /** Portal links clicked in the pane go back to the chat. */
     private val openInPortal: (String) -> Unit,
     /** Links that aren't web pages, and the toolbar's "open in browser". */
@@ -74,7 +81,59 @@ class BrowserPane(
     /** Re-measures the pane after the window changes size (a fold, a rotation, split screen). */
     fun resize(widthDp: Int) {
         val column = column ?: return
-        column.layoutParams = LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp)), ViewGroup.LayoutParams.MATCH_PARENT)
+        column.layoutParams = LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp, share)), ViewGroup.LayoutParams.MATCH_PARENT)
+    }
+
+    private var share: Float
+        get() = preferences.getFloat(SHARE, PaneLayout.DEFAULT_SHARE)
+        set(value) = preferences.edit { putFloat(SHARE, value) }
+
+    /**
+     * The line between the chat and the pane, with a grip to drag it sideways. The touch target is
+     * wider than the line so it's easy to catch with a finger.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun divider(palette: Palette): View {
+        val line = View(context).apply { setBackgroundColor(palette.border) }
+        val grip = View(context).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(2).toFloat()
+                setColor(palette.muted)
+            }
+            alpha = 0.6f
+        }
+        return FrameLayout(context).apply {
+            setBackgroundColor(palette.background)
+            contentDescription = "Drag to resize"
+            addView(line, FrameLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER_HORIZONTAL))
+            addView(grip, FrameLayout.LayoutParams(dp(4), dp(36), Gravity.CENTER))
+            setOnTouchListener { _, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        grip.alpha = 1f
+                        parent.requestDisallowInterceptTouchEvent(true)
+                    }
+                    MotionEvent.ACTION_MOVE -> drag(event.rawX)
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        grip.alpha = 0.6f
+                        drag(event.rawX)?.let { share = it }
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    /** Moves the divider to [rawX] on screen; returns the share it now leaves the pane. */
+    private fun drag(rawX: Float): Float? {
+        val column = column ?: return null
+        val origin = IntArray(2).also(split::getLocationOnScreen)
+        val density = context.resources.displayMetrics.density
+        val widthDp = (split.width / density).roundToInt()
+        val paneDp = ((origin[0] + split.width - rawX) / density).roundToInt()
+        val dragged = PaneLayout.shareFor(widthDp, paneDp)
+        column.layoutParams = LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp, dragged)), ViewGroup.LayoutParams.MATCH_PARENT)
+        return dragged
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -117,10 +176,10 @@ class BrowserPane(
         }
         val edge = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            addView(View(context).apply { setBackgroundColor(palette.border) }, LinearLayout.LayoutParams(dp(1), ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(divider(palette), LinearLayout.LayoutParams(dp(16), ViewGroup.LayoutParams.MATCH_PARENT))
             addView(column, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         }
-        split.addView(edge, LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp())), ViewGroup.LayoutParams.MATCH_PARENT))
+        split.addView(edge, LinearLayout.LayoutParams(dp(PaneLayout.paneWidthDp(widthDp(), share)), ViewGroup.LayoutParams.MATCH_PARENT))
         this.column = edge
         this.page = web
         this.address = text
@@ -172,6 +231,10 @@ class BrowserPane(
     }
 
     private fun widthDp() = context.resources.configuration.screenWidthDp
+
+    private companion object {
+        const val SHARE = "pane_share"
+    }
 
     private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
 

@@ -25,6 +25,20 @@ class PaneLayoutTest {
     }
 
     @Test
+    fun aDraggedDividerIsRememberedAsAShareOfTheWindow() {
+        // Dragged to a 425dp pane on an 850dp screen: half of a 1280dp tablet too.
+        val share = PaneLayout.shareFor(850, 425)
+        assertEquals(425, PaneLayout.paneWidthDp(850, share))
+        assertEquals(640, PaneLayout.paneWidthDp(1280, share))
+    }
+
+    @Test
+    fun theDividerStopsBeforeEitherSideGetsTooNarrow() {
+        assertEquals(320, PaneLayout.paneWidthDp(850, PaneLayout.shareFor(850, 40)))
+        assertEquals(490, PaneLayout.paneWidthDp(850, PaneLayout.shareFor(850, 840)))
+    }
+
+    @Test
     fun onlyWebPagesBrowseInThePane() {
         assertTrue(PaneLayout.browsesInPane("https://example.com/docs"))
         assertTrue(PaneLayout.browsesInPane("HTTP://example.com"))
