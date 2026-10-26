@@ -8,6 +8,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
@@ -230,8 +231,10 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
     }
   }, [phone])
 
+  const drawer = useMemo(() => ({ phone, collapsed, toggle: desk.toggle, show, go }), [phone, collapsed, desk.toggle, show, go])
+
   return (
-    <DrawerContext.Provider value={{ phone, collapsed, toggle: desk.toggle, show, go }}>
+    <DrawerContext.Provider value={drawer}>
       <div className="relative flex h-dvh overflow-hidden" ref={rootRef}>
         <div
           className={cn(

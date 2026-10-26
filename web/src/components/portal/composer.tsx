@@ -1,5 +1,5 @@
 import { PaperclipIcon, SquareIcon } from "lucide-react"
-import { useRef, useState } from "react"
+import { memo, useRef, useState } from "react"
 import {
   PromptInput,
   PromptInputAttachment,
@@ -42,22 +42,31 @@ const TALL = {
   end: "col-start-3 row-start-2 p-0 has-[>button]:mr-0",
 }
 
-type ComposerProps = { portal: Portal; draftKey: string; placeholder?: string; tall?: boolean }
+// inChat: a chat is open, so slash commands run in it. Only what the composer uses comes in, and
+// every function keeps its identity, so a streaming reply doesn't redraw the composer.
+type ComposerProps = Pick<Portal, "send" | "command" | "stop" | "setError" | "commands"> & {
+  draftKey: string
+  placeholder?: string
+  tall?: boolean
+  running: boolean
+  inChat: boolean
+}
 
-export function Composer(props: ComposerProps) {
+export const Composer = memo(function Composer(props: ComposerProps) {
   return (
     <PromptInputProvider initialInput={localStorage.getItem(props.draftKey) || ""} key={props.draftKey}>
       <ComposerBody {...props} />
     </PromptInputProvider>
   )
-}
+})
 
-function ComposerBody({ portal, draftKey, placeholder, tall }: ComposerProps) {
-  const running = Boolean(portal.current?.running)
+const NO_COMMANDS: ComposerProps["commands"] = []
+
+function ComposerBody({ draftKey, placeholder, tall, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
   const [sending, setSending] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const { textInput } = usePromptInputController()
-  const slash = useSlashMenu(portal.current ? portal.commands : [])
+  const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
 
   return (
     <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" ref={box}>
@@ -69,20 +78,20 @@ function ComposerBody({ portal, draftKey, placeholder, tall }: ComposerProps) {
         className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${tall ? TALL.group : ""}`}
         maxFileSize={MAX_FILE}
         multiple
-        onError={e => portal.setError(e.message)}
+        onError={e => setError(e.message)}
         onSubmit={async message => {
           if (!message.text.trim() && !message.files.length) return
           if (saysThanks(message.text)) burstHearts(box.current?.querySelector("form"))
           setSending(true)
           try {
-            if (portal.current && isCommand(message.text) && !message.files.length) {
-              const prefill = await portal.command(message.text)
+            if (inChat && isCommand(message.text) && !message.files.length) {
+              const prefill = await command(message.text)
               localStorage.removeItem(draftKey)
               // The composer clears itself once this returns; put /undo's text back after that.
               if (prefill) setTimeout(() => textInput.setInput(prefill))
               return
             }
-            await portal.send(
+            await send(
               message.text,
               message.files.map(f => ({ url: f.url, filename: f.filename, mediaType: f.mediaType })),
             )
@@ -110,7 +119,7 @@ function ComposerBody({ portal, draftKey, placeholder, tall }: ComposerProps) {
             <PromptInputButton
               aria-label="Stop"
               className="rounded-full"
-              onClick={() => portal.stop()}
+              onClick={() => stop()}
               size="icon-sm"
               title="Stop"
               variant="outline"

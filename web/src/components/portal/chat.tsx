@@ -1,5 +1,5 @@
 import { MoreHorizontalIcon } from "lucide-react"
-import { useEffect, useLayoutEffect, useRef } from "react"
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
 import { Button } from "@/components/ui/button"
@@ -11,14 +11,13 @@ import { Composer } from "./composer"
 import { PageHeader } from "./header"
 import { Presence } from "./presence"
 import { Requests } from "./requests"
-import { sessionActions, useRenameDialog } from "./session-actions"
+import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
 
-function ChatMenu({ portal }: { portal: Portal }) {
-  const c = portal.current!
-  const rename = useRenameDialog(portal)
+// The open chat's title and ⋯ menu; unchanged while a turn streams in below it.
+const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions }: { title: string; session: string; pinned: boolean; actions: ChatActions }) {
   return (
-    <>
+    <PageHeader title={title}>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button aria-label="More" size="icon" variant="ghost">
@@ -26,7 +25,7 @@ function ChatMenu({ portal }: { portal: Portal }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {sessionActions(portal, c.session, () => rename.start(c.session)).map(a => (
+          {sessionActions(actions, session, pinned).map(a => (
             <DropdownMenuItem key={a.label} onSelect={a.run}>
               <a.icon className="size-4 text-muted-foreground" />
               {a.label}
@@ -34,10 +33,9 @@ function ChatMenu({ portal }: { portal: Portal }) {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      {rename.dialog}
-    </>
+    </PageHeader>
   )
-}
+})
 
 // Stand-ins for turns that haven't loaded yet: a prompt on the right, a reply on the left.
 function TurnSkeletons({ count }: { count: number }) {
@@ -156,7 +154,18 @@ function NewChat({ portal }: { portal: Portal }) {
         </h2>
         {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
       </div>
-      <Composer draftKey="draft:new" placeholder="what are we working on?" portal={portal} tall />
+      <Composer
+        command={portal.command}
+        commands={portal.commands}
+        draftKey="draft:new"
+        inChat={false}
+        placeholder="what are we working on?"
+        running={false}
+        send={portal.send}
+        setError={portal.setError}
+        stop={portal.stop}
+        tall
+      />
     </div>
   )
 }
@@ -165,6 +174,12 @@ export function Chat({ portal }: { portal: Portal }) {
   const c = portal.current
   const presence = usePresence()
   const draftKey = c ? `draft:${c.session}` : ""
+  const rename = useRenameDialog(portal)
+  const { pin, archive } = portal
+  const actions = useMemo(() => ({ pin, archive, rename: rename.start }), [pin, archive, rename.start])
+  const session = c?.session
+  const start = c?.start ?? 0
+  const notes = useMemo(() => portal.notes.filter(n => n.session === session && n.at >= start).map(n => ({ ...n, at: n.at - start })), [portal.notes, session, start])
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
   if (!c)
     return (
@@ -176,9 +191,8 @@ export function Chat({ portal }: { portal: Portal }) {
     )
   return (
     <>
-      <PageHeader title={c.title || "chat"}>
-        <ChatMenu portal={portal} />
-      </PageHeader>
+      <ChatHeader actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} session={c.session} title={c.title || "chat"} />
+      {rename.dialog}
       {offline}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
       <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${c.loading}`}>
@@ -190,7 +204,7 @@ export function Chat({ portal }: { portal: Portal }) {
           {!c.loading && <Transcript
               live={portal.live}
               messages={c.messages}
-              notes={portal.notes.filter(n => n.session === c.session && n.at >= c.start).map(n => ({ ...n, at: n.at - c.start }))}
+              notes={notes}
               running={c.running}
               session={c.session}
               quiet={presence}
@@ -209,7 +223,16 @@ export function Chat({ portal }: { portal: Portal }) {
           signOff={portal.signOff?.session === c.session ? portal.signOff.text : ""}
         />
       )}
-      <Composer draftKey={draftKey} portal={portal} />
+      <Composer
+        command={portal.command}
+        commands={portal.commands}
+        draftKey={draftKey}
+        inChat
+        running={c.running}
+        send={portal.send}
+        setError={portal.setError}
+        stop={portal.stop}
+      />
     </>
   )
 }
