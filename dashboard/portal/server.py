@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
-from .hub import NEEDS_YOU, WORKING, page
+from .hub import NEEDS_YOU, WORKING, for_app, page
 from .link import GATEWAY_PATH
 from .media import shown_files
 
@@ -502,7 +502,8 @@ class Portal:
                 self.store.set_meta(f"seen:{session}", listed["message_count"])
         query = request.query
         window = {key: _index(query[key]) for key in ("before", "since") if key in query}
-        opened["start"], opened["messages"] = page(opened["messages"], **window)
+        opened["start"], shown = page(opened["messages"], **window)
+        opened["messages"] = [for_app(m) for m in shown]
         return web.json_response(opened)
 
     async def _message(self, request):

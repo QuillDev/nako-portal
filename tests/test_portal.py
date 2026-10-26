@@ -341,6 +341,20 @@ async def test_images_shown_in_a_chat_are_viewable_but_nothing_else_is(world, tm
         assert (name, status(refused)) == (name, 404)
 
 
+async def test_a_chat_page_carries_only_what_the_app_draws(world):
+    sid = world.hermes.add_session("20261024_070808_bbbbbb", "big rows", messages=[("user", "write the report")])
+    world.hermes._row(sid, "tool", "", name="write_file", context="report.md", tool_call_id="w1", args={"content": "x" * 50_000}, display_metadata={"diff": "y" * 5_000})
+    world.hermes._row(sid, "assistant", "written", reasoning="it needed a summary", reasoning_details=[{"signature": "z" * 40_000}])
+    await world.sign_up()
+    opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    assert [{k: v for k, v in m.items() if k != "row_id"} for m in opened["messages"]] == [
+        {"role": "user", "text": "write the report"},
+        {"role": "tool", "text": "", "name": "write_file", "context": "report.md", "tool_call_id": "w1"},
+        {"role": "assistant", "text": "written", "reasoning": "it needed a summary"},
+    ]
+    assert all(isinstance(m["row_id"], int) for m in opened["messages"])
+
+
 async def test_a_long_chat_opens_on_its_latest_turns_and_pages_back_through_the_rest(world, tmp_path):
     chart = tmp_path / "chart.png"
     chart.write_bytes(b"x")

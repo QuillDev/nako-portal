@@ -56,6 +56,9 @@ CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
 STEER_ORIGIN = re.compile(r"^Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\n*", re.M)
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
+# What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
+# tool arguments and display metadata, which made a page of a long chat ~170 KB instead of ~10 KB.
+SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "name", "context", "tool_call_id")
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
 SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
@@ -395,6 +398,11 @@ def page(messages, *, before=None, since=None, limit=PAGE_MESSAGES):
         if messages[start].get("role") != "tool":
             seen += 1
     return start, messages[start:end]
+
+
+def for_app(message):
+    """A transcript row with only what the app draws."""
+    return {key: message[key] for key in SHOWN_FIELDS if key in message}
 
 
 def _is_shown(message):
