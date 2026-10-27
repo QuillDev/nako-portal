@@ -46,6 +46,7 @@ function macApp({ brewHas }) {
     brew: () => "/opt/homebrew/bin/brew",
     runBrew: async (brew, args) => {
       calls.push(args.join(" "))
+      if (args[0] === "--repo") return { ok: true, output: "/opt/homebrew/Library/Taps/quilldev/homebrew-tap\n" }
       return { ok: true, output: args[0] === "list" ? `nako ${brewHas}\n` : "" }
     },
     reopen: app => events.reopened.push(app),
@@ -62,7 +63,13 @@ test("a newer release shows the arrow on the Mac, and clicking it upgrades throu
   assert.deepEqual(events.ready, ["0.3.1"])
   assert.deepEqual(calls, [], "nothing downloaded or built before the click")
   await updater.install(false)
-  assert.deepEqual(calls, ["update --quiet", "upgrade nako", "list --versions nako"])
+  assert.deepEqual(calls, [
+    "update --quiet",
+    "--repo quilldev/tap",
+    "-C /opt/homebrew/Library/Taps/quilldev/homebrew-tap pull --ff-only --quiet",
+    "upgrade nako",
+    "list --versions nako",
+  ])
   assert.deepEqual(events.reopened, ["/opt/homebrew/opt/nako/Nako.app"])
   assert.equal(events.quit, 1)
   assert.match(notes[0], /^Updating Nako/)
