@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
-import { appVersion, installDesktopUpdate, useDesktopUpdate } from "@/lib/desktop-update"
+import { appVersion, canCheck, checkForUpdate, installDesktopUpdate, useDesktopUpdate } from "@/lib/desktop-update"
 import type { SessionRow, Status } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useDrawer } from "./drawer"
@@ -79,7 +79,6 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
   const { go, phone, toggle } = useDrawer()
   const [filter, setFilter] = useState("")
   const rename = useRenameDialog(portal)
-  const update = useDesktopUpdate()
   const needle = filter.trim().toLowerCase()
   const { sessions, pin, archive, prefetch } = portal
   const listed = useMemo(() => groups(sessions.filter(s => !s.notifications && (!needle || s.title.toLowerCase().includes(needle)))), [sessions, needle])
@@ -131,20 +130,8 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         ))}
       </nav>
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <span className="px-2 text-muted-foreground text-xs tabular-nums">{portal.connected ? (appVersion ? `v${appVersion}` : "") : "nako is offline"}</span>
+        {portal.connected ? <AppVersion /> : <span className="px-2 text-muted-foreground text-xs">nako is offline</span>}
         <div className="flex items-center">
-          {update && (
-            <Button
-              aria-label={`Restart to update to ${update}`}
-              className="text-primary hover:text-primary"
-              onClick={installDesktopUpdate}
-              size="icon"
-              title={`Restart to update to ${update}`}
-              variant="ghost"
-            >
-              <ArrowDownToLineIcon />
-            </Button>
-          )}
           <Button aria-label="Settings" onClick={() => go("#/settings")} size="icon" title="Settings" variant="ghost">
             <SettingsIcon />
           </Button>
@@ -152,5 +139,45 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
       </div>
       {rename.dialog}
     </aside>
+  )
+}
+
+const CHECK_LABEL = { checking: "checking…", latest: "up to date", error: "couldn't check" } as const
+
+/** The app's version; in an app that updates itself, clicking it checks, and a found update gets its button beside it. */
+function AppVersion() {
+  const update = useDesktopUpdate()
+  if (!appVersion) return <span />
+  const state = update?.state
+  const label = (state === "checking" || state === "latest" || state === "error" ? CHECK_LABEL[state] : null) ?? `v${appVersion}`
+  const ready = (state === "ready" || state === "installing") && update?.version
+  return (
+    <div className="flex min-w-0 items-center">
+      {canCheck() ? (
+        <button
+          className="rounded-md px-2 py-1 text-muted-foreground text-xs tabular-nums hover:bg-accent hover:text-foreground disabled:pointer-events-none"
+          disabled={state === "checking" || state === "installing"}
+          onClick={checkForUpdate}
+          title={update?.error ?? "Check for updates"}
+          type="button"
+        >
+          {label}
+        </button>
+      ) : (
+        <span className="px-2 text-muted-foreground text-xs tabular-nums">{label}</span>
+      )}
+      {ready && (
+        <Button
+          aria-label={`Update to ${update.version}`}
+          className="text-primary hover:text-primary"
+          onClick={installDesktopUpdate}
+          size="icon"
+          title={update.error ? `Update to ${update.version} (last try: ${update.error})` : `Update to ${update.version}`}
+          variant="ghost"
+        >
+          <ArrowDownToLineIcon />
+        </Button>
+      )}
+    </div>
   )
 }

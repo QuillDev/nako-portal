@@ -2,6 +2,7 @@ import { type ComponentType, lazy, Suspense, useEffect } from "react"
 import { Chat } from "@/components/portal/chat"
 import { DrawerLayout } from "@/components/portal/drawer"
 import { Sidebar } from "@/components/portal/sidebar"
+import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { usePortal } from "@/hooks/use-portal"
 
@@ -54,6 +55,7 @@ export function App() {
       <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>
         <main className="flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
+      <UpdatingScreen />
     </TooltipProvider>
   )
 }

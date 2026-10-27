@@ -235,7 +235,7 @@ test("coming back checks again only after a while, and a failed check says what 
   assert.ok(due(now - 10 * 60_000, now), "ten minutes ago")
   assert.equal(reason("not signed in"), "Sign in to the portal first")
   assert.equal(reason("no release"), "This portal doesn't offer desktop updates")
-  assert.equal(announcement('1.2.3"; alert(1); "'), 'window.nakoUpdate = {"version":"1.2.3\\"; alert(1); \\""}; window.dispatchEvent(new Event("nako-update"))')
+  assert.equal(announcement({ state: "ready", version: '1.2.3"; alert(1); "' }), 'window.nakoUpdate = {"state":"ready","version":"1.2.3\\"; alert(1); \\""}; window.dispatchEvent(new Event("nako-update"))')
 })
 
 test("pages see Chrome without the Electron and app tokens, and Google's sign-in sees Firefox", () => {

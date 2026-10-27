@@ -102,6 +102,7 @@ const COMMANDS = {
   pane_chat: ["portal"],
   pane_search: ["portal"],
   pane_toggle: ["portal"],
+  update: ["portal"],
   "plugin:window|minimize": ["local", "portal", "bar"],
   "plugin:window|toggle_maximize": ["local", "portal", "bar"],
   "plugin:window|internal_toggle_maximize": ["local", "portal", "bar"],
@@ -150,6 +151,9 @@ ipcMain.handle("nako", async (event, command, args = {}) => {
       return pane.search(String(args.engine))
     case "pane_toggle":
       return pane.toggle()
+    case "update":
+      if (args.action === "install") return void updater.install(false)
+      return void updater.check()
     case "plugin:window|minimize":
       return window.minimize()
     case "plugin:window|toggle_maximize":
@@ -249,7 +253,8 @@ function createWindow() {
     // Chromium writes cookies to disk every so often; a sign-in shouldn't wait for that.
     session.defaultSession.cookies.flushStore().catch(() => {})
     listener?.wake()
-    if (updater.pending) page.executeJavaScript(announcement(updater.pending.version)).catch(() => {})
+    // Where updating stands; the sidebar's version checks for updates only once this is set.
+    if (updater.enabled) page.executeJavaScript(announcement(updater.status)).catch(() => {})
     updater.checkIfDue()
     tellPortal()
   })
@@ -342,8 +347,10 @@ const updater = new Updater({
   platform: platformKey(process.env, process.platform, app.isPackaged, realPath(process.execPath)),
   publicKey: readPublicKey(join(root, "pubkey.txt")),
   cookie: cookieHeader,
-  onReady: version => {
-    portal.webContents.executeJavaScript(announcement(version)).catch(() => {})
+  onStatus: status => {
+    if (portal && onPortal(portal.webContents.getURL())) portal.webContents.executeJavaScript(announcement(status)).catch(() => {})
+  },
+  onReady: () => {
     if (updater.automatic && !window.isFocused()) updater.install(!window.isVisible())
   },
   notify: (title, body) => notify(title, body),
