@@ -230,7 +230,12 @@ function createWindow() {
   // Tagged so the portal offers browser sign-in instead of passkeys.
   page.setUserAgent(`${browserAgent()} NakoDesktop/${app.getVersion()}`)
   page.on("will-navigate", event => navigate(event, event.url))
-  page.setWindowOpenHandler(({ url }) => {
+  page.setWindowOpenHandler(({ url, disposition }) => {
+    // Cmd-click (Ctrl-click off macOS) or a middle click asks for a background tab: the system browser.
+    if (disposition === "background-tab" && /^https?:/i.test(url) && !onPortal(url)) {
+      external(url)
+      return { action: "deny" }
+    }
     const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
     navigate(event, url)
     if (!event.defaultPrevented) page.loadURL(url)
