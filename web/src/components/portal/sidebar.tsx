@@ -48,7 +48,8 @@ const ChatRow = memo(function ChatRow({ row, selected, go, prefetch, actions }: 
       <ContextMenuTrigger asChild>
         <button
           className={cn("flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent", selected && "bg-accent")}
-          onClick={() => go(`#/c/${row.id}`)}
+          // Shift+click pins or unpins instead of opening.
+          onClick={e => (e.shiftKey ? actions.pin(row.id, !row.pinned) : go(`#/c/${row.id}`))}
           // Read the chat while the pointer settles on it, so the click opens it at once.
           onFocus={() => prefetch(row.id)}
           onPointerDown={() => prefetch(row.id)}
