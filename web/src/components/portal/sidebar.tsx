@@ -1,4 +1,4 @@
-import { ArrowDownToLineIcon, BellIcon, ChevronLeftIcon, PlusIcon, SettingsIcon } from "lucide-react"
+import { ArrowDownToLineIcon, BellIcon, ChevronLeftIcon, PinIcon, PlusIcon, SettingsIcon } from "lucide-react"
 import { memo, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu"
@@ -123,7 +123,10 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         {listed.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">no chats yet</p>}
         {listed.map(([label, items]) => (
           <div key={label}>
-            <p className="px-2 pt-3 pb-1 text-muted-foreground text-xs">{label}</p>
+            <p className="flex items-center gap-1.5 px-2 pt-3 pb-1 text-muted-foreground text-xs">
+              {label === "pinned" && <PinIcon className="size-3" />}
+              {label}
+            </p>
             {items.map(row => (
               <ChatRow actions={actions} go={go} key={row.id} prefetch={prefetch} row={row} selected={open === row.id} />
             ))}
