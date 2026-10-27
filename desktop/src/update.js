@@ -48,6 +48,9 @@ export function platformKey(env = process.env, platform = process.platform, pack
   return null
 }
 
+/** The Homebrew tap the Mac app installs from. */
+export const TAP = "quilldev/tap"
+
 /** Where `brew` is: Apple silicon, then Intel. GUI apps don't get the shell's PATH. */
 export const findBrew = (exists = existsSync) => ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"].find(path => exists(path)) ?? null
 
@@ -163,6 +166,9 @@ export class Updater {
     this.notify("Updating Nako", `Homebrew is building ${update.version}. Nako reopens when it's done.`)
     try {
       await this.brewRunner(brew, ["update", "--quiet"])
+      // brew update sometimes leaves a tap behind; pull the app's own tap so the new formula is there.
+      const tap = (await this.brewRunner(brew, ["--repo", TAP])).output.trim()
+      if (tap.startsWith("/")) await this.brewRunner("/usr/bin/git", ["-C", tap, "pull", "--ff-only", "--quiet"])
       const upgrade = await this.brewRunner(brew, ["upgrade", "nako"])
       const installed = brewVersion((await this.brewRunner(brew, ["list", "--versions", "nako"])).output)
       if (!installed || !newer(installed, this.version)) {
