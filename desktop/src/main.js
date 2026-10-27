@@ -1,6 +1,6 @@
 // Nako Portal's desktop app: the portal's own web app in a window, plus the glue a browser tab
 // can't do (a server prompt, browser sign-in, notifications, an in-app browser, self-updates).
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -262,7 +262,7 @@ function createWindow() {
     }
   })
   window.on("blur", () => {
-    if (updater.pending) updater.install(!window.isVisible())
+    if (updater.pending && updater.automatic) updater.install(!window.isVisible())
   })
   window.on("focus", () => updater.checkIfDue())
   localPage("")
@@ -313,14 +313,22 @@ function showAlert(alert) {
 
 // ---- tray, updates, downloads ----
 
+function realPath(path) {
+  try {
+    return realpathSync(path)
+  } catch {
+    return path
+  }
+}
+
 const updater = new Updater({
   version: app.getVersion(),
-  platform: platformKey(process.env, process.platform, app.isPackaged),
+  platform: platformKey(process.env, process.platform, app.isPackaged, realPath(process.execPath)),
   publicKey: readPublicKey(join(root, "pubkey.txt")),
   cookie: cookieHeader,
   onReady: version => {
     portal.webContents.executeJavaScript(announcement(version)).catch(() => {})
-    if (!window.isFocused()) updater.install(!window.isVisible())
+    if (updater.automatic && !window.isFocused()) updater.install(!window.isVisible())
   },
   notify: (title, body) => notify(title, body),
   quit: () => {

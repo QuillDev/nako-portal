@@ -82,3 +82,17 @@ if [ -n "${DRY_RUN:-}" ]; then
 fi
 (cd "$out" && gh release create "$tag" -R "$repo" --target "$commit" --title "Desktop $version" --notes "" --latest=false \
   nako.AppImage nako.AppImage.sig nako.deb nako-setup.exe nako-setup.exe.sig desktop-release.json)
+
+# The Mac app installs and updates from a Homebrew tap that builds the tagged source; point its
+# formula at this tag, so `brew upgrade nako` (and the app's update arrow) finds it.
+# NAKO_TAP=none skips it.
+tap_repo=${NAKO_TAP:-git@github.com:QuillDev/homebrew-tap.git}
+if [ "$tap_repo" != none ]; then
+  tap=$(mktemp -d)
+  git clone -q "$tap_repo" "$tap"
+  sha=$(curl -fsSL "https://github.com/$repo/archive/refs/tags/$tag.tar.gz" | sha256sum | cut -d' ' -f1)
+  sed -i -E "s|(url \"https://github.com/$repo/archive/refs/tags/)desktop-v[0-9.]+(\.tar\.gz\")|\1$tag\2|; s|^(  sha256 \")[0-9a-f]+\"|\1$sha\"|" "$tap/Formula/nako.rb"
+  git -C "$tap" commit -q -am "nako $version"
+  git -C "$tap" push -q origin HEAD
+  rm -rf "$tap"
+fi
