@@ -22,8 +22,18 @@ export function reason(error) {
   return `The portal didn't answer: ${error}`
 }
 
-/** Tells the portal page an update is ready, so it can offer a restart. */
-export const announcement = version => `window.nakoUpdate = ${JSON.stringify({ version })}; window.dispatchEvent(new Event("nako-update"))`
+/** How long "up to date" or a failed check stays beside the version before it shows the version again. */
+const SETTLE_AFTER = 4000
+
+/** How long the "updating" screen shows before an install quits the app, so you see it happen. */
+const SHOW_INSTALL_FOR = 1500
+
+/**
+ * Tells the portal page where updating stands: `state` is idle, checking, latest, error (`error`
+ * says why), ready (`version` is downloaded) or installing (`brew` when Homebrew builds it). Older
+ * pages only read `version` and show their restart arrow for it, so only ready and installing carry one.
+ */
+export const announcement = status => `window.nakoUpdate = ${JSON.stringify(status)}; window.dispatchEvent(new Event("nako-update"))`
 
 /** Whether `candidate` (x.y.z) is newer than `current`. */
 export function newer(candidate, current) {
@@ -70,10 +80,26 @@ export class Updater {
   pending = null
   last = null
   checking = false
+  status = { state: "idle" }
 
   /** `cookie()` → Cookie header or null, `onReady(version)` once a download is verified, `notify(title, body)` for the tray's check. */
-  constructor({ version, platform, publicKey, cookie, onReady, notify, quit, log = () => {}, brew = findBrew, runBrew: brewRunner = runBrew, reopen }) {
-    Object.assign(this, { version, platform, cookie, onReady, notify, quit, log, brew, brewRunner })
+  constructor({
+    version,
+    platform,
+    publicKey,
+    cookie,
+    onReady,
+    onStatus = () => {},
+    notify,
+    quit,
+    log = () => {},
+    brew = findBrew,
+    runBrew: brewRunner = runBrew,
+    reopen,
+    settleAfter = SETTLE_AFTER,
+    showInstallFor = SHOW_INSTALL_FOR,
+  }) {
+    Object.assign(this, { version, platform, cookie, onReady, onStatus, notify, quit, log, brew, brewRunner, settleAfter, showInstallFor })
     this.reopen = reopen ?? (app => spawn("sh", ["-c", 'sleep 1; exec open "$0"', app], { detached: true, stdio: "ignore" }).unref())
     this.key = parsePublicKey(publicKey)
   }
@@ -101,6 +127,27 @@ export class Updater {
     if (this.enabled && !this.pending && this.origin && due(this.last, Date.now(), Number(process.env.NAKO_RECHECK_MS) || RECHECK_AFTER)) this.run(false)
   }
 
+  #set(status) {
+    clearTimeout(this.settle)
+    this.status = status
+    this.onStatus(status)
+    // "Up to date" and a failed check are answers to a click; after a moment the version shows again.
+    if (status.state === "latest" || status.state === "error")
+      this.settle = setTimeout(() => this.#set(this.pending ? { state: "ready", version: this.pending.version } : { state: "idle" }), this.settleAfter)
+  }
+
+  /** The portal's version button: check now and show the answer beside the version; a found update waits for its button. */
+  async check() {
+    if (!this.enabled || this.status.state === "installing") return
+    if (this.pending) return this.#set({ state: "ready", version: this.pending.version })
+    if (!this.origin) return this.#set({ state: "error", error: "Connect to a portal first" })
+    this.#set({ state: "checking" })
+    while (this.checking) await new Promise(r => setTimeout(r, 200))
+    const result = this.pending ? "found" : await this.run(false)
+    if (result === "none") this.#set({ state: "latest" })
+    else if (result === "error") this.#set({ state: "error", error: reason(this.error) })
+  }
+
   /** The tray's "Check for updates": check now and install what it finds, or say why not. */
   async checkNow() {
     if (!this.enabled) return
@@ -121,6 +168,7 @@ export class Updater {
     try {
       const found = await this.#check()
       if (!found) return "none"
+      this.#set({ state: "ready", version: this.pending.version })
       this.onReady(this.pending.version)
       if (now) this.install(false)
       return "found"
@@ -163,7 +211,9 @@ export class Updater {
     const brew = this.brew()
     if (!brew) return this.notify("Couldn't update Nako", "Homebrew isn't installed where Nako looks (/opt/homebrew or /usr/local)")
     this.upgrading = true
+    this.#set({ state: "installing", version: update.version, brew: true })
     this.notify("Updating Nako", `Homebrew is building ${update.version}. Nako reopens when it's done.`)
+    let failed = null
     try {
       await this.brewRunner(brew, ["update", "--quiet"])
       // brew update sometimes leaves a tap behind; pull the app's own tap so the new formula is there.
@@ -173,22 +223,30 @@ export class Updater {
       const installed = brewVersion((await this.brewRunner(brew, ["list", "--versions", "nako"])).output)
       if (!installed || !newer(installed, this.version)) {
         this.log(`brew upgrade: ${upgrade.output.trim().split("\n").at(-1)}`)
-        return this.notify("Couldn't update Nako", upgrade.ok ? `Homebrew doesn't have ${update.version} yet` : upgrade.output.trim().split("\n").at(-1) || "brew upgrade failed")
+        failed = upgrade.ok ? `Homebrew doesn't have ${update.version} yet` : upgrade.output.trim().split("\n").at(-1) || "brew upgrade failed"
+        return this.notify("Couldn't update Nako", failed)
       }
       this.pending = null
       this.reopen(join(dirname(dirname(brew)), "opt", "nako", "Nako.app"))
       this.quit()
+    } catch (error) {
+      failed = error.message
+      throw error
     } finally {
       this.upgrading = false
+      // Still here: the update button comes back, with what went wrong.
+      if (failed) this.#set({ state: "ready", version: update.version, error: failed })
     }
   }
 
   /** Installs a downloaded update and restarts into it. `hidden` comes back in the tray. */
-  install(hidden) {
+  async install(hidden) {
     const update = this.pending
     if (!update) return
     if (update.brew) return this.#upgrade(update)
     this.pending = null
+    this.#set({ state: "installing", version: update.version })
+    if (!hidden) await new Promise(r => setTimeout(r, this.showInstallFor))
     try {
       if (this.platform === "linux-x86_64") {
         const image = process.env.APPIMAGE
@@ -206,6 +264,8 @@ export class Updater {
       this.quit()
     } catch (error) {
       this.log(`update failed: ${error.message}`)
+      this.pending = update
+      this.#set({ state: "ready", version: update.version, error: error.message })
     }
   }
 }

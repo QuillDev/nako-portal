@@ -34,13 +34,15 @@ async function portal(version) {
 function macApp({ brewHas }) {
   const calls = []
   const notes = []
-  const events = { ready: [], reopened: [], quit: 0 }
+  const events = { ready: [], reopened: [], quit: 0, shown: [] }
   const updater = new Updater({
     version: "0.3.0",
     platform: BREW,
     publicKey,
     cookie: async () => "portal=good",
     onReady: version => events.ready.push(version),
+    onStatus: status => events.shown.push(status),
+    settleAfter: 20,
     notify: (title, body) => notes.push(`${title}: ${body}`),
     quit: () => events.quit++,
     brew: () => "/opt/homebrew/bin/brew",
@@ -73,6 +75,7 @@ test("a newer release shows the arrow on the Mac, and clicking it upgrades throu
   assert.deepEqual(events.reopened, ["/opt/homebrew/opt/nako/Nako.app"])
   assert.equal(events.quit, 1)
   assert.match(notes[0], /^Updating Nako/)
+  assert.deepEqual(events.shown.at(-1), { state: "installing", version: "0.3.1", brew: true }, "the page shows it's updating until the app reopens")
   server.close()
 })
 
@@ -85,6 +88,38 @@ test("the Mac app stays up and says so when brew doesn't have the release yet", 
   assert.equal(events.quit, 0)
   assert.equal(notes.at(-1), "Couldn't update Nako: Homebrew doesn't have 0.3.1 yet")
   assert.ok(updater.pending, "the arrow stays, to try again later")
+  assert.equal(events.shown.at(-2).state, "installing")
+  assert.deepEqual(events.shown.at(-1), { state: "ready", version: "0.3.1", error: "Homebrew doesn't have 0.3.1 yet" }, "the updating screen goes away")
+  server.close()
+})
+
+test("clicking the version checks: up to date shows briefly, a newer release shows the update button", async () => {
+  const current = await portal("0.3.0")
+  const { updater, events } = macApp({ brewHas: "0.3.0" })
+  updater.origin = current.origin
+  await updater.check()
+  assert.deepEqual(events.shown, [{ state: "checking" }, { state: "latest" }])
+  await new Promise(r => setTimeout(r, 50))
+  assert.deepEqual(events.shown.at(-1), { state: "idle" }, "then the version shows again")
+  current.close()
+
+  const newer = await portal("0.3.1")
+  updater.origin = newer.origin
+  await updater.check()
+  assert.deepEqual(events.shown.slice(-2), [{ state: "checking" }, { state: "ready", version: "0.3.1" }])
+  assert.equal(events.quit, 0, "nothing installs until the update button is clicked")
+  newer.close()
+})
+
+test("a failed check says why, then goes back to the version", async () => {
+  const server = await portal("0.3.1")
+  const { updater, events } = macApp({ brewHas: "0.3.0" })
+  updater.origin = server.origin
+  updater.cookie = async () => null
+  await updater.check()
+  assert.deepEqual(events.shown, [{ state: "checking" }, { state: "error", error: "Sign in to the portal first" }])
+  await new Promise(r => setTimeout(r, 50))
+  assert.deepEqual(events.shown.at(-1), { state: "idle" })
   server.close()
 })
 
