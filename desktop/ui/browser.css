@@ -21,7 +21,7 @@
 [hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: var(--background); color: var(--text); font: 13px Inter, system-ui, sans-serif; user-select: none; }
 /* The pane's toolbar is also the window's title bar while the pane is open. */
-header { height: 40px; display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); }
+header { height: 40px; display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid var(--border); }
 button { width: 32px; height: 28px; flex: none; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 button:hover { background: var(--hover); color: var(--text); }
 button:focus-visible { outline: 2px solid rgb(244 114 182 / 60%); outline-offset: -2px; }
@@ -36,7 +36,7 @@ svg.caption { width: 10px; height: 10px; stroke-width: 1; stroke-linecap: butt; 
 #window { display: flex; gap: 2px; margin-left: 4px; }
 /* One chat's tabs, under the toolbar. */
 header:has(+ #tabs:not([hidden])) { border-bottom: 0; }
-#tabs { height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 6px 4px; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
+#tabs { height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 6px 4px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
 .tab { flex: 0 1 180px; min-width: 72px; height: 26px; display: flex; align-items: center; border-radius: 8px; color: var(--muted); }
 .tab:hover { background: var(--hover); }
 .tab[aria-current] { background: var(--hover); color: var(--text); }

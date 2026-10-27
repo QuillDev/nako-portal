@@ -1,0 +1,26 @@
+/* The browser toolbar's palette (browser.css), following the system. */
+:root {
+  color-scheme: dark;
+  --background: #09090b;
+  --muted: #8e8e99;
+  --border: rgb(255 255 255 / 7%);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --background: #fbfbfc;
+    --muted: #6b6b76;
+    --border: rgb(0 0 0 / 8%);
+  }
+}
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; user-select: none; }
+/* A line between the chat and the page, with a grip in the middle. */
+#strip { position: absolute; top: 0; bottom: 0; left: 0; width: 8px; display: grid; place-items: center; background: var(--background); cursor: col-resize; }
+#strip::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; transform: translateX(-50%); background: var(--border); }
+.grip { position: relative; width: 4px; height: 36px; border-radius: 2px; background: var(--muted); opacity: 0.6; }
+#strip:hover .grip, .dragging .grip { opacity: 1; }
+/* Fills the divider's old place while it's dragged, until the portal and the page take it. */
+#gap { position: absolute; top: 0; bottom: 0; width: 8px; background: var(--background); }
+[hidden] { display: none !important; }
+/* While dragged the page covers the window, so the cursor holds anywhere the line goes. */
+.dragging, .dragging * { cursor: col-resize; }

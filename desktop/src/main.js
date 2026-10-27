@@ -39,18 +39,22 @@ const icon = name => nativeImage.createFromPath(join(root, "icons", name))
 
 const settingsPath = () => join(app.getPath("userData"), "settings.json")
 
-function savedOrigin() {
+function settings() {
   try {
-    return ServerOrigin.parse(JSON.parse(readFileSync(settingsPath(), "utf8")).origin)
+    return JSON.parse(readFileSync(settingsPath(), "utf8")) ?? {}
   } catch {
-    return null
+    return {}
   }
 }
 
-function saveOrigin(origin) {
+function saveSettings(changes) {
   mkdirSync(dirname(settingsPath()), { recursive: true })
-  writeFileSync(settingsPath(), JSON.stringify({ origin: origin.value }, null, 2))
+  writeFileSync(settingsPath(), JSON.stringify({ ...settings(), ...changes }, null, 2))
 }
+
+const savedOrigin = () => ServerOrigin.parse(settings().origin)
+
+const saveOrigin = origin => saveSettings({ origin: origin.value })
 
 async function reachable(origin) {
   let me
@@ -94,6 +98,7 @@ const COMMANDS = {
   start: ["local"],
   connect: ["local"],
   pane: ["bar"],
+  pane_divider: ["divider"],
   pane_chat: ["portal"],
   pane_search: ["portal"],
   pane_toggle: ["portal"],
@@ -106,6 +111,7 @@ const COMMANDS = {
 function sender(event) {
   const url = event.senderFrame?.url ?? ""
   if (pane?.bar && event.sender === pane.bar.webContents) return url.startsWith("file:") ? "bar" : null
+  if (pane?.divider && event.sender === pane.divider.webContents) return url.startsWith("file:") ? "divider" : null
   if (event.sender !== portal?.webContents) return null
   if (url.startsWith("file:")) return "local"
   return onPortal(url) ? "portal" : null
@@ -136,6 +142,8 @@ ipcMain.handle("nako", async (event, command, args = {}) => {
     }
     case "pane":
       return pane.action(String(args.action), args.target == null ? null : String(args.target))
+    case "pane_divider":
+      return pane.drag(String(args.action), args.target == null ? null : String(args.target))
     case "pane_chat":
       return pane.chat(typeof args.chat === "string" ? args.chat : null)
     case "pane_search":
@@ -249,7 +257,10 @@ function createWindow() {
     external,
     barPage: join(root, "ui", "browser.html"),
     barPreload: join(root, "src", "preload.cjs"),
+    dividerPage: join(root, "ui", "divider.html"),
     userAgent: browserAgent(),
+    share: settings().paneShare,
+    keepShare: paneShare => saveSettings({ paneShare }),
     changed: tellPortal,
   })
   pane.layout()
