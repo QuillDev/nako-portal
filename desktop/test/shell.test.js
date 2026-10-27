@@ -9,6 +9,7 @@ import { backoff, parseAlert } from "../src/alerts.js"
 import { blake2b512, parsePublicKey, verifySignature } from "../src/minisign.js"
 import { ServerOrigin } from "../src/origin.js"
 import { begin } from "../src/signin.js"
+import { DIVIDER_WIDTH, dragRange, shareFor, split } from "../src/layout.js"
 import { LIVE_CHATS, Tabs, tabName } from "../src/tabs.js"
 import { announcement, due, newer, platformKey, reason } from "../src/update.js"
 
@@ -243,4 +244,36 @@ test("pages see Chrome without the Electron and app tokens, and Google's sign-in
   assert.match(signInAgent("darwin"), /^Mozilla\/5\.0 \(Macintosh; Intel Mac OS X 10\.15; rv:\d+\.0\) Gecko\/20100101 Firefox\/\d+\.0$/)
   assert.match(signInAgent("win32"), /\(Windows NT 10\.0; Win64; x64; rv:/)
   assert.match(signInAgent("linux"), /\(X11; Linux x86_64; rv:/)
+})
+
+test("the browser takes 45% of the window beside the chat until the divider is dragged", () => {
+  const [portal, x, pane] = split(1100, true)
+  assert.equal(pane, 495)
+  assert.equal(x, 1100 - 495)
+  assert.equal(portal + DIVIDER_WIDTH + pane, 1100)
+  assert.deepEqual(split(1100, false), [1100, 1100, 0])
+  // Too narrow to share: the browser gets the window.
+  assert.deepEqual(split(700, true), [0, 0, 700])
+})
+
+test("a dragged divider is kept as a share of the window and survives a resize", () => {
+  const share = shareFor(1200, 400)
+  const [portal, , pane] = split(1200, true, share)
+  assert.equal(portal + DIVIDER_WIDTH / 2, 400)
+  // The same share in a wider window keeps the same proportions.
+  const [, , wider] = split(1800, true, share)
+  assert.equal(wider, Math.round(1800 * share))
+  assert.ok(pane > 700)
+})
+
+test("the divider stops before either side gets too narrow", () => {
+  const [least, most] = dragRange(1200)
+  for (const x of [0, 50, least, most, 1190, 5000]) {
+    const [portal, , pane] = split(1200, true, shareFor(1200, x))
+    assert.ok(portal >= 380, `portal ${portal} at ${x}`)
+    assert.ok(pane >= 360, `pane ${pane} at ${x}`)
+  }
+  // A window just wide enough to share still fits both minimums.
+  const [portal, , pane] = split(760, true, 0.9)
+  assert.ok(portal >= 380 && pane >= 360)
 })
