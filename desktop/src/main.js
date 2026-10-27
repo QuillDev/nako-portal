@@ -349,8 +349,16 @@ const updater = new Updater({
   log,
 })
 
+// The macOS menu bar wants a one-colour template (it tints it for light/dark), at 16pt with an @2x copy.
+function trayIcon() {
+  if (!MAC) return icon("128x128.png").resize({ width: 32, height: 32 })
+  const image = icon("trayTemplate.png")
+  image.setTemplateImage(true)
+  return image
+}
+
 function createTray() {
-  tray = new Tray(icon(MAC ? "32x32.png" : "128x128.png").resize({ width: 32, height: 32 }))
+  tray = new Tray(trayIcon())
   tray.setToolTip("Nako")
   const items = [
     { label: "Open Nako", click: showMain },
