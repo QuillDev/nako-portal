@@ -183,6 +183,14 @@ class MainActivity : ComponentActivity() {
             runOnUiThread { pane?.chat(id?.takeIf { it.isNotEmpty() }) }
         }
 
+        /** A Ctrl- or Cmd-clicked link in the chat: the system browser, never the in-app one. */
+        @JavascriptInterface
+        fun openExternally(link: String?) {
+            val uri = link?.let(Uri::parse)?.takeIf { it.scheme == "http" || it.scheme == "https" } ?: return
+            if (origin?.opensInApp(link) == true) return
+            runOnUiThread { this@MainActivity.openExternally(uri) }
+        }
+
         @JavascriptInterface
         fun openNotificationSettings() {
             runOnUiThread {
@@ -441,6 +449,14 @@ class MainActivity : ComponentActivity() {
   }
   addEventListener("hashchange", send)
   send()
+  addEventListener("click", event => {
+    if (!(event.ctrlKey || event.metaKey) || !window.NakoApp.openExternally) return
+    const link = event.target.closest && event.target.closest("a[href]")
+    if (!link || !/^https?:$/.test(link.protocol) || link.origin === location.origin) return
+    event.preventDefault()
+    event.stopPropagation()
+    window.NakoApp.openExternally(link.href)
+  }, true)
 })()"""
         private val BACKGROUND = "#0D0A11".toColorInt()
         private val MUTED = "#B6A4B1".toColorInt()
