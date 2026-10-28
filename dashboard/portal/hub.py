@@ -18,6 +18,8 @@ backend:
   set_title / set_archived / set_pinned(session, value)
   set_yolo(chat)                            approvals off for one thread
   commands() -> [{name, description, skill}]
+  processes(session) -> [{id, command, cwd, running, started_at, exited_at, exit_code, ended, notify}]   background processes the chat started
+  process_log(session, id, lines) -> {lines, total_chars} or None   one of them's latest output
   sign_off(reply) -> str or None            a short line Nako says once a turn's reply is in
   sign_off_models() -> [{provider, label, models}]   what the sign-off can run on
   sign_off_model() -> {provider, model}     / set_sign_off_model(provider, model)
@@ -278,6 +280,15 @@ class Hub:
     async def commands(self):
         return await asyncio.to_thread(self.backend.commands)
 
+    async def processes(self, session):
+        """The chat's background processes, running first, each with a short label for its command."""
+        rows = await asyncio.to_thread(self.backend.processes, session)
+        rows = sorted(rows, key=lambda p: (not p["running"], -p["started_at"]))
+        return [{**p, "label": process_label(p["command"])} for p in rows]
+
+    async def process_log(self, session, proc_id, lines=200):
+        return await asyncio.to_thread(self.backend.process_log, session, proc_id, lines)
+
     async def command(self, session, text):
         """A `/command` is an ordinary message to the gateway, which runs it and answers in the chat."""
         await self.send(session, text)
@@ -377,6 +388,17 @@ class Hub:
         await self._publish(session, {"kind": "request.closed", "id": request_id})
         if not any(r["session"] == session for r in self.requests.values()) and self.status.get(session) == NEEDS_YOU:
             await self._set_status(session, WORKING)
+
+
+# Setup at the front of a background command (variables, cd, source) says nothing about what it runs.
+SETUP_STEP = re.compile(r"^(\w+=\S*|cd\s|source\s|export\s|\.\s)")
+
+
+def process_label(command):
+    """What a background command runs, for a one-line list: its first step past the setup."""
+    steps = [s.strip() for s in re.split(r";|&&|\n", command) if s.strip()]
+    doing = [s for s in steps if not SETUP_STEP.match(s)]
+    return " ".join((doing or steps or [command])[0].split())
 
 
 def page(messages, *, before=None, since=None, limit=PAGE_MESSAGES):

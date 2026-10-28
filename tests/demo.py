@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from aiohttp import web
@@ -90,6 +91,23 @@ async def main(port):
         ],
     )
     hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
+    # Background processes the CI chat's turns left running, as the gateway's process registry lists them.
+    now = time.time()
+    hermes.procs["20261024_090000_aaaaaa"] = [
+        {"id": "proc_1a2b3c4d5e6f", "command": "W=scripts/wait-for-ci.sh; bash $W acme/shop 412 60", "cwd": "/srv/shop", "running": True, "started_at": now - 14 * 60, "exited_at": None, "exit_code": None, "notify": True},
+        {"id": "proc_2b3c4d5e6f7a", "command": "cd web && npm run dev -- --port 5174", "cwd": "/srv/shop", "running": True, "started_at": now - 72 * 60, "exited_at": None, "exit_code": None, "notify": False},
+        {"id": "proc_3c4d5e6f7a8b", "command": "npx playwright test orders.spec.ts --repeat-each 50", "cwd": "/srv/shop", "running": False, "started_at": now - 30 * 60, "exited_at": now - 21 * 60, "exit_code": 0, "ended": "exited", "notify": True},
+    ]
+    hermes.proc_logs["proc_1a2b3c4d5e6f"] = [
+        line
+        for n in range(1, 15)
+        for line in (f"[{n:02d}:00] pr #412 @ 9f3c2e1: {min(n // 2 + 2, 7)}/7 checks done", f"[{n:02d}:00]   pending: {'e2e (shard 3), ' if n < 13 else ''}deploy-preview")
+    ]
+    hermes.proc_logs["proc_2b3c4d5e6f7a"] = [
+        "> shop-web@2.4.0 dev", "> vite --port 5174", "", "  VITE v7.1.3  ready in 412 ms", "", "  ➜  Local:   http://localhost:5174/", "  ➜  Network: use --host to expose",
+        "10:02:11 [vite] hmr update /src/routes/orders.tsx", "10:14:40 [vite] hmr update /src/routes/orders.tsx, /src/index.css", "10:31:05 [vite] page reload src/lib/seed.ts",
+    ]
+    hermes.proc_logs["proc_3c4d5e6f7a8b"] = ["Running 50 tests using 4 workers", *[f"  ✓  {n} orders.spec.ts:14:3 › lists seeded orders (1.{n % 9}s)" for n in range(1, 51)], "", "  50 passed (1.4m)"]
     hermes.add_session(
         "20261024_093000_d00001",
         "Notifications",

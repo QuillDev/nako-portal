@@ -129,7 +129,7 @@ export function Presence({
         <img alt="" className="size-full" src={`/nako/${now}.webp`} />
       </picture>
       {/* A thought bubble: raised beside her head, with two puffs trailing down to her. */}
-      <div className="relative mb-[50px] -ml-2 min-w-0 max-w-[17rem] rounded-3xl border bg-card px-4 py-2 text-sm">
+      <div className="relative mb-[50px] -ml-2 min-w-0 max-w-[17rem] rounded-3xl border bg-card px-4 py-2 text-sm" data-bubble>
         <span aria-hidden className="absolute -bottom-4 left-1 size-3 rounded-full border bg-card" />
         <span aria-hidden className="absolute bottom-[-29px] -left-1.5 size-[7px] rounded-full border bg-card" />
         <Swap id={tool ? `tool:${tool.id || tool.name}` : said}>

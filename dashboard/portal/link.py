@@ -37,6 +37,8 @@ BACKEND_SYNC = (
     "set_pinned",
     "set_yolo",
     "commands",
+    "processes",
+    "process_log",
     "sign_off",
     "sign_off_models",
     "sign_off_model",

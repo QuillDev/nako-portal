@@ -510,6 +510,57 @@ class HermesBackend:
         source = _source(chat, self.profile)
         enable_session_yolo(self._scoped(lambda: self.store.get_or_create_session(source, touch_activity=False).session_key))
 
+    def processes(self, session):
+        """Background processes a chat's turns started (terminal ``background=true``), from Hermes's
+        process registry, which lives in this gateway process. A portal thread's processes carry its
+        gateway key, ``<profile>:portal:dm:<chat>``; finished ones stay listed for a while."""
+        from tools.process_registry import process_registry
+
+        chat = self.chat_of(session)
+        if not chat:
+            return []
+        now = time.time()
+        out = []
+        for entry in process_registry.list_sessions():
+            proc = self._process(chat, entry["session_id"])
+            if proc is None:
+                continue
+            out.append(
+                {
+                    "id": entry["session_id"],
+                    "command": proc.command,
+                    "cwd": proc.cwd or "",
+                    "running": entry["status"] == "running",
+                    "started_at": proc.started_at or now - entry["uptime_seconds"],
+                    "exited_at": proc.exited_at or None,
+                    "exit_code": entry.get("exit_code"),
+                    "ended": proc.completion_reason if proc.exited else None,
+                    "notify": bool(proc.notify_on_complete or proc.watch_patterns),
+                }
+            )
+        return out
+
+    @staticmethod
+    def _process(chat, proc_id):
+        from tools.process_registry import process_registry
+
+        proc = process_registry.get(proc_id)
+        return proc if proc is not None and str(proc.session_key or "").endswith(f":portal:dm:{chat}") else None
+
+    def process_log(self, session, proc_id, lines=200):
+        """The last lines a chat's background process printed. Read from the buffer itself, not
+        ``read_log``: that marks a finished process's completion as seen, which would swallow the
+        notice Nako is waiting for."""
+        from tools.ansi_strip import strip_ansi
+
+        chat = self.chat_of(session)
+        proc = self._process(chat, proc_id) if chat else None
+        if proc is None:
+            return None
+        with proc._lock:
+            text = strip_ansi(proc.output_buffer)
+        return {"lines": text.splitlines()[-int(lines):], "total_chars": proc.total_output_chars}
+
     def commands(self):
         from agent.skill_commands import get_interactive_skill_commands
         from hermes_cli import commands as registry

@@ -134,6 +134,9 @@ class FakeGateway:
         self.profile_names = ["default", "work", "research"]
         self.profile = "default"
         self.profile_models = {}
+        # Background processes per thread, as the gateway's process registry lists them.
+        self.procs = {}
+        self.proc_logs = {}
 
     def add_session(self, sid, title, chat=None, messages=(), profile=None):
         self.sessions[sid] = {
@@ -272,6 +275,15 @@ class FakeGateway:
 
     def set_sign_off_model(self, provider, model):
         self.sign_off_route = {"provider": provider, "model": model}
+
+    def processes(self, sid):
+        return list(self.procs.get(sid, [])) if self._shown(sid) else []
+
+    def process_log(self, sid, proc_id, lines):
+        if not any(p["id"] == proc_id for p in self.processes(sid)):
+            return None
+        out = self.proc_logs.get(proc_id, [])
+        return {"lines": out[-lines:], "total_chars": sum(len(x) + 1 for x in out)}
 
     def commands(self):
         return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]
