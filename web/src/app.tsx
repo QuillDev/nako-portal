@@ -53,7 +53,7 @@ export function App() {
   return (
     <TooltipProvider>
       <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>
-        <main className="flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings portal={portal} /> : <Chat portal={portal} />}</main>
+        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
       <UpdatingScreen />
     </TooltipProvider>

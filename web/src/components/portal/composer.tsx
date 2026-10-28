@@ -1,5 +1,6 @@
 import { PaperclipIcon, SquareIcon } from "lucide-react"
-import { memo, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   PromptInput,
   PromptInputAttachment,
@@ -29,6 +30,55 @@ function AttachButton() {
     >
       <PaperclipIcon className="size-4" />
     </PromptInputButton>
+  )
+}
+
+const carriesFiles = (e: DragEvent) => Boolean(e.dataTransfer?.types.includes("Files"))
+
+// Files dragged anywhere over the chat attach to this composer (PromptInput's globalDrop adds them);
+// this only shows where they'll go while the drag is over the window.
+function DropZone({ anchor }: { anchor: React.RefObject<HTMLDivElement | null> }) {
+  const [target, setTarget] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    // dragenter/dragleave fire for every child crossed, so count them to know when the drag left the window.
+    let depth = 0
+    const show = (on: boolean) => setTarget(on ? (anchor.current?.closest("main") ?? null) : null)
+    const enter = (e: DragEvent) => {
+      if (!carriesFiles(e)) return
+      depth += 1
+      show(true)
+    }
+    const leave = (e: DragEvent) => {
+      if (!carriesFiles(e)) return
+      depth = Math.max(0, depth - 1)
+      if (!depth) show(false)
+    }
+    const end = () => {
+      depth = 0
+      show(false)
+    }
+    document.addEventListener("dragenter", enter)
+    document.addEventListener("dragleave", leave)
+    document.addEventListener("drop", end)
+    document.addEventListener("dragend", end)
+    return () => {
+      document.removeEventListener("dragenter", enter)
+      document.removeEventListener("dragleave", leave)
+      document.removeEventListener("drop", end)
+      document.removeEventListener("dragend", end)
+    }
+  }, [anchor])
+  if (!target) return null
+  return createPortal(
+    <div className="pointer-events-none absolute inset-0 z-40 grid place-items-center bg-background/85 p-3" data-drop-zone>
+      <div className="grid size-full place-items-center rounded-2xl border border-dashed border-foreground/20">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <PaperclipIcon className="size-6 text-muted-foreground" />
+          <p className="font-medium text-sm">Drop files to attach</p>
+        </div>
+      </div>
+    </div>,
+    target,
   )
 }
 
@@ -71,11 +121,13 @@ function ComposerBody({ draftKey, placeholder, tall, running, inChat, commands, 
   return (
     <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" ref={box}>
       <SlashMenu active={slash.active} onPicked={() => box.current?.querySelector("textarea")?.focus()} options={slash.options} pick={slash.pick} />
+      <DropZone anchor={box} />
       <PromptInputAttachments className="px-1 pt-0 pb-2">
         {file => <PromptInputAttachment data={file} />}
       </PromptInputAttachments>
       <PromptInput
         className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${tall ? TALL.group : ""}`}
+        globalDrop
         maxFileSize={MAX_FILE}
         multiple
         onError={e => setError(e.message)}
