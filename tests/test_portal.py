@@ -521,3 +521,32 @@ async def test_a_notification_shows_the_start_of_the_reply_as_plain_text():
     assert len(long) == 280 and long.endswith("…")
     assert _preview("MEDIA:/tmp/only.png") == ""
     assert _preview("the layout is here MEDIA:/tmp/a b.png, then done") == "the layout is here, then done"
+
+
+async def test_a_chat_lists_the_background_processes_its_turns_started(world):
+    sid = world.hermes.add_session("20261024_030303_cccccc", "watch ci", messages=[("user", "watch ci"), ("assistant", "watching")])
+    other = world.hermes.add_session("20261024_030304_dddddd", "other")
+    world.hermes.procs[sid] = [
+        {"id": "proc_a", "command": "sleep 5", "running": False, "started_at": 100.0, "exited_at": 105.0, "exit_code": 0, "notify": False},
+        {"id": "proc_b", "command": "P=scripts/poll.sh; cd /repo && bash $P 42 60", "running": True, "started_at": 200.0, "exited_at": None, "exit_code": None, "notify": True},
+    ]
+    path = f"/api/sessions/{sid}/processes"
+    assert (await world.http.get(world.url(path))).status == 401
+    await world.sign_up()
+
+    listed = await (await world.http.get(world.url(path))).json()
+    assert [(p["id"], p["running"], p["label"]) for p in listed] == [("proc_b", True, "bash $P 42 60"), ("proc_a", False, "sleep 5")]
+    assert await (await world.http.get(world.url(f"/api/sessions/{other}/processes"))).json() == []
+
+
+async def test_a_background_process_shows_its_latest_output_only_in_its_own_chat(world):
+    sid = world.hermes.add_session("20261024_040404_eeeeee", "build", messages=[("user", "build it")])
+    other = world.hermes.add_session("20261024_040405_ffffff", "other")
+    world.hermes.procs[sid] = [{"id": "proc_abc123", "command": "make", "running": True, "started_at": 1.0, "exited_at": None, "exit_code": None, "notify": True}]
+    world.hermes.proc_logs["proc_abc123"] = [f"line {n}" for n in range(1, 301)]
+    await world.sign_up()
+
+    log = await (await world.http.get(world.url(f"/api/sessions/{sid}/processes/proc_abc123/log"))).json()
+    assert (len(log["lines"]), log["lines"][-1]) == (200, "line 300")
+    assert (await world.http.get(world.url(f"/api/sessions/{other}/processes/proc_abc123/log"))).status == 404
+    assert (await world.http.get(world.url(f"/api/sessions/{sid}/processes/..%2Fx/log"))).status in (400, 404)

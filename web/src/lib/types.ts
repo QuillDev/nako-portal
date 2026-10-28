@@ -19,6 +19,21 @@ export type Command = { name: string; description: string; skill: boolean }
 // `at` is the transcript index it follows.
 export type CommandNote = { session: string; at: number; text: string; key: string }
 
+// A background process a chat's turn started (terminal background=true), from Hermes's process registry.
+export type BackgroundProcess = {
+  id: string
+  command: string
+  label: string
+  cwd?: string
+  running: boolean
+  // How it ended: exited, killed, lost, ...
+  ended?: string | null
+  started_at: number
+  exited_at: number | null
+  exit_code: number | null
+  notify: boolean
+}
+
 export type Status = "working" | "needs you" | "done" | "failed"
 
 export type HistoryMessage =

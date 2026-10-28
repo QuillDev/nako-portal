@@ -152,6 +152,8 @@ class Portal:
         r.add_post("/api/sessions/{session}/messages", self.send)
         r.add_post("/api/sessions/{session}/stop", self.stop)
         r.add_post("/api/sessions/{session}/command", self.command)
+        r.add_get("/api/sessions/{session}/processes", self.processes)
+        r.add_get("/api/sessions/{session}/processes/{process}/log", self.process_log)
         r.add_get("/api/commands", self.commands)
         r.add_post("/api/sessions/{session}/archive", self.archive)
         r.add_post("/api/sessions/{session}/pin", self.pin)
@@ -538,6 +540,22 @@ class Portal:
         self._require(request)
         hub = await self._hub()
         return web.json_response(await hub.commands())
+
+    async def processes(self, request):
+        self._require(request)
+        hub = await self._hub()
+        return web.json_response(await hub.processes(self._session(request)))
+
+    async def process_log(self, request):
+        self._require(request)
+        hub = await self._hub()
+        proc = request.match_info["process"]
+        if not re.fullmatch(r"proc_[0-9a-f]{1,32}", proc):
+            raise ValueError("bad process id")
+        log = await hub.process_log(self._session(request), proc, 200)
+        if log is None:
+            raise web.HTTPNotFound()
+        return web.json_response(log)
 
     async def command(self, request):
         self._require(request)

@@ -1,5 +1,5 @@
 import { GlobeIcon, MoreHorizontalIcon } from "lucide-react"
-import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { memo, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
 import { Button } from "@/components/ui/button"
@@ -12,15 +12,17 @@ import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
 import { Presence } from "./presence"
+import { Processes } from "./processes"
 import { Requests } from "./requests"
 import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
 
-// The open chat's title and ⋯ menu; unchanged while a turn streams in below it.
-const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions }: { title: string; session: string; pinned: boolean; actions: ChatActions }) {
+// The open chat's title, background processes and ⋯ menu; unchanged while a turn streams in below it.
+const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions, running }: { title: string; session: string; pinned: boolean; actions: ChatActions; running: boolean }) {
   const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
+      <Processes key={session} running={running} session={session} />
       {browser !== "none" && (
         <Button
           aria-label="Browser"
@@ -52,6 +54,26 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions }:
     </PageHeader>
   )
 })
+
+// Nako floats over the chat's bottom edge, so the transcript scrolls on behind her once you scroll
+// up. Only her bubble takes pointer events; the rest lets scrolls and selection through.
+function Dock({ children, onHeight }: { children: ReactNode; onHeight: (height: number) => void }) {
+  const box = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = box.current
+    if (!el) return
+    const measure = () => onHeight(el.offsetHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [onHeight])
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col [&_[data-bubble]]:pointer-events-auto" data-dock ref={box}>
+      {children}
+    </div>
+  )
+}
 
 // Stand-ins for turns that haven't loaded yet: a prompt on the right, a reply on the left.
 function TurnSkeletons({ count }: { count: number }) {
@@ -129,11 +151,17 @@ function OlderTurns({ portal }: { portal: Portal }) {
 // text rewrapping to a new width (the sidebar opening or closing). StickToBottom only follows content
 // growth, smoothly, so the first left the last lines hidden under the bubble and the second scrolled
 // the chat up and back down.
-function KeepBottom() {
+function KeepBottom({ dock }: { dock: number }) {
   const { scrollRef, contentRef, isAtBottom } = useStickToBottomContext()
   // StickToBottom's own view of it, which stays true while it eases toward new content.
   const following = useRef(isAtBottom)
   following.current = isAtBottom
+  // The dock over the chat grew or shrank (her bubble wrapping, the process list opening): its
+  // spacer moved the bottom, so stay on it in the same frame instead of easing there.
+  useLayoutEffect(() => {
+    const root = scrollRef.current
+    if (root && following.current) root.scrollTop = root.scrollHeight
+  }, [dock, scrollRef])
   useEffect(() => {
     const root = scrollRef.current
     const content = contentRef.current
@@ -199,6 +227,7 @@ export function Chat({ portal }: { portal: Portal }) {
   const session = c?.session
   const start = c?.start ?? 0
   const notes = useMemo(() => portal.notes.filter(n => n.session === session && n.at >= start).map(n => ({ ...n, at: n.at - start })), [portal.notes, session, start])
+  const [dock, setDock] = useState(0)
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
   if (!c)
     return (
@@ -210,7 +239,7 @@ export function Chat({ portal }: { portal: Portal }) {
     )
   return (
     <>
-      <ChatHeader actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} session={c.session} title={c.title || "chat"} />
+      <ChatHeader running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} session={c.session} title={c.title || "chat"} />
       {rename.dialog}
       {offline}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
@@ -219,7 +248,7 @@ export function Chat({ portal }: { portal: Portal }) {
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {loading && <TurnSkeletons count={3} />}
           {!loading && <OlderTurns portal={portal} />}
-          {!loading && <KeepBottom />}
+          {!loading && <KeepBottom dock={dock} />}
           {!loading && <Transcript
               live={portal.live}
               messages={c.messages}
@@ -230,18 +259,24 @@ export function Chat({ portal }: { portal: Portal }) {
             />}
           <Requests answer={portal.answer} requests={c.requests} />
           {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
+          {/* Room under the last message for the dock, so it can scroll clear of Nako. */}
+          <div aria-hidden className="-mt-6 shrink-0" style={{ height: dock }} />
         </ConversationContent>
-        <ConversationScrollButton />
+        <ConversationScrollButton style={{ bottom: dock + 16 }} />
+        {!loading && (
+          <Dock onHeight={setDock}>
+            {presence && !c.requests.length && (
+              <Presence
+                key={c.session}
+                live={portal.live}
+                outcome={portal.sessions.find(s => s.id === c.session)?.status}
+                running={c.running}
+                signOff={portal.signOff?.session === c.session ? portal.signOff.text : ""}
+              />
+            )}
+          </Dock>
+        )}
       </Conversation>
-      {presence && !loading && !c.requests.length && (
-        <Presence
-          key={c.session}
-          live={portal.live}
-          outcome={portal.sessions.find(s => s.id === c.session)?.status}
-          running={c.running}
-          signOff={portal.signOff?.session === c.session ? portal.signOff.text : ""}
-        />
-      )}
       <Composer
         command={portal.command}
         commands={portal.commands}
