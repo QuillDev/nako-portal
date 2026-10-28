@@ -134,7 +134,10 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
         ))}
       </nav>
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {portal.connected ? <AppVersion /> : <span className="px-2 text-muted-foreground text-xs">nako is offline</span>}
+        <div className="flex min-w-0 items-center">
+          <ConnectionDot connected={portal.connected} linked={portal.linked} />
+          {portal.connected ? <AppVersion /> : <span className="px-2 text-muted-foreground text-xs">nako is offline</span>}
+        </div>
         <div className="flex items-center">
           <Button aria-label="Settings" onClick={() => go("#/settings")} size="icon" title="Settings" variant="ghost">
             <SettingsIcon />
@@ -144,6 +147,12 @@ export function Sidebar({ portal, className }: { portal: Portal; className?: str
       {rename.dialog}
     </aside>
   )
+}
+
+/** Green while the portal and nako are both reachable, amber while this page reconnects to the portal, red while nako is offline. */
+function ConnectionDot({ connected, linked }: { connected: boolean; linked: boolean }) {
+  const [color, label] = !connected ? ["bg-destructive", "nako is offline"] : !linked ? ["bg-amber-500 animate-pulse", "reconnecting"] : ["bg-emerald-500", "connected"]
+  return <span aria-label={label} className={cn("ml-2 size-2 shrink-0 rounded-full", color)} role="status" title={label} />
 }
 
 const CHECK_LABEL = { checking: "checking…", latest: "up to date", error: "couldn't check" } as const

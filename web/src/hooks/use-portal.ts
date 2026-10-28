@@ -71,6 +71,8 @@ export function usePortal() {
   const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [connected, setConnected] = useState(true)
+  // Whether this page's socket to the portal is up; while it's down nothing live arrives.
+  const [linked, setLinked] = useState(true)
   const [error, setError] = useState("")
   const [commands, setCommands] = useState<Command[]>([])
   const [notes, setNotes] = useState<CommandNote[]>([])
@@ -246,11 +248,13 @@ export function usePortal() {
     socketRef.current = socket
     socket.onopen = () => {
       retryRef.current = 1000
+      setLinked(true)
       socket.send(JSON.stringify({ watch: currentRef.current?.session ?? null, looking: looking() }))
     }
     socket.onmessage = event => onFrameRef.current(JSON.parse(event.data))
     socket.onclose = () => {
       socketRef.current = null
+      setLinked(false)
       setTimeout(() => meRef.current?.signed_in && connect(), retryRef.current)
       retryRef.current = Math.min(retryRef.current * 2, 15000)
     }
@@ -444,7 +448,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, route, current, live, connected, error, setError, send, stop, answer, rename, pin, archive, loadOlder, prefetch, commands, command, notes, signOff }
+  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, loadOlder, prefetch, commands, command, notes, signOff }
 }
 
 export type Portal = ReturnType<typeof usePortal>
