@@ -231,7 +231,12 @@ export function Transcript({
   const latest = useRef(stopScroll)
   latest.current = stopScroll
   const [stop] = useState(() => () => latest.current())
-  const written = live?.messages.filter(m => m.text.trim()) ?? []
+  // A message the turn already saved is in the transcript; a chat reread mid-turn has both.
+  const saved = useMemo(() => {
+    const turn = messages.slice(messages.findLastIndex(m => m.role === "user") + 1)
+    return new Set(turn.filter(m => m.role === "assistant").map(m => m.text.trim()))
+  }, [messages])
+  const written = live?.messages.filter(m => m.text.trim() && !saved.has(m.text.trim())) ?? []
   // Quiet: only text she's written since her last tool call, which may be the reply.
   const pending = quiet ? written.filter(m => (m.after ?? 0) >= (live?.tools.length ?? 0)).slice(-1) : written
   return (

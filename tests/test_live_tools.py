@@ -66,6 +66,70 @@ async def test_tool_calls_in_a_running_turn_reach_the_open_chat_live(world):
     await ws.close()
 
 
+# What Hermes puts before a request it restates after compacting a chat mid-turn.
+RESTATED = "[STILL IN PROGRESS — this is the active request, restated after the compaction boundary because it was not finished yet. Continue it; do not start over.]"
+
+
+async def test_a_chat_opened_after_a_mid_turn_compaction_keeps_the_conversation_and_the_turns_progress(world):
+    sid = world.hermes.add_session(
+        "20261025_121212_eeeeee", "premio", messages=[("user", "list the sftp folders"), ("assistant", "13 folders, mostly order files")]
+    )
+    plugin, hooks = plugin_hooks()
+    plugin._LIVE_TOOLS.update(link=world.client, loop=asyncio.get_running_loop())
+    compacted, release = asyncio.Event(), asyncio.Event()
+
+    async def turn(chat, session):
+        await world.hub.turn_started(chat)
+        await world.hub.outgoing(chat, "progress-1", "pulling a few samples first")
+        world.hermes._row(session, "assistant", "pulling a few samples first")
+        await asyncio.to_thread(hooks["pre_tool_call"], tool_name="process", args={"action": "wait"}, session_id=session, tool_call_id="call-1")
+        # Hermes compacts the context: the display read keeps every row and adds the restated request.
+        world.hermes._row(session, "user", RESTATED + "\nyes, push it to the wms")
+        compacted.set()
+        await release.wait()
+        await asyncio.to_thread(hooks["post_tool_call"], tool_name="process", args={}, session_id=session, tool_call_id="call-1")
+        await asyncio.to_thread(hooks["pre_tool_call"], tool_name="terminal", args={"command": "bun test"}, session_id=session, tool_call_id="call-2")
+        world.hermes._row(session, "assistant", "pushed")
+        await world.hub.turn_finished(chat, "success")
+
+    world.hermes._turn = turn
+    await world.sign_up()
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "yes, push it to the wms"}, headers={"Origin": ORIGIN})
+    await asyncio.wait_for(compacted.wait(), 5)
+
+    # A tab that opens the chat now sees the whole conversation, the request once as sent, and
+    # the turn's progress so far: the line it wrote and the call it's waiting on.
+    async def opened_with_tool():
+        while True:
+            opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+            if opened.get("live", {}).get("tools"):
+                return opened
+            await asyncio.sleep(0.02)
+
+    opened = await asyncio.wait_for(opened_with_tool(), 5)
+    assert [(m["role"], m["text"]) for m in opened["messages"]] == [
+        ("user", "list the sftp folders"),
+        ("assistant", "13 folders, mostly order files"),
+        ("user", "yes, push it to the wms"),
+        ("assistant", "pulling a few samples first"),
+    ]
+    assert opened["running"] is True
+    assert opened["live"]["messages"] == [{"id": "progress-1", "text": "pulling a few samples first", "after": 0}]
+    assert [(t["id"], t["name"], t["state"]) for t in opened["live"]["tools"]] == [("call-1", "process", "running")]
+
+    # And the rest of the turn keeps streaming to it.
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await ws.send_json({"watch": sid})
+    await asyncio.sleep(0.05)
+    release.set()
+    calls = [await next_message(ws, lambda m: m.get("type") == "tool") for _ in range(2)]
+    assert [(c["payload"]["id"], c["payload"]["state"]) for c in calls] == [("call-1", "done"), ("call-2", "running")]
+    await next_message(ws, lambda m: m.get("type") == "message.complete")
+    after = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    assert "live" not in after and after["messages"][-1]["text"] == "pushed"
+    await ws.close()
+
+
 async def test_a_finished_reply_gets_nakos_sign_off_and_a_failed_one_is_just_skipped(world):
     sid = world.hermes.add_session("20261025_111111_dddddd", "rename", messages=[("user", "rename the job")])
     await world.sign_up()
