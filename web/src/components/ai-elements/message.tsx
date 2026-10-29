@@ -20,9 +20,10 @@ import {
   XIcon,
 } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
-import { createContext, memo, useContext, useEffect, useState } from "react";
+import { createContext, memo, useContext, useEffect, useRef, useState } from "react";
 import type { Streamdown } from "streamdown";
 import { useMarkdown } from "@/lib/markdown";
+import { TableMenus } from "@/components/portal/table-menu";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -311,6 +312,7 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => {
     const markdown = useMarkdown();
+    const root = useRef<HTMLDivElement>(null);
     const classes = cn(
       "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
       className
@@ -318,7 +320,12 @@ export const MessageResponse = memo(
     if (!markdown) {
       return <div className={cn(classes, "whitespace-pre-wrap")}>{props.children}</div>;
     }
-    return <markdown.Streamdown className={classes} {...props} />;
+    return (
+      <div className="contents" ref={root}>
+        <markdown.Streamdown className={classes} {...props} />
+        <TableMenus root={root} />
+      </div>
+    );
   },
   (prevProps, nextProps) => prevProps.children === nextProps.children
 );

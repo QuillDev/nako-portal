@@ -160,6 +160,25 @@
   right: 0.375rem;
   z-index: 1;
 }
+/* The toolbar sits over the header row, so the last header cell keeps clear of it. On a phone the
+   three buttons fold into one ⋯ menu (components/portal/table-menu.tsx). */
+[data-streamdown="table-wrapper"]:not(.h-full) th:last-child {
+  padding-right: 6rem;
+}
+[data-table-menu] {
+  display: none;
+}
+@media (max-width: 767.98px) {
+  [data-streamdown="table-wrapper"]:not(.h-full) th:last-child {
+    padding-right: 2.5rem;
+  }
+  [data-streamdown="table-wrapper"]:not(.h-full) > div:first-child > :not([data-table-menu]) {
+    display: none;
+  }
+  [data-table-menu] {
+    display: flex;
+  }
+}
 [data-streamdown="table-wrapper"]:not(.h-full) > div:first-child .absolute {
   top: 50%;
   right: 100%;
