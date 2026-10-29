@@ -38,7 +38,8 @@ export type Status = "working" | "needs you" | "done" | "failed"
 
 export type HistoryMessage =
   // images: local previews for a turn that is still being sent
-  | { role: "user"; text: string; row_id?: string | number; images?: string[] }
+  // steered: sent while a turn was running, so Hermes fed it into that turn
+  | { role: "user"; text: string; row_id?: string | number; images?: string[]; steered?: boolean }
   // label: the cron job that posted it, when it's a cron post
   | { role: "assistant"; text: string; reasoning?: string; label?: string; row_id?: string | number }
   | { role: "tool"; name: string; context?: string; tool_call_id?: string }

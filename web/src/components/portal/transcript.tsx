@@ -1,4 +1,4 @@
-import { CheckIcon, FileIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
+import { CheckIcon, CornerDownLeftIcon, FileIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
 import { createContext, memo, useContext, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
@@ -14,7 +14,7 @@ import type { HistoryMessage, Live } from "@/lib/types"
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
 
 type Block =
-  | { kind: "user"; key: string; text: string; images?: string[] }
+  | { kind: "user"; key: string; text: string; images?: string[]; steered?: boolean }
   | { kind: "assistant"; key: string; text: string; reasoning?: string; label?: string }
   | { kind: "tools"; key: string; steps: Step[] }
   | { kind: "note"; key: string; text: string }
@@ -63,7 +63,7 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
     if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !ends[i]))) return
     flush()
     const key = String(m.row_id ?? i)
-    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
+    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images, steered: m.steered } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
   })
   notesAt(messages.length)
   flush()
@@ -181,7 +181,7 @@ function Files({ urls }: { urls: Item[] }) {
 
 const named = (path: string) => path.split("/").pop() || path
 
-const User = memo(function User({ session, text, images }: { session: string; text: string; images?: string[] }) {
+const User = memo(function User({ session, text, images, steered }: { session: string; text: string; images?: string[]; steered?: boolean }) {
   const turn = splitUserTurn(text)
   const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => ({ url: fileUrl(session, path), name: named(path), path }))]
   return (
@@ -190,6 +190,12 @@ const User = memo(function User({ session, text, images }: { session: string; te
         <Files urls={shown} />
         {turn.body}
       </MessageContent>
+      {steered && (
+        <p className="text-muted-foreground ml-auto flex items-center gap-1 text-xs">
+          <CornerDownLeftIcon aria-hidden className="size-3" />
+          steered
+        </p>
+      )}
     </Message>
   )
 })
@@ -243,7 +249,7 @@ export function Transcript({
     <StopScroll.Provider value={stop}>
       {shown.map(b =>
         b.kind === "user" ? (
-          <User images={b.images} key={b.key} session={session} text={b.text} />
+          <User images={b.images} key={b.key} session={session} steered={b.steered} text={b.text} />
         ) : b.kind === "assistant" ? (
           <Assistant key={b.key} label={b.label} reasoning={b.reasoning} session={session} text={b.text} />
         ) : b.kind === "note" ? (
