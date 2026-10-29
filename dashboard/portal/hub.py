@@ -56,6 +56,9 @@ CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
 # came from; Hermes keeps that note in the saved text, but the user never typed it. Several messages
 # sent during one turn arrive joined, each with its own note at the start of a line.
 STEER_ORIGIN = re.compile(r"^Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\n*", re.M)
+# When Hermes compacts a chat mid-turn it restates the unfinished request after the summary, under
+# this header, so the model carries on. The person sent that message once, earlier in the turn.
+RESTATED = re.compile(r"^\[STILL IN PROGRESS\b[^\]]*\]\s*")
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 # What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
@@ -86,6 +89,9 @@ class Hub:
         # The notification chats the last listing found; None until the first listing.
         self.inboxes = None
         self.last_text = {}
+        # What a running turn has shown so far (its messages and tool calls), so a chat opened
+        # mid-turn picks up where the live view is instead of starting blank.
+        self.progress = {}
         # Whether a gateway is there to run turns. The standalone server's link keeps this.
         self.connected = True
         # Whether a finished turn gets Nako's sign-off line (Settings; the server keeps it).
@@ -199,8 +205,9 @@ class Hub:
         return {
             "session": session,
             "title": self.titles[session],
-            "messages": [_without_sign_off(_as_notification(_without_steer_origin(m))) for m in thread["messages"] if _is_shown(m)],
+            "messages": _without_restated([_without_sign_off(_as_notification(_without_steer_origin(m))) for m in thread["messages"] if _is_shown(m)]),
             "running": session in self.running,
+            **({"live": _progress_view(self.progress[session])} if session in self.running and session in self.progress else {}),
             "status": self.status.get(session),
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
         }
@@ -304,6 +311,7 @@ class Hub:
         if session is None:
             return
         self.running.add(session)
+        self.progress[session] = {"messages": {}, "tools": {}}
         await self._set_status(session, WORKING)
         await self._event(session, "message.start")
 
@@ -312,6 +320,7 @@ class Hub:
         if session is None:
             return
         self.running.discard(session)
+        self.progress.pop(session, None)
         failed = outcome == "failure"
         if not any(r["session"] == session for r in self.requests.values()):
             await self._set_status(session, FAILED if failed else DONE)
@@ -351,7 +360,11 @@ class Hub:
         live view; the saved transcript draws the finished calls itself."""
         if session not in self.running:
             return
-        await self._event(session, "tool", {"id": call_id, "name": name, "context": context, "state": state})
+        tool = {"id": call_id, "name": name, "context": context, "state": state}
+        if session in self.progress:
+            tools = self.progress[session]["tools"]
+            tools[call_id or f"#{len(tools)}"] = tool
+        await self._event(session, "tool", tool)
 
     async def outgoing(self, chat, message_id, text):
         """A message the gateway sent or edited. Inside a turn it shows live until the reply is saved;
@@ -360,7 +373,14 @@ class Hub:
         if session is None:
             return
         self.last_text[session] = text
-        await self._event(session, "gateway.message", {"id": message_id, "text": split_sign_off(text)[0]})
+        shown = split_sign_off(text)[0]
+        if session in self.running and session in self.progress:
+            # `after`: how many tool calls had started when its text last changed, as the app counts.
+            progress = self.progress[session]
+            was = progress["messages"].get(message_id)
+            after = was["after"] if was and was["text"] == shown else len(progress["tools"])
+            progress["messages"][message_id] = {"id": message_id, "text": shown, "after": after}
+        await self._event(session, "gateway.message", {"id": message_id, "text": shown})
         if session in self.running:
             return
         self.notify(session, self.titles.get(session) or "Nako", _preview(text) or "new message")
@@ -471,6 +491,27 @@ def _without_steer_origin(message):
         return message
     text, notes = STEER_ORIGIN.subn("", message["text"])
     return {**message, "text": text.strip()} if notes else message
+
+
+def _without_restated(messages):
+    """Drop Hermes's mid-turn restatement of a request after a compaction: the person's own
+    message is already in the transcript above it. Without that original (an older Hermes that
+    doesn't hand back compacted rows), show the message as they sent it, without the header."""
+    out = []
+    for message in messages:
+        match = RESTATED.match(message.get("text") or "") if message.get("role") == "user" else None
+        if match:
+            text = message["text"][match.end():].strip()
+            sent = next((m for m in reversed(out) if m.get("role") == "user"), None)
+            if sent is not None and (sent.get("text") or "").strip() == text:
+                continue
+            message = {**message, "text": text}
+        out.append(message)
+    return out
+
+
+def _progress_view(progress):
+    return {"messages": list(progress["messages"].values()), "tools": list(progress["tools"].values())}
 
 
 def _as_notification(message):

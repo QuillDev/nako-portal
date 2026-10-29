@@ -64,6 +64,14 @@ function reuse(shown: HistoryMessage[], fresh: HistoryMessage[]) {
   return changed ? out : shown
 }
 
+// The running turn as the server saw it, plus anything that streamed in since the read started.
+function caughtUp(live: Live | null, seen: Live | undefined): Live | null {
+  if (!seen) return live
+  if (!live) return seen
+  const merge = <T extends { id: string }>(old: T[], now: T[]) => [...old.filter(o => !now.some(n => n.id && n.id === o.id)), ...now]
+  return { messages: merge(seen.messages, live.messages), tools: merge(seen.tools, live.tools) }
+}
+
 export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
@@ -131,7 +139,9 @@ export function usePortal() {
         const messages = c.loading ? opened.messages : c.start === start ? reuse(c.messages, [...kept, ...opened.messages]) : [...kept, ...opened.messages]
         return { ...opened, start, messages, loading: false, loadingOlder: c.loadingOlder }
       })
-      if (!opened.running) setLive(null)
+      // A chat opened mid-turn (or reread after the tab slept) carries on from what the turn has
+      // shown so far; its own live view, when it has one, is already as far along.
+      if (currentRef.current?.session === session) setLive(l => (opened.running ? caughtUp(l, opened.live) : null))
       // Opening the notifications chat marks its posts seen on the server too.
       setSessions(rows => (rows.some(r => r.id === session && r.unread) ? rows.map(r => (r.id === session ? { ...r, unread: false } : r)) : rows))
     } catch (e) {

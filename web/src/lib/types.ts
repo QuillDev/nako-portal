@@ -64,6 +64,8 @@ export type OpenSession = {
   running: boolean
   status?: Status | null
   requests: PortalRequest[]
+  // What the running turn has shown so far, for a chat opened mid-turn.
+  live?: Live
 }
 
 // What the gateway has sent in a chat and not saved yet: a reply streaming in (each edit

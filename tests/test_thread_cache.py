@@ -18,17 +18,25 @@ class Store:
         self.rewrites = 0
 
     def add(self, role, content):
-        self.rows.append({"id": len(self.rows) + 1, "role": role, "content": content})
+        self.rows.append({"id": len(self.rows) + 1, "role": role, "content": content, "compacted": False})
+
+    def compact(self, summary):
+        """Hermes's in-place compaction: the rows so far stay stored for display only, and the
+        live context continues from a summary."""
+        for row in self.rows:
+            row["compacted"] = True
+        self.add("user", summary)
 
     def rewrite(self, index, content):
         self.rows[index]["content"] = content
         self.rewrites += 1
 
     def conversation_revision(self, session, include_ancestors=False):
-        return ((session,), len(self.rows), self.rows[-1]["id"] if self.rows else 0, self.rewrites)
+        live = [row for row in self.rows if not row["compacted"]]
+        return ((session,), len(live), live[-1]["id"] if live else 0, self.rewrites)
 
-    def get_messages_as_conversation(self, session, include_ancestors=False, include_row_ids=False):
-        return [dict(row) for row in self.rows]
+    def get_messages_as_conversation(self, session, include_ancestors=False, include_row_ids=False, include_compacted=False):
+        return [dict(row) for row in self.rows if include_compacted or not row["compacted"]]
 
     def get_session_title(self, session):
         return "a chat"
@@ -74,6 +82,16 @@ def test_a_transcript_reads_fresh_after_every_kind_of_change(backend):
     # An undo drops rows.
     store.rows.pop()
     assert texts(backend) == ["fix the build, please", "on it"]
+
+
+def test_a_compacted_chat_still_reads_as_the_whole_conversation(backend):
+    backend, store = backend
+    store.add("user", "fix the build")
+    store.add("assistant", "fixed")
+    store.add("user", "now the docs")
+    assert texts(backend) == ["fix the build", "fixed", "now the docs"]
+    store.compact("summary of the chat so far")
+    assert texts(backend) == ["fix the build", "fixed", "now the docs", "summary of the chat so far"]
 
 
 def test_a_chat_that_isnt_a_portal_thread_reads_as_missing(backend):

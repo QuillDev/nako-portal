@@ -313,7 +313,12 @@ class HermesBackend:
             if revision is not None and cached is not None and cached[0] == revision:
                 messages = cached[1]
             else:
-                history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
+                # The display read, as Hermes's own clients do it: after a compaction the turns it
+                # summarised are still the person's conversation, not just the summary and the tail.
+                try:
+                    history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
+                except TypeError:  # a Hermes from before display reads
+                    history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
                 messages = _history_to_messages(history, profile_home=home)
                 if revision is not None:
                     with self.threads_lock:
