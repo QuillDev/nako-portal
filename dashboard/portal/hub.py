@@ -63,7 +63,7 @@ RESTATED = re.compile(r"^\[STILL IN PROGRESS\b[^\]]*\]\s*")
 PAGE_MESSAGES = 30
 # What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
 # tool arguments and display metadata, which made a page of a long chat ~170 KB instead of ~10 KB.
-SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "name", "context", "tool_call_id")
+SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "steered", "name", "context", "tool_call_id")
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
 SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
@@ -489,6 +489,8 @@ def _preview(text, limit=PREVIEW_CHARS):
 def _without_steer_origin(message):
     if message.get("role") != "user" or not message.get("text"):
         return message
+    if message.get("display_kind") == "steer":
+        message = {**message, "steered": True}
     text, notes = STEER_ORIGIN.subn("", message["text"])
     return {**message, "text": text.strip()} if notes else message
 

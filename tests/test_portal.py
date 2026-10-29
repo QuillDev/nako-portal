@@ -429,6 +429,20 @@ async def test_a_message_sent_mid_turn_shows_without_the_origin_note_hermes_adds
     ]
 
 
+async def test_a_message_steered_into_a_running_turn_says_so(world):
+    sid = world.hermes.add_session("20261024_090909_cccccc", "Bug", messages=[("user", "look at this")])
+    world.hermes._row(sid, "user", "check the logs too", display_kind="steer")
+    world.hermes._row(sid, "assistant", "on it")
+    await world.sign_up()
+
+    opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    assert [(m["text"], m.get("steered", False)) for m in opened["messages"]] == [
+        ("look at this", False),
+        ("check the logs too", True),
+        ("on it", False),
+    ]
+
+
 async def test_cron_posts_read_as_nakos_messages_in_the_notifications_thread(world):
     inbox = world.hermes.add_session(
         "20261024_040404_dddddd",
