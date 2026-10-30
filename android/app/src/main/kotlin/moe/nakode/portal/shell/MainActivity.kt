@@ -43,6 +43,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
 import androidx.core.graphics.toColorInt
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
@@ -84,7 +85,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        root = FrameLayout(this).apply { setBackgroundColor(BACKGROUND) }
+        root = FrameLayout(this).apply { setBackgroundColor(getColor(R.color.background)) }
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout() or WindowInsetsCompat.Type.ime(),
@@ -215,6 +216,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        /** The portal switched between light and dark: the bar strips and system bar icons follow it. */
+        @JavascriptInterface
+        fun look(light: Boolean) {
+            runOnUiThread { showLook(light) }
+        }
+
         @JavascriptInterface
         fun openNotificationSettings() {
             runOnUiThread {
@@ -282,7 +289,7 @@ class MainActivity : ComponentActivity() {
         closePane()
         root.removeAllViews()
         val web = WebView(this).apply {
-            setBackgroundColor(BACKGROUND)
+            setBackgroundColor(getColor(R.color.background))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
@@ -377,12 +384,26 @@ class MainActivity : ComponentActivity() {
             .onFailure { Toast.makeText(this, "No app here can open ${uri.host}", Toast.LENGTH_LONG).show() }
     }
 
+    private fun showLook(light: Boolean) {
+        val color = if (light) PAGE_LIGHT else BACKGROUND
+        root.setBackgroundColor(color)
+        webView?.setBackgroundColor(color)
+        WindowCompat.getInsetsController(window, root).apply {
+            isAppearanceLightStatusBars = light
+            isAppearanceLightNavigationBars = light
+        }
+    }
+
+    /** The connect and offline screens stay dark, whatever the system theme. */
+    private val dark by lazy { android.view.ContextThemeWrapper(this, android.R.style.Theme_Material_NoActionBar) }
+
     private fun showServerPrompt(error: String?) {
         closePane()
         webView?.destroy()
         webView = null
         root.removeAllViews()
-        val input = EditText(this).apply {
+        showLook(false)
+        val input = EditText(dark).apply {
             hint = "portal.example.com"
             setText(origin?.value.orEmpty())
             setTextColor(Color.WHITE)
@@ -392,7 +413,7 @@ class MainActivity : ComponentActivity() {
             imeOptions = EditorInfo.IME_ACTION_GO
         }
         val message = label(error ?: "Portal address", if (error == null) MUTED else ERROR)
-        val connect = Button(this).apply { text = "Connect" }
+        val connect = Button(dark).apply { text = "Connect" }
         val submit = {
             val parsed = ServerOrigin.parse(input.text.toString())
             if (parsed == null) {
@@ -416,11 +437,12 @@ class MainActivity : ComponentActivity() {
         closePane()
         root.removeAllViews()
         webView?.stopLoading()
-        val retry = Button(this).apply {
+        showLook(false)
+        val retry = Button(dark).apply {
             text = "Retry"
             setOnClickListener { showWebApp(server, null) }
         }
-        val change = Button(this).apply {
+        val change = Button(dark).apply {
             text = "Change address"
             setOnClickListener { showServerPrompt(null) }
         }
@@ -441,15 +463,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun label(text: String, color: Int, size: Float = 15f) = TextView(this).apply {
+    private fun label(text: String, color: Int, size: Float = 15f) = TextView(dark).apply {
         this.text = text
         setTextColor(color)
         textSize = size
         gravity = Gravity.CENTER
     }
 
-    private fun column(vararg views: View) = LinearLayout(this).apply {
+    private fun column(vararg views: View) = LinearLayout(dark).apply {
         orientation = LinearLayout.VERTICAL
+        setBackgroundColor(BACKGROUND)
         gravity = Gravity.CENTER
         val pad = (24 * resources.displayMetrics.density).toInt()
         setPadding(pad, pad, pad, pad)
@@ -477,6 +500,11 @@ class MainActivity : ComponentActivity() {
   }
   addEventListener("hashchange", send)
   send()
+  if (window.NakoApp.look) {
+    const look = () => window.NakoApp.look(document.documentElement.classList.contains("light"))
+    new MutationObserver(look).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
+    look()
+  }
   addEventListener("click", event => {
     if (!(event.ctrlKey || event.metaKey) || !window.NakoApp.openExternally) return
     const link = event.target.closest && event.target.closest("a[href]")
@@ -487,6 +515,8 @@ class MainActivity : ComponentActivity() {
   }, true)
 })()"""
         private val BACKGROUND = "#0D0A11".toColorInt()
+        /** The portal's light page colour, for the strips beside it. */
+        private val PAGE_LIGHT = "#FBFBFC".toColorInt()
         private val MUTED = "#B6A4B1".toColorInt()
         private val ERROR = "#F87171".toColorInt()
     }

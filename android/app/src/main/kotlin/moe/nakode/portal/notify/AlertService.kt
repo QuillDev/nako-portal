@@ -43,6 +43,7 @@ class AlertService : Service() {
     private val ids = AtomicInteger(100)
     private val statuses = Statuses()
     private var bubble: Bubble? = null
+    private var night = 0
     private val handler by lazy { android.os.Handler(mainLooper) }
     private val network = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -67,12 +68,22 @@ class AlertService : Service() {
         ServiceCompat.startForeground(this, 1, ongoing, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(network)
         running = this
+        night = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
         refreshBubble()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
+        val night = newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK
         super.onConfigurationChanged(newConfig)
-        bubble?.screenChanged()
+        if (night != this.night) {
+            // The panel's page reads light or dark from its theme when it's made: make it again.
+            this.night = night
+            bubble?.destroy()
+            bubble = null
+            refreshBubble()
+        } else {
+            bubble?.screenChanged()
+        }
     }
 
     /** Nako's floating sticker: on when switched on and allowed, and only while the app itself is out of sight. */
@@ -82,7 +93,7 @@ class AlertService : Service() {
             bubble?.hide()
             return
         }
-        val current = bubble ?: Bubble(this, server).also { bubble = it }
+        val current = bubble ?: Bubble(android.view.ContextThemeWrapper(this, R.style.Theme_Nako), server).also { bubble = it }
         current.mood(statuses.mood)
         current.show()
     }
