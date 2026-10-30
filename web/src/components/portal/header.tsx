@@ -1,6 +1,7 @@
-import { ChevronRightIcon, MenuIcon } from "lucide-react"
+import { ChevronRightIcon, ExternalLinkIcon, MenuIcon, XIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
+import { closeBubble, inBubble, openBubbleInApp } from "@/lib/bubble"
 import { useWindowControls, windowAction } from "@/lib/desktop-window"
 import { useDrawer } from "./drawer"
 
@@ -21,7 +22,22 @@ export function PageHeader({ title, children }: { title: string; children?: Reac
       <h2 className="min-w-0 flex-1 truncate px-2 font-medium text-sm leading-9">{title}</h2>
       {children}
       {windowControls && <WindowControls />}
+      {inBubble && <BubbleControls />}
     </header>
+  )
+}
+
+/** The floating panel's own buttons: open this page in the full app, or put the panel away. */
+function BubbleControls() {
+  return (
+    <div className="flex items-center">
+      <Button aria-label="Open in app" className="text-muted-foreground" onClick={openBubbleInApp} size="icon" variant="ghost">
+        <ExternalLinkIcon />
+      </Button>
+      <Button aria-label="Close" className="text-muted-foreground" onClick={closeBubble} size="icon" variant="ghost">
+        <XIcon />
+      </Button>
+    </div>
   )
 }
 

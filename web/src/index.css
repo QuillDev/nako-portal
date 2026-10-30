@@ -284,3 +284,8 @@
     animation-duration: 1ms;
   }
 }
+
+/* The Android app's floating panel: the same page, set a size smaller so more of the chat fits. */
+html.bubble {
+  font-size: 14px;
+}

@@ -1,7 +1,12 @@
 import { api, unb64url } from "./api"
 
 // The Android app's own alerts (a native notification service), exposed by its shell.
-type AppBridge = { notifications(): "on" | "off"; openNotificationSettings(): void }
+type AppBridge = {
+  notifications(): "on" | "off"
+  openNotificationSettings(): void
+  bubble?(): "on" | "off"
+  setBubble?(on: boolean): void
+}
 const appBridge = (): AppBridge | undefined => (window as unknown as { NakoApp?: AppBridge }).NakoApp
 
 /** Inside the Android app: "on"/"off" from the app, "app" from a shell too old to say. Else null. */
@@ -12,6 +17,11 @@ export function appAlerts(): "on" | "off" | "app" | null {
 }
 
 export const openAppNotificationSettings = () => appBridge()?.openNotificationSettings()
+
+/** Nako's floating sticker over other apps, in an Android app new enough to have one. Else null. */
+export const appBubble = (): "on" | "off" | null => appBridge()?.bubble?.() ?? null
+
+export const setAppBubble = (on: boolean) => appBridge()?.setBubble?.(on)
 
 export function pushState(): "unsupported" | "on" | "blocked" | "off" {
   if (!("Notification" in window) || !("serviceWorker" in navigator)) return "unsupported"

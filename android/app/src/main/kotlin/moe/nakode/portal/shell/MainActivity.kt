@@ -50,6 +50,7 @@ import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.launch
 import moe.nakode.portal.R
+import moe.nakode.portal.bubble.Bubble
 import moe.nakode.portal.notify.AlertService
 import moe.nakode.portal.update.AppUpdater
 
@@ -132,6 +133,8 @@ class MainActivity : ComponentActivity() {
     // reply streaming into the open chat isn't parsed and laid out in the background. Alerts keep
     // coming through AlertService's own socket, and the page catches up when it's shown again.
     override fun onStop() {
+        visible = false
+        AlertService.running?.refreshBubble()
         webView?.onPause()
         pane?.pause()
         // Instance method, but it stops timers in every WebView of the app.
@@ -141,6 +144,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        visible = true
+        AlertService.running?.refreshBubble()
         webView?.resumeTimers()
         webView?.onResume()
         pane?.resume()
@@ -163,7 +168,8 @@ class MainActivity : ComponentActivity() {
             askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
-        if (granted) AlertService.start(this)
+        // The bubble lives in the same service, so it keeps it running even with alerts off.
+        if (granted || Bubble.enabled(this)) AlertService.start(this)
     }
 
     /** What the web app's Settings can ask the shell: the app's own alerts, which web push can't do here. */
@@ -189,6 +195,24 @@ class MainActivity : ComponentActivity() {
             val uri = link?.let(Uri::parse)?.takeIf { it.scheme == "http" || it.scheme == "https" } ?: return
             if (origin?.opensInApp(link) == true) return
             runOnUiThread { this@MainActivity.openExternally(uri) }
+        }
+
+        /** Nako's floating sticker over other apps: "on" only when switched on and allowed to draw over apps. */
+        @JavascriptInterface
+        fun bubble(): String = if (Bubble.enabled(this@MainActivity)) "on" else "off"
+
+        /** Switches the bubble; turning it on the first time sends you to Android's "display over other apps" page. */
+        @JavascriptInterface
+        fun setBubble(on: Boolean) {
+            runOnUiThread {
+                preferences.edit { putBoolean(Bubble.KEY_ON, on) }
+                if (on && !Bubble.canDraw(this@MainActivity)) {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                    return@runOnUiThread
+                }
+                if (on) startListening()
+                AlertService.running?.refreshBubble()
+            }
         }
 
         @JavascriptInterface
@@ -435,6 +459,10 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_SESSION = "session"
+
+        /** Whether the app is on screen; the bubble stays away while it is. */
+        var visible = false
+            private set
 
         /** Runs in the portal: reports the chat on screen as it changes, so the browser shows that chat's tabs. */
         private const val CHAT_WATCH = """(() => {

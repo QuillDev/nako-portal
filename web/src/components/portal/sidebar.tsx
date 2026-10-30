@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/context-menu";
 import { openChatSearch, SEARCH_KEYS } from "@/components/portal/chat-search";
 import type { Portal } from "@/hooks/use-portal";
+import { inBubble } from "@/lib/bubble";
 import {
   appVersion,
   canCheck,
@@ -203,7 +204,7 @@ export function Sidebar({
           className="flex items-center gap-2 pl-1"
           data-tauri-drag-region="deep"
         >
-          <img alt="" className="size-6" src="/icon-192.png" />
+          {!inBubble && <img alt="" className="size-6" src="/icon-192.png" />}
           <span className="flex-1 font-medium text-sm">Nako</span>
           <Button
             aria-label="New chat"

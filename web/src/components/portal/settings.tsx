@@ -9,7 +9,7 @@ import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
 import { cancelled, register } from "@/lib/passkeys"
-import { appAlerts, enablePush, openAppNotificationSettings, pushState } from "@/lib/push"
+import { appAlerts, appBubble, enablePush, openAppNotificationSettings, pushState, setAppBubble } from "@/lib/push"
 import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
@@ -135,9 +135,14 @@ export function Settings({ portal }: { portal: Portal }) {
   const [passkeys, setPasskeys] = useState<Passkey[]>([])
   const [push, setPush] = useState(pushState())
   const [app, setApp] = useState(appAlerts())
-  // Coming back from the phone's notification settings shows what was picked there.
+  const [bubble, setBubble] = useState(appBubble())
+  // Coming back from the phone's notification or overlay settings shows what was picked there.
   useEffect(() => {
-    const reread = () => document.visibilityState === "visible" && setApp(appAlerts())
+    const reread = () => {
+      if (document.visibilityState !== "visible") return
+      setApp(appAlerts())
+      setBubble(appBubble())
+    }
     document.addEventListener("visibilitychange", reread)
     return () => document.removeEventListener("visibilitychange", reread)
   }, [])
@@ -212,6 +217,18 @@ export function Settings({ portal }: { portal: Portal }) {
                   })}
                 />
               )}
+            </Row>
+          )}
+          {bubble && (
+            <Row label="Floating Nako">
+              <Switch
+                checked={bubble === "on"}
+                label="Floating Nako"
+                onCheckedChange={on => {
+                  setAppBubble(on)
+                  setBubble(appBubble())
+                }}
+              />
             </Row>
           )}
         </Section>
