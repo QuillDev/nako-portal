@@ -1,5 +1,5 @@
-// Cmd/Ctrl+K: find a chat by title, archived ones included. Picking an archived chat brings it
-// back to the list and opens it.
+// Cmd/Ctrl+K or the sidebar's Find row: find a chat by title, archived ones included. Picking an
+// archived chat brings it back to the list and opens it. It drops down from the sidebar's top corner.
 import { ArchiveIcon, BellIcon, MessageSquareIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 import {
@@ -94,20 +94,24 @@ export const ChatSearch = memo(function ChatSearch({
   return (
     <Dialog onOpenChange={setOpen} open={open}>
       <DialogContent
-        className="top-[14vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-xl"
+        className="top-3 left-3 w-[min(380px,calc(100vw-1.5rem))] max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-xl bg-card p-0 shadow-2xl sm:max-w-none"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Search chats</DialogTitle>
         <DialogDescription className="sr-only">
           Search chats, archived ones included
         </DialogDescription>
-        <Command className="bg-transparent" loop shouldFilter={false}>
+        <Command
+          className="bg-transparent **:data-[slot=command-input-wrapper]:h-10 **:data-[slot=command-item]:py-1"
+          loop
+          shouldFilter={false}
+        >
           <CommandInput
             onValueChange={setQuery}
             placeholder="Search chats"
             value={query}
           />
-          <CommandList className="max-h-[min(24rem,60vh)]">
+          <CommandList className="max-h-[min(20rem,55vh)]">
             <CommandEmpty>no chats match</CommandEmpty>
             {chats.length > 0 && (
               <CommandGroup heading="chats">
