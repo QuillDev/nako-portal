@@ -130,6 +130,10 @@ async def main(port):
         ],
     )
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
+    # Archived chats: Cmd+K finds them and picking one brings it back.
+    for sid, title in (("20261019_080000_a00001", "Plan the garden beds"), ("20261018_080000_a00002", "Compare release note formats")):
+        hermes.add_session(sid, title, messages=[("user", title.lower())])
+        hermes.sessions[sid]["archived"] = True
     long = hermes.add_session("20261023_060000_eeeeee", "Untangle the importer")
     for turn in range(1, 81):
         hermes._row(long, "user", f"step {turn}: what's next for the importer?")

@@ -486,6 +486,8 @@ class Portal:
     async def sessions(self, request):
         self._require(request)
         hub = await self._hub()
+        if request.query.get("archived") == "only":
+            return web.json_response(await hub.archived())
         rows = await hub.sessions()
         for row in rows:
             # A post nobody has opened the chat for since: the sidebar marks it.

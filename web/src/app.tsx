@@ -1,5 +1,6 @@
 import { type ComponentType, lazy, Suspense, useEffect } from "react"
 import { Chat } from "@/components/portal/chat"
+import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
 import { Sidebar } from "@/components/portal/sidebar"
 import { UpdatingScreen } from "@/components/portal/updating"
@@ -55,6 +56,7 @@ export function App() {
       <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>
         <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
+      <ChatSearch sessions={portal.sessions} unarchive={portal.unarchive} />
       <UpdatingScreen />
     </TooltipProvider>
   )

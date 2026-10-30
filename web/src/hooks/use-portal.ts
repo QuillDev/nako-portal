@@ -425,6 +425,17 @@ export function usePortal() {
     [act, loadSessions],
   )
 
+  // Back into the list from Cmd+K's archived results, then open it.
+  const unarchive = useCallback(
+    (session: string) =>
+      act(async () => {
+        await api(sessionPath(session, "/archive"), { method: "POST", body: { archived: false } })
+        await loadSessions()
+        navigate(`#/c/${session}`)
+      }),
+    [act, loadSessions],
+  )
+
   // `/name arg` in an open chat. Output shows in the chat; `prefill` text goes back to the composer.
   const command = useCallback(
     async (text: string): Promise<string | undefined> => {
@@ -460,7 +471,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, loadOlder, prefetch, commands, command, notes, signOff }
+  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, loadOlder, prefetch, commands, command, notes, signOff }
 }
 
 export type Portal = ReturnType<typeof usePortal>

@@ -176,6 +176,13 @@ class FakeGateway:
             if not s["archived"] and s["profile"] == self.profile
         ]
 
+    def archived_sessions(self):
+        return [
+            {"id": s["id"], "title": s["title"], "preview": _preview(s), "started_at": s["started_at"], "message_count": len(s["rows"]), "pinned": s["pinned"], "chat_id": s["chat"]}
+            for s in self.sessions.values()
+            if s["archived"] and s["profile"] == self.profile
+        ]
+
     def _shown(self, sid):
         s = self.sessions.get(sid)
         return s if s and s["profile"] == self.profile else None

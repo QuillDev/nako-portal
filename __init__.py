@@ -294,6 +294,19 @@ class HermesBackend:
                 out.append({**row, "chat_id": chat, "pinned": bool(pinned)})
         return out
 
+    def archived_sessions(self):
+        """Archived portal chats that can come back: still their thread's chat (not ended)."""
+        open_ = {
+            sid
+            for (sid,) in self._read(
+                "SELECT id FROM sessions WHERE source='portal' AND ended_at IS NULL AND COALESCE(archived, 0)=1"
+            )
+        }
+        rows = self._scoped(
+            lambda: self.db.list_sessions_rich(source="portal", limit=300, order_by_last_active=True, compact_rows=True, archived_only=True)
+        )
+        return [row for row in rows if row["id"] in open_]
+
     def thread(self, session):
         from tui_gateway.server import _history_to_messages  # bound copy; the session_history original lacks server globals
 
