@@ -89,6 +89,9 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
 
     fun show() {
         if (shown || !canDraw(context)) return
+        // She may have been faded out for the panel's keyboard: she always comes back fully visible.
+        head.animate().cancel()
+        head.alpha = 1f
         val screen = screen()
         val left = prefs.getBoolean(KEY_LEFT, false)
         headParams.x = BubbleLayout.edgeX(left, size, screen.first)
@@ -407,6 +410,8 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         }
 
         private fun keyboard(top: Int?) {
+            // Insets can still arrive while the panel is being closed; a closed panel has no keyboard.
+            if (!open && top != null) return
             if (top == keyboardTop) return
             keyboardTop = top
             head.animate().alpha(if (top != null) 0f else 1f).setDuration(150).start()
@@ -427,9 +432,10 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
 
         fun hide() {
             if (!open) return
-            if (keyboardTop != null) keyboard(null)
-            runCatching { windows.removeView(frame) }
             open = false
+            // Gone at once, so no keyboard reading from the closing panel can fade her out again.
+            runCatching { windows.removeViewImmediate(frame) }
+            keyboard(null)
             web.onPause()
             if (!MainActivity.visible) web.pauseTimers()
         }
