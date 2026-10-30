@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
@@ -17,6 +18,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import moe.nakode.portal.R
+import moe.nakode.portal.bubble.Bubble
+import moe.nakode.portal.bubble.Statuses
 import moe.nakode.portal.shell.MainActivity
 import moe.nakode.portal.shell.ServerOrigin
 import okhttp3.OkHttpClient
@@ -38,6 +41,8 @@ class AlertService : Service() {
     private var attempts = 0
     private var stopped = false
     private val ids = AtomicInteger(100)
+    private val statuses = Statuses()
+    private var bubble: Bubble? = null
     private val handler by lazy { android.os.Handler(mainLooper) }
     private val network = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -61,6 +66,25 @@ class AlertService : Service() {
             .build()
         ServiceCompat.startForeground(this, 1, ongoing, ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING)
         getSystemService(ConnectivityManager::class.java)?.registerDefaultNetworkCallback(network)
+        running = this
+        refreshBubble()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        bubble?.screenChanged()
+    }
+
+    /** Nako's floating sticker: on when switched on and allowed, and only while the app itself is out of sight. */
+    fun refreshBubble() {
+        val server = origin(this)
+        if (server == null || !Bubble.enabled(this) || MainActivity.visible) {
+            bubble?.hide()
+            return
+        }
+        val current = bubble ?: Bubble(this, server).also { bubble = it }
+        current.mood(statuses.mood)
+        current.show()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -70,6 +94,9 @@ class AlertService : Service() {
 
     override fun onDestroy() {
         stopped = true
+        if (running === this) running = null
+        bubble?.destroy()
+        bubble = null
         runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(network) }
         socket?.close(1000, null)
         super.onDestroy()
@@ -101,7 +128,14 @@ class AlertService : Service() {
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            parseAlert(text)?.let { show(origin, it) }
+            if (statuses.apply(text)) {
+                handler.post { bubble?.mood(statuses.mood) }
+                return
+            }
+            parseAlert(text)?.let { alert ->
+                show(origin, alert)
+                handler.post { bubble?.alert(alert.session) }
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -148,6 +182,10 @@ class AlertService : Service() {
     companion object {
         const val ALERTS = "alerts"
         const val QUIET = "connection"
+
+        /** The service while it runs, so the app can show or hide the bubble as it comes and goes. */
+        var running: AlertService? = null
+            private set
 
         fun origin(context: Context): ServerOrigin? =
             context.getSharedPreferences("shell", MODE_PRIVATE).getString("origin", null)?.let(ServerOrigin::parse)

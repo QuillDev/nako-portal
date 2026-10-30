@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import type { Portal } from "@/hooks/use-portal"
 import { toggleAppBrowser, useAppBrowser } from "@/lib/desktop-browser"
 import { useMarkdown } from "@/lib/markdown"
+import { inBubble } from "@/lib/bubble"
 import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
@@ -22,35 +23,40 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions, r
   const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
-      <Processes key={session} running={running} session={session} />
-      {browser !== "none" && (
-        <Button
-          aria-label="Browser"
-          aria-pressed={browser === "open"}
-          className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
-          onClick={toggleAppBrowser}
-          size="icon"
-          title="Browser"
-          variant="ghost"
-        >
-          <GlobeIcon />
-        </Button>
+      {/* The floating panel keeps to the chat itself; its full controls are one tap away in the app. */}
+      {!inBubble && (
+        <>
+          <Processes key={session} running={running} session={session} />
+          {browser !== "none" && (
+            <Button
+              aria-label="Browser"
+              aria-pressed={browser === "open"}
+              className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
+              onClick={toggleAppBrowser}
+              size="icon"
+              title="Browser"
+              variant="ghost"
+            >
+              <GlobeIcon />
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button aria-label="More" size="icon" variant="ghost">
+                <MoreHorizontalIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {sessionActions(actions, session, pinned).map(a => (
+                <DropdownMenuItem key={a.label} onSelect={a.run}>
+                  <a.icon className="size-4 text-muted-foreground" />
+                  {a.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </>
       )}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button aria-label="More" size="icon" variant="ghost">
-            <MoreHorizontalIcon />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {sessionActions(actions, session, pinned).map(a => (
-            <DropdownMenuItem key={a.label} onSelect={a.run}>
-              <a.icon className="size-4 text-muted-foreground" />
-              {a.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
     </PageHeader>
   )
 })
@@ -265,7 +271,7 @@ export function Chat({ portal }: { portal: Portal }) {
         <ConversationScrollButton style={{ bottom: dock + 16 }} />
         {!loading && (
           <Dock onHeight={setDock}>
-            {presence && !c.requests.length && (
+            {presence && !inBubble && !c.requests.length && (
               <Presence
                 key={c.session}
                 live={portal.live}
