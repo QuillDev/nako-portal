@@ -91,7 +91,15 @@ async def main(port):
             ("assistant", f"Here's the fixed layout MEDIA:{shots / 'layout.png'}, with the barcode on the right.\n\nMEDIA:{shots / 'gone.png'}\nMEDIA:{shots / 'barcode.png'}"),
         ],
     )
-    hermes.add_session("20261024_080000_bbbbbb", "Plan next week")
+    # A reply citing another chat the way session search does, which renders as a link to it.
+    hermes.add_session(
+        "20261024_080000_bbbbbb",
+        "Plan next week",
+        messages=[
+            ("user", "where did the ci thread go?"),
+            ("assistant", "it's this one: @session:default/20261024_090000_aaaaaa. the label fix is in @session:default/20261024_085000_dddddd, and `@session:default/20261024_085000_dddddd` stays as typed in code."),
+        ],
+    )
     # Background processes the CI chat's turns left running, as the gateway's process registry lists them.
     now = time.time()
     hermes.procs["20261024_090000_aaaaaa"] = [

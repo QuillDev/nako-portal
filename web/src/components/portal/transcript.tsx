@@ -8,7 +8,9 @@ import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { fileUrl } from "@/lib/api"
 import { ImageViewer } from "./image-viewer"
+import { markdownComponents } from "./markdown-link"
 import { isImage, splitReply, splitUserTurn } from "@/lib/media"
+import { linkSessionRefs } from "@/lib/session-refs"
 import type { HistoryMessage, Live } from "@/lib/types"
 
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
@@ -201,7 +203,8 @@ const User = memo(function User({ session, text, images, steered }: { session: s
 })
 
 const Assistant = memo(function Assistant({ session, text, reasoning, label, streaming }: { session: string; text: string; reasoning?: string; label?: string; streaming?: boolean }) {
-  const { body, files } = splitReply(text)
+  const { body: raw, files } = splitReply(text)
+  const body = useMemo(() => linkSessionRefs(raw), [raw])
   const stopScroll = useContext(StopScroll)
   return (
     <Message from="assistant">
@@ -214,7 +217,7 @@ const Assistant = memo(function Assistant({ session, text, reasoning, label, str
           </Reasoning>
         )}
         {body && (
-          <MessageResponse isAnimating={streaming} linkSafety={{ enabled: false }} mode={streaming ? "streaming" : "static"}>
+          <MessageResponse components={markdownComponents} isAnimating={streaming} linkSafety={{ enabled: false }} mode={streaming ? "streaming" : "static"}>
             {body}
           </MessageResponse>
         )}
