@@ -182,6 +182,7 @@ export function Sidebar({
         </div>
         <button
           className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground text-sm hover:bg-accent hover:text-foreground"
+          data-find=""
           onClick={openChatSearch}
           type="button"
         >
