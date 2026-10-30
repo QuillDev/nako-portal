@@ -1,7 +1,9 @@
 // Cmd/Ctrl+K or the sidebar's Find row: find a chat by title, archived ones included. Picking an
-// archived chat brings it back to the list and opens it. It drops down from the sidebar's top corner.
+// archived chat brings it back to the list and opens it. It grows out of the Find row when that's on
+// screen (input over the row, list unfolding below), else it sits near the top of the window.
 import { ArchiveIcon, BellIcon, MessageSquareIcon } from "lucide-react";
-import { memo, useEffect, useMemo, useState } from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
+import { type CSSProperties, memo, useEffect, useMemo, useState } from "react";
 import {
   Command,
   CommandEmpty,
@@ -12,8 +14,9 @@ import {
 } from "@/components/ui/command";
 import {
   Dialog,
-  DialogContent,
   DialogDescription,
+  DialogOverlay,
+  DialogPortal,
   DialogTitle,
 } from "@/components/ui/dialog";
 import { navigate, type Portal } from "@/hooks/use-portal";
@@ -28,6 +31,24 @@ export const SEARCH_KEYS = /Mac|iPhone|iPad/.test(navigator.platform)
   : "Ctrl K";
 export const openChatSearch = () => window.dispatchEvent(new Event(OPEN));
 
+const WIDTH = 380;
+
+// Where the box opens: over the sidebar's Find row when it's visible, so the row becomes the input.
+const anchor = (): CSSProperties | null => {
+  const row = document.querySelector("[data-find]");
+  const r = row?.getBoundingClientRect();
+  // A hidden sidebar or closed drawer keeps the row's box, so ask what's actually drawn there.
+  if (!row || !r || !row.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)))
+    return null;
+  const width = Math.min(Math.max(WIDTH, r.width + 2), window.innerWidth - r.left - 12);
+  return {
+    top: r.top - 1,
+    left: r.left - 1,
+    width,
+    "--find-row": `${r.width + 2}px`,
+  } as CSSProperties;
+};
+
 const matches = (title: string, query: string) =>
   !query || title.toLowerCase().includes(query);
 
@@ -38,6 +59,7 @@ export const ChatSearch = memo(function ChatSearch({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState<Archived[]>([]);
+  const [at, setAt] = useState<CSSProperties | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -48,10 +70,14 @@ export const ChatSearch = memo(function ChatSearch({
         e.key.toLowerCase() === "k"
       ) {
         e.preventDefault();
+        setAt(anchor());
         setOpen((o) => !o);
       }
     };
-    const onOpen = () => setOpen(true);
+    const onOpen = () => {
+      setAt(anchor());
+      setOpen(true);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener(OPEN, onOpen);
     return () => {
@@ -93,22 +119,28 @@ export const ChatSearch = memo(function ChatSearch({
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
-      <DialogContent
-        className="top-3 left-3 w-[min(380px,calc(100vw-1.5rem))] max-w-none translate-x-0 translate-y-0 gap-0 overflow-hidden rounded-xl bg-card p-0 shadow-2xl sm:max-w-none"
-        showCloseButton={false}
-      >
+      <DialogPortal>
+        <DialogOverlay className={at ? "bg-transparent" : undefined} />
+        <DialogPrimitive.Content
+          className={
+            at
+              ? "find-pop fixed z-50 overflow-hidden rounded-lg border bg-card shadow-2xl outline-none"
+              : "fixed top-[14vh] left-1/2 z-50 w-[min(380px,calc(100vw-1.5rem))] -translate-x-1/2 overflow-hidden rounded-xl border bg-card shadow-2xl outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+          }
+          style={at ?? undefined}
+        >
         <DialogTitle className="sr-only">Search chats</DialogTitle>
         <DialogDescription className="sr-only">
           Search chats, archived ones included
         </DialogDescription>
         <Command
-          className="bg-transparent **:data-[slot=command-input-wrapper]:h-10 **:data-[slot=command-item]:py-1"
+          className="bg-transparent **:data-[slot=command-input-wrapper]:h-8 **:data-[slot=command-input-wrapper]:px-2 **:data-[slot=command-input]:h-8 **:data-[slot=command-input]:py-0 **:data-[slot=command-item]:py-1"
           loop
           shouldFilter={false}
         >
           <CommandInput
             onValueChange={setQuery}
-            placeholder="Search chats"
+            placeholder="Find"
             value={query}
           />
           <CommandList className="max-h-[min(20rem,55vh)]">
@@ -145,7 +177,8 @@ export const ChatSearch = memo(function ChatSearch({
             )}
           </CommandList>
         </Command>
-      </DialogContent>
+        </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   );
 });
