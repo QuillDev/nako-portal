@@ -106,6 +106,53 @@ async def test_cron_deliveries_to_the_portal_platform_land_in_its_inbox(tmp_path
     await asyncio.sleep(0)
 
 
+async def test_hermes_send_can_address_the_reviews_chat_and_waits_for_it_to_open(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    fake_constants = type(sys)("hermes_constants")
+    fake_constants.get_hermes_home = lambda: home
+    monkeypatch.setitem(sys.modules, "hermes_constants", fake_constants)
+    spec = importlib.util.spec_from_file_location("nako_portal_plugin_send", ROOT / "__init__.py")
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    registered = {}
+
+    class Ctx:
+        def register_hook(self, name, callback):
+            pass
+
+        def register_platform(self, **entry):
+            registered.update(entry)
+
+    plugin.register(Ctx())
+    parse = registered["parse_target_ref_fn"]
+    assert [parse(ref) for ref in ("reviews", "inbox", "new", "a467018aadf64780")] == [
+        ("reviews", None), ("inbox", None), ("new", None), ("a467018aadf64780", None)
+    ]
+    # Names it doesn't own go on to Hermes's channel directory.
+    assert parse("Nako") is None and parse("reviews; rm") is None
+
+    # The gateway opens the thread once the post reaches it; the mirror runs right after the send.
+    import sqlite3
+
+    db = sqlite3.connect(home / "state.db")
+    db.execute("CREATE TABLE sessions (id TEXT, source TEXT, chat_id TEXT, ended_at REAL)")
+    db.commit()
+
+    async def gateway_opens_it():
+        await asyncio.sleep(0.4)
+        db.execute("INSERT INTO sessions VALUES ('s1', 'portal', 'reviews', NULL)")
+        db.commit()
+
+    opening = asyncio.get_running_loop().create_task(gateway_opens_it())
+    started = asyncio.get_running_loop().time()
+    sent = await registered["standalone_sender_fn"](None, "reviews", "web#12 · approved · sam")
+    assert sent["success"] and asyncio.get_running_loop().time() - started >= 0.4
+    await opening
+    rows = Store(home / "nako-portal" / "portal.db").inbox()
+    assert [(r["chat"], r["text"]) for r in rows] == [("reviews", "web#12 · approved · sam")]
+
+
 async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
     # Hermes's cron mirror appends each post to the open gateway session for portal:inbox, so
     # that session must exist before the first post, and every post must find the same one.
