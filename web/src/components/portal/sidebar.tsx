@@ -2,6 +2,8 @@ import {
   ArrowDownToLineIcon,
   BellIcon,
   ChevronLeftIcon,
+  GitPullRequestIcon,
+  type LucideIcon,
   PinIcon,
   PlusIcon,
   SearchIcon,
@@ -125,6 +127,50 @@ const ChatRow = memo(function ChatRow({
   );
 });
 
+// A chat posts land in. The dot is green while a post waits unread, or shows the chat's status.
+function ChannelRow({
+  row,
+  icon: Icon,
+  fallback,
+  open,
+  go,
+}: {
+  row?: SessionRow;
+  icon: LucideIcon;
+  fallback: string;
+  open: string | null;
+  go: (hash: string) => void;
+}) {
+  return (
+    <button
+      className={cn(
+        "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm first:mt-2 hover:bg-accent",
+        row && open === row.id && "bg-accent",
+      )}
+      disabled={!row}
+      onClick={() => row && go(`#/c/${row.id}`)}
+      type="button"
+    >
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{row?.title || fallback}</span>
+      {row?.status && DOT[row.status] ? (
+        <span
+          className={cn("size-2 shrink-0 rounded-full", DOT[row.status])}
+          title={row.status}
+        />
+      ) : (
+        row?.unread &&
+        open !== row.id && (
+          <span
+            className="size-2 shrink-0 rounded-full bg-emerald-500"
+            title="new post"
+          />
+        )
+      )}
+    </button>
+  );
+}
+
 export function Sidebar({
   portal,
   className,
@@ -137,7 +183,7 @@ export function Sidebar({
   const { sessions, pin, archive, prefetch } = portal;
   const listed = useMemo(
     () =>
-      groups(sessions.filter((s) => !s.notifications)),
+      groups(sessions.filter((s) => !s.notifications && !s.reviews)),
     [sessions],
   );
   const actions = useMemo(
@@ -145,6 +191,7 @@ export function Sidebar({
     [pin, archive, rename.start],
   );
   const inbox = sessions.find((s) => s.notifications);
+  const reviews = sessions.find((s) => s.reviews);
   const open = portal.route.view === "chat" ? portal.route.session : null;
 
   return (
@@ -196,35 +243,23 @@ export function Sidebar({
         </button>
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
-        {/* Always first. The dot is green while a post waits unread, or shows the chat's status. */}
-        <button
-          className={cn(
-            "mt-2 flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-            inbox && open === inbox.id && "bg-accent",
-          )}
-          disabled={!inbox}
-          onClick={() => inbox && go(`#/c/${inbox.id}`)}
-          type="button"
-        >
-          <BellIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate">
-            {inbox?.title || "Notifications"}
-          </span>
-          {inbox?.status && DOT[inbox.status] ? (
-            <span
-              className={cn("size-2 shrink-0 rounded-full", DOT[inbox.status])}
-              title={inbox.status}
-            />
-          ) : (
-            inbox?.unread &&
-            open !== inbox.id && (
-              <span
-                className="size-2 shrink-0 rounded-full bg-emerald-500"
-                title="new notification"
-              />
-            )
-          )}
-        </button>
+        {/* Always first, Reviews under it once something has posted there. */}
+        <ChannelRow
+          fallback="Notifications"
+          go={go}
+          icon={BellIcon}
+          open={open}
+          row={inbox}
+        />
+        {reviews && (
+          <ChannelRow
+            fallback="Reviews"
+            go={go}
+            icon={GitPullRequestIcon}
+            open={open}
+            row={reviews}
+          />
+        )}
         {listed.length === 0 && (
           <p className="px-2 py-1 text-muted-foreground text-xs">
             no chats yet

@@ -35,6 +35,7 @@ BACKEND_SYNC = (
     "session_of",
     "set_title",
     "set_archived",
+    "is_archived",
     "set_pinned",
     "set_yolo",
     "commands",

@@ -7,7 +7,9 @@ export type SessionRow = {
   pinned?: boolean
   // The one chat posts to the portal (cron deliveries) land in; it sits above every other chat.
   notifications?: boolean
-  // A post landed in the notifications chat since it was last opened.
+  // Where review threads post their status; it sits under Notifications.
+  reviews?: boolean
+  // A post landed in the Notifications or Reviews chat since it was last opened.
   unread?: boolean
   status?: Status | null
 }
@@ -41,7 +43,8 @@ export type HistoryMessage =
   // steered: sent while a turn was running, so Hermes fed it into that turn
   | { role: "user"; text: string; row_id?: string | number; images?: string[]; steered?: boolean }
   // label: the cron job that posted it, when it's a cron post
-  | { role: "assistant"; text: string; reasoning?: string; label?: string; row_id?: string | number }
+  // post: a message no prompt asked for, in a chat posts land in (a review's status)
+  | { role: "assistant"; text: string; reasoning?: string; label?: string; post?: boolean; row_id?: string | number }
   | { role: "tool"; name: string; context?: string; tool_call_id?: string }
 
 export type PortalRequest = {

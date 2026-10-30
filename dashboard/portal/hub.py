@@ -16,6 +16,7 @@ backend:
   inbound(chat, text, files)                (async) a message from the person, as the gateway sees it
   resolve(request, result)                  (async) answer an approval or question
   set_title / set_archived / set_pinned(session, value)
+  is_archived(session) -> bool
   set_yolo(chat)                            approvals off for one thread
   commands() -> [{name, description, skill}]
   processes(session) -> [{id, command, cwd, running, started_at, exited_at, exit_code, ended, notify}]   background processes the chat started
@@ -50,6 +51,9 @@ MAX_FILE = 25 * 1024 * 1024
 PREVIEW_CHARS = 280
 # The thread cron posts and other deliveries to `portal` land in, like a bot's DM elsewhere.
 INBOX = "inbox"
+# A second thread like it, for code-review status posts (`portal:reviews`).
+REVIEWS = "reviews"
+CHANNELS = {INBOX, REVIEWS}
 # Hermes labels every cron post it mirrors into a chat with this.
 CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
 # A message sent while a turn runs is steered into it with a note for the model saying where it
@@ -63,7 +67,7 @@ RESTATED = re.compile(r"^\[STILL IN PROGRESS\b[^\]]*\]\s*")
 PAGE_MESSAGES = 30
 # What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
 # tool arguments and display metadata, which made a page of a long chat ~170 KB instead of ~10 KB.
-SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "steered", "name", "context", "tool_call_id")
+SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "post", "steered", "name", "context", "tool_call_id")
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
 SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
@@ -86,7 +90,7 @@ class Hub:
         self.requests = {}
         self.running = set()
         self.titles = {}
-        # The notification chats the last listing found; None until the first listing.
+        # The Notifications and Reviews chats the last listing found; None until the first listing.
         self.inboxes = None
         self.last_text = {}
         # What a running turn has shown so far (its messages and tool calls), so a chat opened
@@ -173,7 +177,7 @@ class Hub:
         for row in await asyncio.to_thread(self.backend.sessions):
             session = row["id"]
             self.titles[session] = row.get("title") or ""
-            if row.get("chat_id") == INBOX:
+            if row.get("chat_id") in CHANNELS:
                 inboxes.add(session)
             rows.append(
                 {
@@ -185,6 +189,8 @@ class Hub:
                     "source": "portal",
                     # The thread posts to `portal` land in; the sidebar keeps it on top.
                     "notifications": row.get("chat_id") == INBOX,
+                    # Where review threads post their status; it sits under Notifications.
+                    "reviews": row.get("chat_id") == REVIEWS,
                     "pinned": bool(row.get("pinned")),
                     "status": self.status.get(session),
                 }
@@ -208,6 +214,9 @@ class Hub:
         if thread is None:
             raise ValueError("No such chat")
         title = thread.get("title") or ""
+        messages = thread["messages"]
+        if (session in self.inboxes) if self.inboxes is not None else (await asyncio.to_thread(self.backend.chat_of, session)) in CHANNELS:
+            messages = _mark_posts(messages)
         # Hermes names a chat after its first exchange; a list fetched before that still says untitled.
         renamed = session in self.titles and self.titles[session] != title
         self.titles[session] = title
@@ -216,16 +225,19 @@ class Hub:
         return {
             "session": session,
             "title": self.titles[session],
-            "messages": _without_restated([_without_sign_off(_as_notification(_without_steer_origin(m))) for m in thread["messages"] if _is_shown(m)]),
+            "messages": _without_restated([_without_sign_off(_as_notification(_without_steer_origin(m))) for m in messages if _is_shown(m)]),
             "running": session in self.running,
             **({"live": _progress_view(self.progress[session])} if session in self.running and session in self.progress else {}),
             "status": self.status.get(session),
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
         }
 
-    async def create(self, text, files=(), title=None, cwd=None, yolo=False):
+    async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False):
         chat = uuid.uuid4().hex[:16]
         session = await self.backend.new_thread(chat, title)
+        if archived:
+            # Work handed off to run out of sight (a review that reports to Reviews when done).
+            await asyncio.to_thread(self.backend.set_archived, session, True)
         if yolo:
             # Thread-scoped, like Shift+Tab in Desktop: approvals stay on everywhere else.
             await asyncio.to_thread(self.backend.set_yolo, chat)
@@ -279,8 +291,11 @@ class Hub:
         return {"ok": True}
 
     async def archive(self, session, archived=True):
-        if archived and await asyncio.to_thread(self.backend.chat_of, session) == INBOX:
+        chat = await asyncio.to_thread(self.backend.chat_of, session) if archived else None
+        if chat == INBOX:
             raise ValueError("The Notifications chat can't be archived")
+        if chat == REVIEWS:
+            raise ValueError("The Reviews chat can't be archived")
         await asyncio.to_thread(self.backend.set_archived, session, archived)
         await self.broadcast({"kind": "sessions.changed"})
         return {"ok": True}
@@ -330,6 +345,8 @@ class Hub:
         session = await self._session(chat)
         if session is None:
             return
+        # An archived chat is out of sight on purpose; it doesn't ping when a turn ends.
+        quiet = await asyncio.to_thread(self.backend.is_archived, session)
         self.running.discard(session)
         self.progress.pop(session, None)
         failed = outcome == "failure"
@@ -338,10 +355,11 @@ class Hub:
         await self._event(session, "message.complete", {"status": "error" if failed else "complete"})
         title = self.titles.get(session) or "Nako"
         reply = self.last_text.pop(session, "")
-        if failed:
+        if failed and not quiet:
             self.notify(session, title, "hit an error")
         elif outcome == "success":
-            self.notify(session, title, _preview(reply) or "done")
+            if not quiet:
+                self.notify(session, title, _preview(reply) or "done")
             if self.sign_off_on:
                 asyncio.get_running_loop().create_task(self._sign_off(session, reply))
 
@@ -385,6 +403,8 @@ class Hub:
             return
         self.last_text[session] = text
         shown = split_sign_off(text)[0]
+        # Read before anything is shown, so the alert goes out as soon as the message does.
+        quiet = session not in self.running and await asyncio.to_thread(self.backend.is_archived, session)
         if session in self.running and session in self.progress:
             # `after`: how many tool calls had started when its text last changed, as the app counts.
             progress = self.progress[session]
@@ -394,7 +414,8 @@ class Hub:
         await self._event(session, "gateway.message", {"id": message_id, "text": shown})
         if session in self.running:
             return
-        self.notify(session, self.titles.get(session) or "Nako", _preview(text) or "new message")
+        if not quiet:
+            self.notify(session, self.titles.get(session) or "Nako", _preview(text) or "new message")
         await asyncio.sleep(MIRROR_SETTLE)
         await self._event(session, "message.complete", {"status": "complete"})
         await self.broadcast({"kind": "sessions.changed"})
@@ -490,7 +511,9 @@ def _without_sign_off(message):
 def _preview(text, limit=PREVIEW_CHARS):
     """The start of a reply as one plain line for a notification: no MEDIA tags or markdown marks."""
     text = split_sign_off(text)[0]
-    plain = re.sub(r"[`*_#>|]+", "", " ".join(MEDIA.sub("", str(text or "")).splitlines()))
+    # Heading marks only at the start of a line: a `#` mid-line is a PR or issue number (web#12).
+    lines = (re.sub(r"^\s*#{1,6}\s+", "", line) for line in MEDIA.sub("", str(text or "")).splitlines())
+    plain = re.sub(r"[`*_>|]+", "", " ".join(lines))
     plain = re.sub(r"\s+([,.;:)])", r"\1", plain)
     plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
     plain = " ".join(plain.split())
@@ -519,6 +542,24 @@ def _without_restated(messages):
             if sent is not None and (sent.get("text") or "").strip() == text:
                 continue
             message = {**message, "text": text}
+        out.append(message)
+    return out
+
+
+def _mark_posts(messages):
+    """In a chat posts land in, Nako's messages that no prompt asked for are posts (`send_message`
+    mirrors them in as hers), so the app keeps each one instead of only the last of a run."""
+    out, in_turn = [], False
+    for i, message in enumerate(messages):
+        role = message.get("role")
+        if role == "user":
+            in_turn = True
+        elif role == "assistant":
+            if not in_turn and (message.get("text") or "").strip():
+                message = {**message, "post": True}
+            following = messages[i + 1] if i + 1 < len(messages) else None
+            if following is None or following.get("role") != "tool":
+                in_turn = False
         out.append(message)
     return out
 

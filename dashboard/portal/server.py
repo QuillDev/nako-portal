@@ -204,7 +204,7 @@ class Portal:
         async def start(request):
             body, text = await brief(request)
             hub = await self._hub()
-            started = await hub.create(text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")))
+            started = await hub.create(text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")), archived=bool(body.get("archived")))
             return web.json_response(started)
 
         async def send(request):
@@ -491,7 +491,7 @@ class Portal:
         rows = await hub.sessions()
         for row in rows:
             # A post nobody has opened the chat for since: the sidebar marks it.
-            row["unread"] = row["notifications"] and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
+            row["unread"] = (row["notifications"] or row["reviews"]) and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
         return web.json_response(rows)
 
     async def open(self, request):
@@ -499,10 +499,10 @@ class Portal:
         hub = await self._hub()
         session = self._session(request)
         opened = await hub.open(session)
-        # Only the notifications chat keeps a read mark, so other chats skip relisting every chat.
+        # Only the Notifications and Reviews chats keep a read mark, so other chats skip relisting every chat.
         if hub.inboxes is None or session in hub.inboxes:
             listed = next((row for row in await hub.sessions() if row["id"] == session), None)
-            if listed and listed["notifications"]:
+            if listed and (listed["notifications"] or listed["reviews"]):
                 self.store.set_meta(f"seen:{session}", listed["message_count"])
         query = request.query
         window = {key: _index(query[key]) for key in ("before", "since") if key in query}

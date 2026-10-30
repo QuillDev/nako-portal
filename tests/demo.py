@@ -129,6 +129,19 @@ async def main(port):
             ("assistant", "the sorting paper. it's short and the benchmark section is the interesting part."),
         ],
     )
+    # Review threads run archived and post their status to Reviews.
+    for sid, title in (("20261024_091500_r00001", "Review shop#412"), ("20261024_092000_r00002", "Review shop#415")):
+        hermes.add_session(sid, title, messages=[("user", f"review {title.split()[-1]} for sam"), ("assistant", "reviewed, posted to Reviews.")])
+        hermes.sessions[sid]["archived"] = True
+    hermes.add_session(
+        "20261024_092500_v00001",
+        "Reviews",
+        chat="reviews",
+        messages=[
+            ("assistant", "[shop#415](https://github.com/acme/shop/pull/415) · changes requested · sam\n- head `4d81a0c`, ci green\n- blocker: refund retry never backs off\n- blocker: failed refund marked paid\n\n[open the review](#/c/20261024_092000_r00002)"),
+            ("assistant", "[shop#412](https://github.com/acme/shop/pull/412) · approved · sam\n- head `9f3c2e1`, ci green\n- ready to merge\n- nit: test name\n\n[open the review](#/c/20261024_091500_r00001)"),
+        ],
+    )
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
     # Archived chats: Cmd+K finds them and picking one brings it back.
     for sid, title in (("20261019_080000_a00001", "Plan the garden beds"), ("20261018_080000_a00002", "Compare release note formats")):

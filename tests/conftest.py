@@ -263,6 +263,9 @@ class FakeGateway:
     def set_archived(self, sid, archived):
         self.sessions[sid]["archived"] = archived
 
+    def is_archived(self, sid):
+        return bool(self.sessions.get(sid, {}).get("archived"))
+
     def set_pinned(self, sid, pinned):
         self.sessions[sid]["pinned"] = pinned
 

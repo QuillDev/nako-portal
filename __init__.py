@@ -9,8 +9,9 @@ a bot connects to Discord. Each portal chat is a gateway thread
 work here the way they do on any platform.
 
 `portal:inbox` is the Notifications thread: like a bot's DM, cron posts and other
-deliveries land there, and a reply has every post in context. `portal:new` starts
-a new thread with the message as its first post, so another platform can open one.
+deliveries land there, and a reply has every post in context. `portal:reviews` is a
+second thread like it, for code-review status posts. `portal:new` starts a new thread
+with the message as its first post, so another platform can open one.
 """
 
 from __future__ import annotations
@@ -42,6 +43,9 @@ NEW_THREAD = "new"
 # A chat whose newest row is mid-turn this recently may still be running on its old surface.
 BUSY_WINDOW = 15 * 60
 CHAT_TITLE = "Notifications"
+REVIEWS_CHANNEL = "reviews"
+# Threads posts can be addressed to by name, each with the title it gets when first opened.
+CHANNELS = {HOME_CHANNEL: CHAT_TITLE, REVIEWS_CHANNEL: "Reviews"}
 DEFAULT_PORT = 8797
 DEFAULT_PROFILE = "default"
 # The one person portal threads belong to; passkey sign-in already decided who that is.
@@ -107,8 +111,8 @@ def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE, profile=Non
     db = owner(entry.session_key) if owner else getattr(session_store, "_db", None)
     if title and db is not None and not db.get_session_title(entry.session_id):
         db.set_session_title(entry.session_id, title)
-    if chat == HOME_CHANNEL and db is not None and (db.get_session(entry.session_id) or {}).get("archived"):
-        # An archived Notifications chat drops out of the sidebar list and its bell row goes dead.
+    if chat in CHANNELS and db is not None and (db.get_session(entry.session_id) or {}).get("archived"):
+        # An archived Notifications or Reviews chat drops out of the sidebar list and its row goes dead.
         db.set_session_archived(entry.session_id, False)
     return entry.session_id
 
@@ -445,6 +449,10 @@ class HermesBackend:
     def set_archived(self, session, archived):
         self._scoped(lambda: self.db.set_session_archived(session, archived))
 
+    def is_archived(self, session):
+        rows = self._read("SELECT COALESCE(archived, 0) FROM sessions WHERE id=? AND source='portal'", (session,))
+        return bool(rows and rows[0][0])
+
     def set_pinned(self, session, pinned):
         self._scoped(lambda: self.db.set_session_pinned(session, pinned))
 
@@ -772,8 +780,9 @@ def _adapter(config):
             chat = str(chat_id or HOME_CHANNEL)
             if chat == NEW_THREAD:
                 chat = await self._new_thread(content)
-            elif chat == HOME_CHANNEL:
-                await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE)
+            elif chat in CHANNELS:
+                # send_message mirrors the post into this thread right after the send returns.
+                await asyncio.to_thread(self._chat, chat, CHANNELS[chat])
             message_id = uuid.uuid4().hex
             if self.link is not None:
                 # Not awaited: outside a turn the hub waits for the mirror before telling clients.

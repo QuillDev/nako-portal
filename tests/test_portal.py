@@ -552,6 +552,7 @@ async def test_a_notification_shows_the_start_of_the_reply_as_plain_text():
     long = _preview("word " * 200)
     assert len(long) == 280 and long.endswith("…")
     assert _preview("MEDIA:/tmp/only.png") == ""
+    assert _preview("approved web#12, see #13") == "approved web#12, see #13"
     assert _preview("the layout is here MEDIA:/tmp/a b.png, then done") == "the layout is here, then done"
 
 
@@ -582,3 +583,68 @@ async def test_a_background_process_shows_its_latest_output_only_in_its_own_chat
     assert (len(log["lines"]), log["lines"][-1]) == (200, "line 300")
     assert (await world.http.get(world.url(f"/api/sessions/{other}/processes/proc_abc123/log"))).status == 404
     assert (await world.http.get(world.url(f"/api/sessions/{sid}/processes/..%2Fx/log"))).status in (400, 404)
+
+
+async def test_review_posts_land_in_their_own_chat_beside_notifications(world):
+    inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox")
+    reviews = world.hermes.add_session("20261024_040405_eeeeee", "Reviews", chat="reviews")
+    chat = world.hermes.add_session("20261024_070707_aaaaaa", "plans", messages=[("user", "hi")])
+    await world.sign_up()
+
+    async def listed():
+        rows = await (await world.http.get(world.url("/api/sessions"))).json()
+        return {row["id"]: (row["notifications"], row["reviews"], row["unread"]) for row in rows}
+
+    assert await listed() == {inbox: (True, False, False), reviews: (False, True, False), chat: (False, False, False)}
+    await world.hermes.post(reviews, "approved web#12 from sam")
+    assert [tuple(alert[1:]) for alert in world.alerts] == [("Reviews", "approved web#12 from sam")]
+    assert (await listed())[reviews] == (False, True, True)
+    await world.http.get(world.url(f"/api/sessions/{reviews}"))
+    assert (await listed())[reviews] == (False, True, False)
+
+
+async def test_every_review_post_in_a_row_reads_as_its_own_post(world):
+    # send_message mirrors a post in as Nako's message; a run of them must not read as one turn.
+    reviews = world.hermes.add_session(
+        "20261024_040405_eeeeee",
+        "Reviews",
+        chat="reviews",
+        messages=[("assistant", "approved web#12"), ("assistant", "changes requested on web#13"), ("user", "why 13?"), ("assistant", "the retry never backs off")],
+    )
+    chat = world.hermes.add_session("20261024_070707_aaaaaa", "plans", messages=[("assistant", "hello"), ("user", "hi"), ("assistant", "hey")])
+    await world.sign_up()
+
+    async def shown(sid):
+        opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+        return [(m["role"], m["text"], m.get("post", False)) for m in opened["messages"]]
+
+    assert await shown(reviews) == [
+        ("assistant", "approved web#12", True),
+        ("assistant", "changes requested on web#13", True),
+        ("user", "why 13?", False),
+        ("assistant", "the retry never backs off", False),
+    ]
+    assert [post for *_, post in await shown(chat)] == [False, False, False]
+
+
+async def test_the_reviews_chat_cant_be_archived_out_of_the_sidebar(world):
+    reviews = world.hermes.add_session("20261024_070707_eeeeee", "Reviews", chat="reviews")
+    await world.sign_up()
+    assert (await world.post(f"/api/sessions/{reviews}/archive", {"archived": True})).status == 400
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [(row["id"], row["reviews"]) for row in listed] == [(reviews, True)]
+
+
+async def test_an_archived_chat_doesnt_ping_when_its_turn_ends_or_it_gets_a_post(world):
+    sid = world.hermes.add_session("20261024_060606_ffffff", "review web#12")
+    await world.sign_up()
+    assert (await world.post(f"/api/sessions/{sid}/archive", {"archived": True})).status == 200
+
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "re-review"}, headers={"Origin": ORIGIN})
+    for _ in range(100):
+        if world.hermes.sessions[sid]["rows"][-1]["role"] == "assistant":
+            break
+        await asyncio.sleep(0.01)
+    await world.hermes.post(sid, "background job finished")
+    await asyncio.sleep(0.05)
+    assert world.alerts == []
