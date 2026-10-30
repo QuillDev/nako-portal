@@ -77,6 +77,8 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
     private var mood = Mood.IDLE
     private var unreadChat: String? = null
     private var animator: ValueAnimator? = null
+    /** When a tap outside last closed the panel. */
+    private var dismissedAt = 0L
 
     init {
         head.setOnTouchListener(Drag())
@@ -146,6 +148,8 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         runCatching { ImageDecoder.decodeDrawable(ImageDecoder.createSource(context.resources, id)) as? AnimatedImageDrawable }.getOrNull()
 
     private fun toggle() {
+        // A tap on her while the panel is open closes it once, rather than closing and reopening.
+        if (android.os.SystemClock.uptimeMillis() - dismissedAt < 400) return
         if (panel?.open == true) collapse() else expand()
     }
 
@@ -324,13 +328,19 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
                 return super.dispatchKeyEvent(event)
             }
 
-            // A tap outside the panel puts it away, like a dialog.
-            override fun onTouchEvent(event: MotionEvent): Boolean {
-                if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+            // A tap anywhere outside the panel puts it away, like a dialog, without reaching the app
+            // underneath. The panel window is touch-modal, so those taps arrive here with coordinates
+            // outside its bounds; checked before the WebView, which would otherwise take them.
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                val action = event.actionMasked
+                val outside = action == MotionEvent.ACTION_OUTSIDE ||
+                    (action == MotionEvent.ACTION_DOWN && (event.x < 0 || event.y < 0 || event.x > width || event.y > height))
+                if (outside) {
+                    dismissedAt = android.os.SystemClock.uptimeMillis()
                     collapse()
                     return true
                 }
-                return super.onTouchEvent(event)
+                return super.dispatchTouchEvent(event)
             }
         }.apply {
             orientation = LinearLayout.VERTICAL
@@ -358,7 +368,7 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
             }
         }
         private val params = overlay(0, 0, focusable = true).apply {
-            flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or WindowManager.LayoutParams.FLAG_DIM_BEHIND
+            flags = flags or WindowManager.LayoutParams.FLAG_DIM_BEHIND
             dimAmount = 0.35f
             // An overlay of fixed size can't be resized for the keyboard: it pads itself instead (below).
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
