@@ -97,3 +97,14 @@ async def test_handoff_needs_the_token(world):
     world.hermes.elsewhere["20261020_101010_bbbbbb"] = {"id": "20261020_101010_bbbbbb", "title": "x", "rows": [], "started_at": 0, "pinned": False, "archived": False}
     assert (await _handoff(world, "20261020_101010_bbbbbb", token=None)).status == 401
     assert "20261020_101010_bbbbbb" not in world.hermes.sessions
+
+
+async def test_a_script_can_start_a_thread_out_of_sight(world):
+    await world.sign_up()
+    started = await _start(world, {"text": "review web#12", "title": "Review web#12", "archived": True})
+    assert started.status == 200, await started.text()
+    session = (await started.json())["session"]
+    assert world.hermes.sessions[session]["rows"][0]["text"] == "review web#12"
+    assert await (await world.http.get(world.url("/api/sessions"))).json() == []
+    archived = await (await world.http.get(world.url("/api/sessions?archived=only"))).json()
+    assert [row["id"] for row in archived] == [session]

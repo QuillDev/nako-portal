@@ -62,7 +62,7 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
       return
     }
     if (m.role === "assistant" && !m.text.trim() && !m.reasoning) return
-    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !ends[i]))) return
+    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !m.post && !ends[i]))) return
     flush()
     const key = String(m.row_id ?? i)
     out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images, steered: m.steered } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })

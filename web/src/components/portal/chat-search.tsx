@@ -1,7 +1,7 @@
 // Cmd/Ctrl+K or the sidebar's Find row: find a chat by title, archived ones included. Picking an
 // archived chat brings it back to the list and opens it. It grows out of the Find row when that's on
 // screen (input over the row, list unfolding below), else it sits near the top of the window.
-import { ArchiveIcon, BellIcon, MessageSquareIcon } from "lucide-react";
+import { ArchiveIcon, BellIcon, GitPullRequestIcon, MessageSquareIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { type CSSProperties, memo, useEffect, useMemo, useState } from "react";
 import {
@@ -153,7 +153,7 @@ export const ChatSearch = memo(function ChatSearch({
                     onSelect={() => pick(s.id, false)}
                     value={`chat:${s.id}`}
                   >
-                    {s.notifications ? <BellIcon /> : <MessageSquareIcon />}
+                    {s.notifications ? <BellIcon /> : s.reviews ? <GitPullRequestIcon /> : <MessageSquareIcon />}
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
                   </CommandItem>
                 ))}

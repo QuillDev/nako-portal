@@ -153,4 +153,9 @@ async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
     store._db.archived.add(first)
     assert plugin._ensure_chat(store) == first
     assert store._db.archived == set()
+    # The Reviews chat comes back the same way, titled on its first post.
+    reviews = plugin._ensure_chat(store, "reviews", "Reviews")
+    store._db.archived.add(reviews)
+    assert plugin._ensure_chat(store, "reviews", "Reviews") == reviews
+    assert store._db.archived == set() and store._db.titles[reviews] == "Reviews"
     assert plugin._ensure_chat(None) is None
