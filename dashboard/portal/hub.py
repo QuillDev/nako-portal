@@ -192,6 +192,17 @@ class Hub:
         self.inboxes = inboxes
         return rows
 
+    async def archived(self):
+        rows = await asyncio.to_thread(self.backend.archived_sessions)
+        return [
+            {
+                "id": row["id"],
+                "title": row.get("title") or row.get("preview") or "untitled",
+                "started_at": row.get("started_at") or 0,
+            }
+            for row in rows
+        ]
+
     async def open(self, session):
         thread = await asyncio.to_thread(self.backend.thread, session)
         if thread is None:

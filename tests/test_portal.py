@@ -517,6 +517,24 @@ async def test_pins_and_archives_are_saved_on_the_session(world):
     assert await (await world.http.get(world.url("/api/sessions"))).json() == []
 
 
+async def test_an_archived_chat_is_listed_apart_and_comes_back_when_unarchived(world):
+    kept = world.hermes.add_session("20261024_060606_aaaaaa", "groceries")
+    gone = world.hermes.add_session("20261024_060607_bbbbbb", "trip plans")
+    await world.sign_up()
+    assert (await world.post(f"/api/sessions/{gone}/archive", {"archived": True})).status == 200
+
+    async def ids(query=""):
+        return [row["id"] for row in await (await world.http.get(world.url(f"/api/sessions{query}"))).json()]
+
+    assert await ids() == [kept]
+    archived = await (await world.http.get(world.url("/api/sessions?archived=only"))).json()
+    assert [(row["id"], row["title"]) for row in archived] == [(gone, "trip plans")]
+
+    assert (await world.post(f"/api/sessions/{gone}/archive", {"archived": False})).status == 200
+    assert sorted(await ids()) == sorted([kept, gone])
+    assert await ids("?archived=only") == []
+
+
 async def test_the_notifications_chat_cant_be_archived_out_of_the_sidebar(world):
     # Archived, it drops out of the list and the bell row has nothing to open.
     inbox = world.hermes.add_session("20261024_070707_eeeeee", "Notifications", chat="inbox")

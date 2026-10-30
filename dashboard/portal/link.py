@@ -29,6 +29,7 @@ HEARTBEAT = 20
 # The hub's backend, as calls over the link. These block (the hub runs them in a thread).
 BACKEND_SYNC = (
     "sessions",
+    "archived_sessions",
     "thread",
     "chat_of",
     "session_of",
