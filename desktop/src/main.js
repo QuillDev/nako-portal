@@ -8,6 +8,7 @@ import { BaseWindow, Menu, Notification, Tray, WebContentsView, app, ipcMain, na
 
 import { GOOGLE_SIGN_IN, browserAgent as agentFrom, signInAgent } from "./agent.js"
 import { listen } from "./alerts.js"
+import { FloatingNako } from "./bubble.js"
 import { ServerOrigin } from "./origin.js"
 import { Pane } from "./pane.js"
 import { begin } from "./signin.js"
@@ -31,6 +32,7 @@ let tray = null
 let origin = null
 let listener = null
 let signIn = null
+let floating = null
 let quitting = false
 
 const icon = name => nativeImage.createFromPath(join(root, "icons", name))
@@ -75,11 +77,15 @@ function openPortal(next) {
   origin = next
   if (changed || !listener) {
     listener?.stop()
-    listener = listen({ origin, cookie: cookieHeader, onAlert: showAlert, log })
+    listener = listen({ origin, cookie: cookieHeader, onAlert: showAlert, onFrame: text => floating?.frame(text), log })
     updater.watch(origin)
-    if (changed) pane?.reset()
+    if (changed) {
+      pane?.reset()
+      floating?.reset()
+    }
   }
   portal.webContents.loadURL(origin.url)
+  refreshFloating()
 }
 
 async function cookieHeader() {
@@ -102,6 +108,7 @@ const COMMANDS = {
   pane_chat: ["portal"],
   pane_search: ["portal"],
   pane_toggle: ["portal"],
+  floating: ["portal"],
   update: ["portal"],
   "plugin:window|minimize": ["local", "portal", "bar"],
   "plugin:window|toggle_maximize": ["local", "portal", "bar"],
@@ -151,6 +158,8 @@ ipcMain.handle("nako", async (event, command, args = {}) => {
       return pane.search(String(args.engine))
     case "pane_toggle":
       return pane.toggle()
+    case "floating":
+      return setFloating(Boolean(args.on))
     case "update":
       if (args.action === "install") return void updater.install(false)
       return void updater.check()
@@ -205,7 +214,9 @@ function tellPortal() {
   const open = Boolean(pane?.isOpen)
   const controls = MAC ? "" : `if (window.nakoWindow) { window.nakoWindow.controls = ${!open}; window.dispatchEvent(new Event("nako-window")) }`
   const browser = `if (window.nakoBrowser) { window.nakoBrowser.open = ${open}; window.dispatchEvent(new Event("nako-browser")) }`
-  if (onPortal(portal.webContents.getURL())) portal.webContents.executeJavaScript(controls + browser).catch(() => {})
+  // Settings' "Floating Nako" switch reads this.
+  const float = `window.nakoFloating = { on: ${floatingOn()} }; window.dispatchEvent(new Event("nako-floating"))`
+  if (onPortal(portal.webContents.getURL())) portal.webContents.executeJavaScript(controls + browser + float).catch(() => {})
 }
 
 // The portal marks its title bar strips for the earlier app's drag regions; Chromium drags by CSS.
@@ -284,8 +295,13 @@ function createWindow() {
   })
   window.on("blur", () => {
     if (updater.pending && updater.automatic) updater.install(!window.isVisible())
+    refreshFloating()
   })
-  window.on("focus", () => updater.checkIfDue())
+  window.on("focus", () => {
+    updater.checkIfDue()
+    refreshFloating()
+  })
+  for (const event of ["show", "hide", "minimize", "restore"]) window.on(event, refreshFloating)
   localPage("")
 }
 
@@ -305,6 +321,68 @@ function openChat(session) {
   if (onPortal(portal.webContents.getURL())) portal.webContents.executeJavaScript(`location.hash = ${JSON.stringify(`#/c/${session}`)}`)
   else portal.webContents.loadURL(page)
 }
+
+// ---- the floating Nako ----
+
+const floatingOn = () => settings().floating === true
+
+/** She floats while she's on, the portal is open, and the app's own window isn't the one in front. */
+function refreshFloating() {
+  if (!floating) return
+  const inFront = window.isVisible() && !window.isMinimized() && window.isFocused()
+  if (floatingOn() && origin && !inFront) floating.show()
+  else floating.hide()
+}
+
+function setFloating(on) {
+  saveSettings({ floating: on })
+  refreshFloating()
+  tellPortal()
+  tray?.setContextMenu(trayMenu())
+}
+
+function createFloating() {
+  floating = new FloatingNako({
+    page: join(root, "ui", "floating.html"),
+    preload: join(root, "src", "floating-preload.cjs"),
+    panelPreload: join(root, "src", "panel-preload.cjs"),
+    portalUrl: chat => (chat ? origin.chatPage(chat) : origin.url),
+    opensInPortal: onPortal,
+    userAgent: `${browserAgent()} NakoDesktop/${app.getVersion()} NakoBubble/1`,
+    saved: () => settings().floatingSpot,
+    keep: floatingSpot => saveSettings({ floatingSpot }),
+    openInApp: chat => (chat ? openChat(chat) : showMain()),
+    openLink: url => {
+      showMain()
+      if (/^https?:/i.test(url)) pane.open(url)
+      else external(url)
+    },
+    signIn: () => {
+      showMain()
+      startSignIn()
+    },
+    putAway: () => setFloating(false),
+    quit: () => {
+      quitting = true
+      app.quit()
+    },
+  })
+}
+
+ipcMain.handle("nako-floating", (event, command, args = {}) => {
+  if (floating?.owns(event.sender) !== "sticker" || !event.senderFrame?.url.startsWith("file:")) throw new Error(`${command} not allowed`)
+  return floating.command(String(command), args ?? {})
+})
+
+ipcMain.handle("nako-panel", (event, command) => {
+  if (floating?.owns(event.sender) !== "panel" || !onPortal(event.senderFrame?.url ?? "")) throw new Error(`${command} not allowed`)
+  if (command === "close") return floating.collapse()
+  if (command === "open_in_app") {
+    const chat = floating.panelChat()
+    floating.collapse()
+    return chat ? openChat(chat) : showMain()
+  }
+})
 
 function external(url) {
   shell.openExternal(url).catch(error => log(`couldn't open ${url}: ${error.message}`))
@@ -326,6 +404,7 @@ function notify(title, body, onClick) {
 function showAlert(alert) {
   // Nothing to tell someone already looking at the app.
   if (window.isVisible() && window.isFocused()) return
+  if (floating?.isShown) floating.alert(alert.session)
   if (!alert.session) return void notify(alert.title, alert.body)
   shown.get(alert.session)?.close()
   const note = notify(alert.title, alert.body, () => openChat(alert.session))
@@ -369,10 +448,8 @@ function trayIcon() {
   return image
 }
 
-function createTray() {
-  tray = new Tray(trayIcon())
-  tray.setToolTip("Nako")
-  const items = [
+function trayMenu() {
+  return Menu.buildFromTemplate([
     { label: "Open Nako", click: showMain },
     {
       label: "Change server",
@@ -382,6 +459,7 @@ function createTray() {
         showMain()
       },
     },
+    { label: "Floating Nako", type: "checkbox", checked: floatingOn(), click: item => setFloating(item.checked) },
     // Only installs that replace themselves; the .deb and Homebrew update through their package manager.
     ...(updater.enabled ? [{ label: "Check for updates", click: () => updater.checkNow() }] : []),
     { type: "separator" },
@@ -392,8 +470,13 @@ function createTray() {
         app.quit()
       },
     },
-  ]
-  tray.setContextMenu(Menu.buildFromTemplate(items))
+  ])
+}
+
+function createTray() {
+  tray = new Tray(trayIcon())
+  tray.setToolTip("Nako")
+  tray.setContextMenu(trayMenu())
   tray.on("click", showMain)
 }
 
@@ -427,6 +510,7 @@ app.whenReady().then(() => {
     tray = null
   }
   createWindow()
+  createFloating()
   if (hidden && !tray) window.show()
 })
 

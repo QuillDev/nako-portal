@@ -1,4 +1,5 @@
 import { api, unb64url } from "./api"
+import { desktopApp } from "./desktop-window"
 
 // The Android app's own alerts (a native notification service), exposed by its shell.
 type AppBridge = {
@@ -18,10 +19,26 @@ export function appAlerts(): "on" | "off" | "app" | null {
 
 export const openAppNotificationSettings = () => appBridge()?.openNotificationSettings()
 
-/** Nako's floating sticker over other apps, in an Android app new enough to have one. Else null. */
-export const appBubble = (): "on" | "off" | null => appBridge()?.bubble?.() ?? null
+// The desktop app's floating Nako: it says whether she's on, and takes the switch as a command.
+const desktopFloating = () => (window as unknown as { nakoFloating?: { on: boolean } }).nakoFloating
 
-export const setAppBubble = (on: boolean) => appBridge()?.setBubble?.(on)
+/** Nako's floating sticker over other apps, in an Android or desktop app new enough to have one. Else null. */
+export function appBubble(): "on" | "off" | null {
+  const android = appBridge()?.bubble?.()
+  if (android) return android
+  const desktop = desktopFloating()
+  return desktop ? (desktop.on ? "on" : "off") : null
+}
+
+export function setAppBubble(on: boolean) {
+  const desktop = desktopFloating()
+  if (!appBridge()?.setBubble && desktop) {
+    desktop.on = on
+    void desktopApp()?.invoke("floating", { on }).catch(() => {})
+    return
+  }
+  appBridge()?.setBubble?.(on)
+}
 
 export function pushState(): "unsupported" | "on" | "blocked" | "off" {
   if (!("Notification" in window) || !("serviceWorker" in navigator)) return "unsupported"

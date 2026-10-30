@@ -1,0 +1,51 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+#nako {
+  position: absolute;
+  inset: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: grab;
+  outline: none;
+}
+
+#nako:active {
+  cursor: grabbing;
+}
+
+img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.35));
+  transition: transform 120ms ease-out;
+  pointer-events: none;
+}
+
+#nako:hover img {
+  transform: scale(1.06);
+}
+
+#dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f472b6;
+  box-shadow: 0 0 0 2px #0d0a11;
+}
+
+#dot[hidden] {
+  display: none;
+}

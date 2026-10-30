@@ -143,8 +143,14 @@ export function Settings({ portal }: { portal: Portal }) {
       setApp(appAlerts())
       setBubble(appBubble())
     }
+    // The desktop app says when its floating Nako is turned on or off from its tray menu.
+    const floating = () => setBubble(appBubble())
     document.addEventListener("visibilitychange", reread)
-    return () => document.removeEventListener("visibilitychange", reread)
+    window.addEventListener("nako-floating", floating)
+    return () => {
+      document.removeEventListener("visibilitychange", reread)
+      window.removeEventListener("nako-floating", floating)
+    }
   }, [])
   const [error, setError] = useState("")
   const theme = useTheme()
