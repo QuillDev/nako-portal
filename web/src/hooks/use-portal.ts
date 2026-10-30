@@ -2,6 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
+import { rememberTitles } from "@/lib/session-refs"
 import type { Command, CommandNote, Frame, HistoryMessage, Live, Me, OpenSession, SessionRow } from "@/lib/types"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
@@ -119,6 +120,7 @@ export function usePortal() {
       const rows = await api<SessionRow[]>("/api/sessions")
       // The same list again (a reconnect, another tab's change elsewhere) leaves the sidebar as it is.
       setSessions(shown => (JSON.stringify(shown) === JSON.stringify(rows) ? shown : rows))
+      rememberTitles(rows)
       setConnected(true)
     } catch (e) {
       if (/offline/i.test(String((e as Error).message))) setConnected(false)
