@@ -25,6 +25,7 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -51,6 +52,8 @@ DEFAULT_PROFILE = "default"
 # The one person portal threads belong to; passkey sign-in already decided who that is.
 OWNER = "owner"
 INBOX_POLL = 2
+# How long an out-of-process send waits for the gateway to open a named thread (a few inbox polls).
+CHANNEL_WAIT = 4 * INBOX_POLL + 2
 # Transcripts kept projected for chats read lately; a long one holds a few MB.
 CACHED_THREADS = 8
 ROOT = Path(__file__).parent
@@ -674,7 +677,40 @@ def _env_enablement():
 async def _standalone_send(pconfig, chat_id, message, *, thread_id=None, media_files=None, force_document=False):
     text = "\n".join([message, *(f"MEDIA:{path}" for path in media_files or [])])
     row = await asyncio.to_thread(_deliver, chat_id, text)
+    chat = str(chat_id or HOME_CHANNEL)
+    if chat in CHANNELS and chat != HOME_CHANNEL:  # the gateway opens Notifications as it connects
+        await _thread_ready(chat)
     return {"success": True, "message_id": str(row)}
+
+
+async def _thread_ready(chat, timeout=None):
+    """`hermes send` mirrors the post into the chat's thread as soon as this returns, and the
+    gateway opens a Reviews thread only when its first post arrives, so wait for it to be there.
+    Without a gateway running it never appears; the post still goes out once one starts."""
+    from hermes_constants import get_hermes_home
+
+    state = get_hermes_home() / "state.db"
+    deadline = time.monotonic() + (CHANNEL_WAIT if timeout is None else timeout)
+    while time.monotonic() < deadline:
+        if state.exists():
+            with closing(sqlite3.connect(f"file:{state}?mode=ro", uri=True, timeout=5)) as db:
+                found = db.execute(
+                    "SELECT 1 FROM sessions WHERE source='portal' AND chat_id=? AND ended_at IS NULL LIMIT 1", (chat,)
+                ).fetchone()
+            if found:
+                return True
+        await asyncio.sleep(0.25)
+    return False
+
+
+# A portal chat id as `hermes send --to portal:<id>` and cron name it: the named threads, a new
+# thread, or a thread's own id. Anything else falls through to Hermes's channel directory.
+TARGET = re.compile(r"^(?:new|[0-9a-f]{16}|" + "|".join(map(re.escape, CHANNELS)) + r")$")
+
+
+def _parse_target(ref):
+    ref = str(ref or "").strip()
+    return (ref, None) if TARGET.match(ref) else None
 
 
 def _adapter(config):
@@ -931,6 +967,7 @@ def register(ctx):
         validate_config=_validate,
         env_enablement_fn=_env_enablement,
         standalone_sender_fn=_standalone_send,
+        parse_target_ref_fn=_parse_target,
         cron_deliver_env_var="PORTAL_HOME_CHANNEL",
         max_message_length=0,
         emoji="🪟",
