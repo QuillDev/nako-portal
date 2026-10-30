@@ -4,9 +4,10 @@ import {
   ChevronLeftIcon,
   PinIcon,
   PlusIcon,
+  SearchIcon,
   SettingsIcon,
 } from "lucide-react";
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -14,7 +15,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Input } from "@/components/ui/input";
 import { openChatSearch, SEARCH_KEYS } from "@/components/portal/chat-search";
 import type { Portal } from "@/hooks/use-portal";
 import {
@@ -133,20 +133,12 @@ export function Sidebar({
   className?: string;
 }) {
   const { go, phone, toggle } = useDrawer();
-  const [filter, setFilter] = useState("");
   const rename = useRenameDialog(portal);
-  const needle = filter.trim().toLowerCase();
   const { sessions, pin, archive, prefetch } = portal;
   const listed = useMemo(
     () =>
-      groups(
-        sessions.filter(
-          (s) =>
-            !s.notifications &&
-            (!needle || s.title.toLowerCase().includes(needle)),
-        ),
-      ),
-    [sessions, needle],
+      groups(sessions.filter((s) => !s.notifications)),
+    [sessions],
   );
   const actions = useMemo(
     () => ({ pin, archive, rename: rename.start }),
@@ -159,7 +151,7 @@ export function Sidebar({
     <aside
       className={cn("flex w-full flex-col border-r bg-sidebar", className)}
     >
-      <div className="flex flex-col gap-3 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <div className="flex flex-col gap-1 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div
           className="flex items-center gap-2 pl-1"
           data-tauri-drag-region="deep"
@@ -188,25 +180,19 @@ export function Sidebar({
             </Button>
           )}
         </div>
-        <div className="relative">
-          <Input
-            aria-label="Search chats"
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search"
-            type="search"
-            value={filter}
-          />
-          {!phone && !filter && (
-            <button
-              className="absolute top-1/2 right-2 -translate-y-1/2 rounded border px-1.5 py-0.5 font-sans text-[11px] text-muted-foreground leading-none hover:text-foreground"
-              onClick={openChatSearch}
-              title="Search all chats, archived ones included"
-              type="button"
-            >
+        <button
+          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-muted-foreground text-sm hover:bg-accent hover:text-foreground"
+          onClick={openChatSearch}
+          type="button"
+        >
+          <SearchIcon className="size-4 shrink-0" />
+          <span className="flex-1">Find</span>
+          {!phone && (
+            <kbd className="font-sans text-[11px] text-muted-foreground/70">
               {SEARCH_KEYS}
-            </button>
+            </kbd>
           )}
-        </div>
+        </button>
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {/* Always first. The dot is green while a post waits unread, or shows the chat's status. */}
