@@ -285,7 +285,7 @@
   }
 }
 
-/* The Android app's floating panel: the same page, set a size smaller so more of the chat fits. */
+/* The floating panel (Android and desktop apps): the same page, set a size smaller so more of the chat fits. */
 html.bubble {
   font-size: 14px;
 }
