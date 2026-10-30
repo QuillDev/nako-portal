@@ -77,8 +77,12 @@ export const ChatSearch = memo(function ChatSearch({
     [sessions, q],
   );
   const shelved = useMemo(
-    () => archived.filter((s) => matches(s.title, q)),
-    [archived, q],
+    // A chat already in the list isn't shown as archived too (an older server returns every chat here).
+    () => {
+      const listed = new Set(sessions.map((s) => s.id));
+      return archived.filter((s) => !listed.has(s.id) && matches(s.title, q));
+    },
+    [archived, sessions, q],
   );
 
   const pick = (session: string, wasArchived: boolean) => {
@@ -111,7 +115,7 @@ export const ChatSearch = memo(function ChatSearch({
                   <CommandItem
                     key={s.id}
                     onSelect={() => pick(s.id, false)}
-                    value={s.id}
+                    value={`chat:${s.id}`}
                   >
                     {s.notifications ? <BellIcon /> : <MessageSquareIcon />}
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
@@ -125,7 +129,7 @@ export const ChatSearch = memo(function ChatSearch({
                   <CommandItem
                     key={s.id}
                     onSelect={() => pick(s.id, true)}
-                    value={s.id}
+                    value={`archived:${s.id}`}
                   >
                     <ArchiveIcon />
                     <span className="min-w-0 flex-1 truncate text-muted-foreground">
