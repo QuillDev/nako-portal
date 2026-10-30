@@ -13,6 +13,7 @@ import android.graphics.BitmapFactory
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.IBinder
+import android.util.Log
 import android.webkit.CookieManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -116,15 +117,20 @@ class AlertService : Service() {
     private fun connect(reset: Boolean = false) {
         if (stopped) return
         if (reset) attempts = 0
-        val origin = origin(this) ?: return stopSelf()
+        val origin = origin(this) ?: return stop("no server set")
         val cookie = CookieManager.getInstance().getCookie(origin.value)
-        if (cookie.isNullOrEmpty()) return stopSelf()
+        if (cookie.isNullOrEmpty()) return stop("signed out")
         val request = Request.Builder()
             .url(origin.socketUrl)
             .header("Cookie", cookie)
             .header("Origin", origin.value)
             .build()
         socket = client.newWebSocket(request, Listener(origin))
+    }
+
+    private fun stop(why: String) {
+        Log.w(TAG, "Stopped listening: $why")
+        stopSelf()
     }
 
     private fun retryLater() {
@@ -152,7 +158,7 @@ class AlertService : Service() {
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             // Signed out (cookie expired or passkey removed): stop until the app signs in again.
             if (response?.code == 401 || response?.code == 403) {
-                handler.post { stopSelf() }
+                handler.post { stop("server answered ${response.code}") }
                 return
             }
             handler.post { retryLater() }
@@ -192,6 +198,7 @@ class AlertService : Service() {
 
     companion object {
         const val ALERTS = "alerts"
+        private const val TAG = "NakoAlerts"
         const val QUIET = "connection"
 
         /** The service while it runs, so the app can show or hide the bubble as it comes and goes. */
