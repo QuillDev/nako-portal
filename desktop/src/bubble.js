@@ -4,6 +4,7 @@
 import { BrowserWindow, Menu, screen } from "electron"
 
 import { STICKER, Statuses, inside, nearest, panelSpot, rest } from "./floating.js"
+import { toSystemBrowser } from "./links.js"
 
 const MAC = process.platform === "darwin"
 /** A click on her this soon after the panel closed itself (on losing focus) was meant to close it. */
@@ -22,6 +23,7 @@ export class FloatingNako {
    * `page`/`preload`: the sticker's local page and its preload; `panelPreload`: the panel's.
    * `portalUrl(chat)` the page to open the panel on, `opensInPortal(url)` whether a link stays in it,
    * `userAgent` the panel's agent, `saved`/`keep` her remembered spot, `openInApp(chat)`, `openLink(url)`,
+   * `openExternally(url)` for Cmd/Ctrl-clicked links,
    * `signIn()`, and `putAway()`/`quit()` for her menu.
    */
   constructor(options) {
@@ -198,7 +200,11 @@ export class FloatingNako {
       this.options.openLink(url)
     }
     page.on("will-navigate", event => route(event, event.url))
-    page.setWindowOpenHandler(({ url }) => {
+    page.setWindowOpenHandler(({ url, disposition }) => {
+      if (toSystemBrowser(url, disposition, this.options.opensInPortal)) {
+        this.options.openExternally(url)
+        return { action: "deny" }
+      }
       route({ preventDefault() {} }, url)
       return { action: "deny" }
     })
