@@ -38,10 +38,13 @@ export type BackgroundProcess = {
 
 export type Status = "working" | "needs you" | "done" | "failed"
 
+export type Sender = { session: string; title: string }
+
 export type HistoryMessage =
   // images: local previews for a turn that is still being sent
   // steered: sent while a turn was running, so Hermes fed it into that turn
-  | { role: "user"; text: string; row_id?: string | number; images?: string[]; steered?: boolean }
+  // sender: the thread that sent it in (a report back, a brief), when it isn't the person's own
+  | { role: "user"; text: string; row_id?: string | number; images?: string[]; steered?: boolean; sender?: Sender }
   // label: the cron job that posted it, when it's a cron post
   // post: a message no prompt asked for, in a chat posts land in (a review's status)
   | { role: "assistant"; text: string; reasoning?: string; label?: string; post?: boolean; row_id?: string | number }

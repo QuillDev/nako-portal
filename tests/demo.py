@@ -142,6 +142,21 @@ async def main(port):
             ("assistant", "[shop#412](https://github.com/acme/shop/pull/412) · approved · sam\n- head `9f3c2e1`, ci green\n- ready to merge\n- nit: test name\n\n[open the review](#/c/20261024_091500_r00001)"),
         ],
     )
+    # A thread that started a review, and the review's report handed back to it (`nako-spawn --to`).
+    from portal.hub import from_thread_line  # noqa: E402
+
+    hermes.add_session(
+        "20261024_094000_f00001",
+        "Shop refunds",
+        messages=[
+            ("user", "can you get shop#412 reviewed before i merge it?"),
+            ("assistant", "started a review thread for it. i'll pass on what it finds."),
+            ("user", from_thread_line("20261024_091500_r00001", "Review shop#412") + "review of shop#412 is done. head `9f3c2e1`, ci green, approved.\n\npass 1 found two blockers, both fixed and folded into the refunds commit. a refund that failed at the provider was still marked paid; it now stays failed and shows the provider's error. and the retry loop never backed off, so a down provider got hit every second; it now waits longer each time, up to a minute.\n\npass 2 on `9f3c2e1` found nothing.\n\none nit left: the retry test's name doesn't say what it checks. nothing blocking.\n\ngates all pass: typecheck, unit tests 42/42, e2e orders and refunds, lint."),
+            ("assistant", "the review approved it. only a test-name nit is left, so it's fine to merge."),
+        ],
+    )
+    hermes._row("20261024_091500_r00001", "user", from_thread_line("20261024_094000_f00001", "Shop refunds") + "when you're done, also hand the report back to me.", display_kind="steer")
+    hermes._row("20261024_091500_r00001", "assistant", "will do.")
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")
     # Archived chats: Cmd+K finds them and picking one brings it back.
     for sid, title in (("20261019_080000_a00001", "Plan the garden beds"), ("20261018_080000_a00002", "Compare release note formats")):

@@ -32,6 +32,7 @@ BACKEND_SYNC = (
     "archived_sessions",
     "thread",
     "chat_of",
+    "title_of",
     "session_of",
     "set_title",
     "set_archived",

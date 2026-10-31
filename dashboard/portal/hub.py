@@ -11,6 +11,7 @@ backend:
   sessions() -> [{id, title, preview, started_at, message_count, pinned, chat_id}]
   thread(session) -> {title, messages}      transcript in Hermes's display projection
   chat_of(session) / session_of(chat) -> id or None
+  title_of(session) -> str or None          any session's title (the thread a message came from)
   new_thread(chat, title) -> session id     (async)
   adopt(chat, session) -> session id        (async) move another surface's chat into a new thread
   inbound(chat, text, files)                (async) a message from the person, as the gateway sees it
@@ -63,11 +64,18 @@ STEER_ORIGIN = re.compile(r"^Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?
 # When Hermes compacts a chat mid-turn it restates the unfinished request after the summary, under
 # this header, so the model carries on. The person sent that message once, earlier in the turn.
 RESTATED = re.compile(r"^\[STILL IN PROGRESS\b[^\]]*\]\s*")
+# A message another thread sent in (`nako-spawn --to`, or the brief of a thread one started). The
+# model reads this line, so it knows the text came from another thread and isn't the person's own
+# instruction; the app draws the message as that thread's, not the person's.
+FROM_THREAD = re.compile(r'^\[From another thread, not typed by the user: "([^"\n]*)" \(session ([\w.-]{1,120})\)\]\n+')
+# Hermes cuts a chat's preview short, often inside that line, so a cut-off line goes too.
+FROM_THREAD_PREVIEW = re.compile(r"^\[From another thread, not typed by the user: [^\]]*(?:\]\s*|$)")
+SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 # Prompts and replies in one page of a transcript; tool rows between them come along.
 PAGE_MESSAGES = 30
 # What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
 # tool arguments and display metadata, which made a page of a long chat ~170 KB instead of ~10 KB.
-SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "post", "steered", "name", "context", "tool_call_id")
+SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "post", "steered", "sender", "name", "context", "tool_call_id")
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
 SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
@@ -183,7 +191,7 @@ class Hub:
                 {
                     "id": session,
                     "title": row.get("title") or row.get("preview") or "untitled",
-                    "preview": row.get("preview") or "",
+                    "preview": FROM_THREAD_PREVIEW.sub("", row.get("preview") or ""),
                     "started_at": row.get("started_at") or 0,
                     "message_count": row.get("message_count") or 0,
                     "source": "portal",
@@ -225,14 +233,14 @@ class Hub:
         return {
             "session": session,
             "title": self.titles[session],
-            "messages": _without_restated([_without_sign_off(_as_notification(_without_steer_origin(m))) for m in messages if _is_shown(m)]),
+            "messages": _without_restated([_without_sign_off(_as_notification(_from_thread(_without_steer_origin(m)))) for m in messages if _is_shown(m)]),
             "running": session in self.running,
             **({"live": _progress_view(self.progress[session])} if session in self.running and session in self.progress else {}),
             "status": self.status.get(session),
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
         }
 
-    async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False):
+    async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False, sender=None):
         chat = uuid.uuid4().hex[:16]
         session = await self.backend.new_thread(chat, title)
         if archived:
@@ -241,7 +249,7 @@ class Hub:
         if yolo:
             # Thread-scoped, like Shift+Tab in Desktop: approvals stay on everywhere else.
             await asyncio.to_thread(self.backend.set_yolo, chat)
-        submitted = await self.send(session, text, files)
+        submitted = await self.send(session, text, files, sender=sender)
         await self.broadcast({"kind": "sessions.changed"})
         return {"session": session, **submitted}
 
@@ -258,14 +266,24 @@ class Hub:
             raise ValueError("This chat isn't a portal thread, so it can't take new messages here")
         return chat
 
-    async def send(self, session, text, files=()):
+    async def send(self, session, text, files=(), sender=None):
+        """A message into a thread. `sender`: the thread it came from, when another thread sent it
+        (the loopback API only); the person's own messages have none."""
         files = list(files)
-        if not str(text or "").strip() and not files:
+        text = str(text or "").strip()
+        if not text and not files:
             raise ValueError("Nothing to send")
         for upload in files:
             if len(upload["data"]) > MAX_FILE:
                 raise ValueError("Files must be under 25 MiB")
-        await self.backend.inbound(await self._chat(session), str(text or "").strip(), files)
+        chat = await self._chat(session)
+        # A `/command` stays a command: the gateway only runs one that starts the message.
+        if sender is not None and not text.startswith("/"):
+            if not SESSION_ID.match(str(sender)):
+                raise ValueError("The sending thread's id isn't a session id")
+            title = await asyncio.to_thread(self.backend.title_of, str(sender))
+            text = from_thread_line(str(sender), title) + text
+        await self.backend.inbound(chat, text, files)
         await self._set_status(session, WORKING)
         return {"status": "sent"}
 
@@ -537,11 +555,11 @@ def _without_restated(messages):
     for message in messages:
         match = RESTATED.match(message.get("text") or "") if message.get("role") == "user" else None
         if match:
-            text = message["text"][match.end():].strip()
+            message = _from_thread({**message, "text": message["text"][match.end():].strip()})
+            text = message["text"]
             sent = next((m for m in reversed(out) if m.get("role") == "user"), None)
             if sent is not None and (sent.get("text") or "").strip() == text:
                 continue
-            message = {**message, "text": text}
         out.append(message)
     return out
 
@@ -574,3 +592,17 @@ def _as_notification(message):
     if not match:
         return message
     return {**message, "role": "assistant", "label": match.group(1).strip(), "text": message["text"][match.end():].strip()}
+
+
+def from_thread_line(session, title):
+    """The line a message from another thread starts with: who sent it, for the model and the app."""
+    title = " ".join(str(title or "").split()).replace('"', "'")[:80] or "untitled"
+    return f'[From another thread, not typed by the user: "{title}" (session {session})]\n\n'
+
+
+def _from_thread(message):
+    """A message another thread sent, with its sender line lifted into `sender` for the app."""
+    match = FROM_THREAD.match(message.get("text") or "") if message.get("role") == "user" else None
+    if not match:
+        return message
+    return {**message, "text": message["text"][match.end():].strip(), "sender": {"session": match.group(2), "title": match.group(1)}}
