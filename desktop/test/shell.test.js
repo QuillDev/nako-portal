@@ -11,6 +11,7 @@ import { ServerOrigin } from "../src/origin.js"
 import { begin } from "../src/signin.js"
 import { DIVIDER_WIDTH, dragRange, shareFor, split } from "../src/layout.js"
 import { LIVE_CHATS, Tabs, tabName } from "../src/tabs.js"
+import { toSystemBrowser } from "../src/links.js"
 import { announcement, due, newer, platformKey, reason } from "../src/update.js"
 
 const origin = input => ServerOrigin.parse(input)?.value ?? null
@@ -276,4 +277,12 @@ test("the divider stops before either side gets too narrow", () => {
   // A window just wide enough to share still fits both minimums.
   const [portal, , pane] = split(760, true, 0.9)
   assert.ok(portal >= 380 && pane >= 360)
+})
+
+test("cmd/ctrl-clicked outside web links go to the system browser, others stay in the app", () => {
+  const onPortal = url => url.startsWith("https://portal.example.com")
+  assert.equal(toSystemBrowser("https://example.org/a", "background-tab", onPortal), true)
+  assert.equal(toSystemBrowser("https://example.org/a", "foreground-tab", onPortal), false)
+  assert.equal(toSystemBrowser("https://portal.example.com/chat/1", "background-tab", onPortal), false)
+  assert.equal(toSystemBrowser("mailto:me@example.org", "background-tab", onPortal), false)
 })

@@ -9,6 +9,7 @@ import { BaseWindow, Menu, Notification, Tray, WebContentsView, app, ipcMain, na
 import { GOOGLE_SIGN_IN, browserAgent as agentFrom, signInAgent } from "./agent.js"
 import { listen } from "./alerts.js"
 import { FloatingNako } from "./bubble.js"
+import { toSystemBrowser } from "./links.js"
 import { ServerOrigin } from "./origin.js"
 import { Pane } from "./pane.js"
 import { begin } from "./signin.js"
@@ -246,8 +247,7 @@ function createWindow() {
   page.setUserAgent(`${browserAgent()} NakoDesktop/${app.getVersion()}`)
   page.on("will-navigate", event => navigate(event, event.url))
   page.setWindowOpenHandler(({ url, disposition }) => {
-    // Cmd-click (Ctrl-click off macOS) or a middle click asks for a background tab: the system browser.
-    if (disposition === "background-tab" && /^https?:/i.test(url) && !onPortal(url)) {
+    if (toSystemBrowser(url, disposition, onPortal)) {
       external(url)
       return { action: "deny" }
     }
@@ -346,6 +346,7 @@ function createFloating() {
     saved: () => settings().floatingSpot,
     keep: floatingSpot => saveSettings({ floatingSpot }),
     openInApp: chat => (chat ? openChat(chat) : showMain()),
+    openExternally: external,
     openLink: url => {
       showMain()
       if (/^https?:/i.test(url)) pane.open(url)
