@@ -295,13 +295,8 @@ function createWindow() {
   })
   window.on("blur", () => {
     if (updater.pending && updater.automatic) updater.install(!window.isVisible())
-    refreshFloating()
   })
-  window.on("focus", () => {
-    updater.checkIfDue()
-    refreshFloating()
-  })
-  for (const event of ["show", "hide", "minimize", "restore"]) window.on(event, refreshFloating)
+  window.on("focus", () => updater.checkIfDue())
   localPage("")
 }
 
@@ -326,11 +321,10 @@ function openChat(session) {
 
 const floatingOn = () => settings().floating === true
 
-/** She floats while she's on, the portal is open, and the app's own window isn't the one in front. */
+/** She floats while she's on and the portal is open, whichever window is in front. */
 function refreshFloating() {
   if (!floating) return
-  const inFront = window.isVisible() && !window.isMinimized() && window.isFocused()
-  if (floatingOn() && origin && !inFront) floating.show()
+  if (floatingOn() && origin) floating.show()
   else floating.hide()
 }
 
