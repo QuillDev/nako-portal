@@ -3,12 +3,25 @@ const SLOP = 4
 const nako = document.getElementById("nako")
 const img = nako.querySelector("img")
 const dot = document.getElementById("dot")
+const pill = document.getElementById("pill")
+const working = document.getElementById("working")
+const finished = document.getElementById("finished")
 const app = window.nakoFloating
+
+/** One count in the pill under her, gone at zero. */
+function show(element, count) {
+  element.textContent = count ? String(count) : ""
+  element.hidden = !count
+}
 
 app.on(state => {
   const src = state.mood === "working" ? "floating/working.webp" : "floating/idle.png"
   if (!img.src.endsWith(src)) img.src = src
   dot.hidden = !state.dot
+  show(working, state.working)
+  show(finished, state.finished)
+  pill.hidden = !state.working && !state.finished
+  nako.title = [state.working && `${state.working} working`, state.finished && `${state.finished} finished`].filter(Boolean).join(", ") || "Nako"
 })
 
 let press = null
