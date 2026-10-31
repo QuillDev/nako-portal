@@ -95,7 +95,7 @@ class AlertService : Service() {
             return
         }
         val current = bubble ?: Bubble(android.view.ContextThemeWrapper(this, R.style.Theme_Nako), server).also { bubble = it }
-        current.mood(statuses.mood)
+        current.status(statuses.mood, statuses.counts)
         current.show()
     }
 
@@ -146,7 +146,9 @@ class AlertService : Service() {
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             if (statuses.apply(text)) {
-                handler.post { bubble?.mood(statuses.mood) }
+                val mood = statuses.mood
+                val counts = statuses.counts
+                handler.post { bubble?.status(mood, counts) }
                 return
             }
             parseAlert(text)?.let { alert ->

@@ -32,6 +32,7 @@ export class FloatingNako {
     this.panel = null
     this.statuses = new Statuses()
     this.mood = "idle"
+    this.counts = { working: 0, finished: 0 }
     this.dot = false
     this.unreadChat = null
     this.closedAt = 0
@@ -82,9 +83,11 @@ export class FloatingNako {
   frame(text) {
     if (!this.statuses.apply(text)) return
     const mood = this.statuses.mood
-    if (mood === this.mood) return
+    const counts = this.statuses.counts
+    if (mood === this.mood && counts.working === this.counts.working && counts.finished === this.counts.finished) return
+    if (mood === "needs-you" && this.mood !== mood) this.dot = true
     this.mood = mood
-    if (mood === "needs-you") this.dot = true
+    this.counts = counts
     this.#send()
   }
 
@@ -146,8 +149,8 @@ export class FloatingNako {
 
   #build() {
     this.sticker = new BrowserWindow({
-      width: STICKER,
-      height: STICKER,
+      width: STICKER.width,
+      height: STICKER.height,
       frame: false,
       transparent: true,
       resizable: false,
@@ -238,7 +241,7 @@ export class FloatingNako {
   #place() {
     const { x, y } = rest(this.spot ?? this.options.saved(), this.#areas())
     this.spot = { x, y }
-    this.sticker.setBounds({ x, y, width: STICKER, height: STICKER })
+    this.sticker.setBounds({ x, y, ...STICKER })
   }
 
   #startDrag(grabX, grabY) {
@@ -248,7 +251,7 @@ export class FloatingNako {
     // window moves under them, and across screens with different scaling.
     this.dragTimer = setInterval(() => {
       const point = screen.getCursorScreenPoint()
-      this.sticker?.setBounds({ x: Math.round(point.x - grabX), y: Math.round(point.y - grabY), width: STICKER, height: STICKER })
+      this.sticker?.setBounds({ x: Math.round(point.x - grabX), y: Math.round(point.y - grabY), ...STICKER })
     }, 16)
   }
 
@@ -263,7 +266,7 @@ export class FloatingNako {
     const [x, y] = this.sticker.getPosition()
     // She stays where she's let go, only pulled back if part of her hangs off the screen.
     this.spot = inside(x, y, nearest(x, y, this.#areas()))
-    this.sticker.setBounds({ ...this.spot, width: STICKER, height: STICKER })
+    this.sticker.setBounds({ ...this.spot, ...STICKER })
     this.options.keep(this.spot)
   }
 
@@ -277,6 +280,6 @@ export class FloatingNako {
   }
 
   #send() {
-    this.sticker?.webContents.send("nako-floating-state", { mood: this.mood, dot: this.dot })
+    this.sticker?.webContents.send("nako-floating-state", { mood: this.mood, dot: this.dot, ...this.counts })
   }
 }

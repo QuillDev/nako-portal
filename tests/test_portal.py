@@ -293,6 +293,33 @@ async def test_a_tab_hears_live_events_only_for_the_chat_it_shows(world):
     await ws.close()
 
 
+async def test_a_turn_that_ends_unseen_stays_unread_until_its_chat_is_opened(world):
+    sid = world.hermes.add_session("20261024_050505_eeeeee", "ci")
+    await world.sign_up()
+    sticker = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+    finished = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("status") == "done")
+    assert (finished["session"], finished["unread"]) == (sid, True)
+
+    # A socket that joins later hears where every chat stands right away.
+    late = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    joined = await next_message(late, lambda m: m.get("kind") == "status")
+    assert (joined["session"], joined["status"], joined["unread"]) == (sid, "done", True)
+
+    # Opening the chat in front of you reads it, and every socket hears so.
+    page = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await page.send_json({"watch": sid, "looking": True})
+    read = await next_message(sticker, lambda m: m.get("kind") == "status")
+    assert (read["session"], read["status"], read["unread"]) == (sid, "done", False)
+
+    # A turn that ends while you're reading it is never unread.
+    await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "again"}, headers={"Origin": ORIGIN})
+    done = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("status") == "done")
+    assert done["unread"] is False
+    for ws in (sticker, late, page):
+        await ws.close()
+
+
 async def test_opening_the_notifications_chat_before_listing_chats_still_marks_it_read(world):
     inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox", messages=[("user", "[Cron delivery: build watch]\nci red")])
     await world.sign_up()

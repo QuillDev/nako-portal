@@ -4,6 +4,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.ImageDecoder
 import android.graphics.PixelFormat
@@ -43,6 +44,27 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
     private val prefs = context.getSharedPreferences("shell", Context.MODE_PRIVATE)
     private val density = context.resources.displayMetrics.density
     private val size = dp(64)
+    /** Her window is taller than she is: the count pill hangs under her. */
+    private val tall = size + dp(12)
+    private val night = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    private val working = count(if (night) PINK else PINK_LIGHT)
+    private val finished = count(GREEN)
+    /** Under her: how many chats are working (pink) and how many finished that you haven't opened (green). */
+    private val pill = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(7), 0, dp(7), 0)
+        background = GradientDrawable().apply {
+            cornerRadius = dp(8).toFloat()
+            setColor(if (night) PILL else Color.WHITE)
+            setStroke(dp(1), if (night) BORDER else BORDER_LIGHT)
+        }
+        elevation = dp(2).toFloat()
+        addView(working)
+        addView(finished)
+        visibility = View.GONE
+    }
+    private var pulse: ValueAnimator? = null
     private val sticker = ImageView(context).apply { contentDescription = "Nako" }
     private val dot = View(context).apply {
         background = GradientDrawable().apply {
@@ -53,10 +75,12 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         visibility = View.GONE
     }
     private val head = FrameLayout(context).apply {
-        addView(sticker, FrameLayout.LayoutParams(size, size))
+        addView(sticker, FrameLayout.LayoutParams(size, size, Gravity.TOP))
         addView(dot, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(4), dp(4), 0) })
+        addView(pill, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(16), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        clipChildren = false
     }
-    private val headParams = overlay(size, size, focusable = false)
+    private val headParams = overlay(size, tall, focusable = false)
     private val target = ImageView(context).apply {
         setImageResource(R.drawable.pane_close)
         scaleType = ImageView.ScaleType.CENTER
@@ -95,7 +119,7 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         val screen = screen()
         val left = prefs.getBoolean(KEY_LEFT, false)
         headParams.x = BubbleLayout.edgeX(left, size, screen.first)
-        headParams.y = BubbleLayout.fromShare(prefs.getFloat(KEY_Y, 0.3f), size, screen.second)
+        headParams.y = BubbleLayout.fromShare(prefs.getFloat(KEY_Y, 0.3f), tall, screen.second)
         runCatching { windows.addView(head, headParams) }.onSuccess { shown = true }
     }
 
@@ -107,6 +131,7 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
     }
 
     fun destroy() {
+        stopPulse()
         hide()
         panel?.destroy()
         panel = null
@@ -118,8 +143,61 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         dot.visibility = View.VISIBLE
     }
 
-    fun mood(next: Mood) {
+    /** What she shows: her mood, and the counts in the pill under her. */
+    fun status(next: Mood, counts: Counts) {
         if (next != mood) showMood(next)
+        show(working, counts.working)
+        show(finished, counts.finished)
+        // The space between the two counts, only while both show.
+        finished.setPaddingRelative(if (counts.working > 0) dp(6) else 0, 0, 0, 0)
+        pill.visibility = if (counts.working > 0 || counts.finished > 0) View.VISIBLE else View.GONE
+        if (counts.working > 0) startPulse() else stopPulse()
+        head.contentDescription = listOfNotNull(
+            "Nako",
+            "${counts.working} working".takeIf { counts.working > 0 },
+            "${counts.finished} finished".takeIf { counts.finished > 0 },
+        ).joinToString(", ")
+    }
+
+    private fun show(view: android.widget.TextView, count: Int) {
+        view.text = count.toString()
+        view.visibility = if (count > 0) View.VISIBLE else View.GONE
+    }
+
+    /** One count in the pill: a coloured dot, then the number. */
+    private fun count(color: Int) = android.widget.TextView(context).apply {
+        setTextColor(if (night) "#ECECEF".toColorInt() else "#18181B".toColorInt())
+        textSize = 10.5f
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        fontFeatureSettings = "tnum"
+        includeFontPadding = false
+        compoundDrawablePadding = dp(3)
+        val dot = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(color)
+            setSize(dp(6), dp(6))
+        }
+        dot.setBounds(0, 0, dp(6), dp(6))
+        setCompoundDrawablesRelative(dot, null, null, null)
+        visibility = View.GONE
+    }
+
+    private fun startPulse() {
+        if (pulse != null) return
+        val dot = working.compoundDrawablesRelative[0]
+        pulse = ValueAnimator.ofInt(255, 102).apply {
+            duration = 800
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { dot.alpha = it.animatedValue as Int }
+            start()
+        }
+    }
+
+    private fun stopPulse() {
+        pulse?.cancel()
+        pulse = null
+        working.compoundDrawablesRelative[0]?.alpha = 255
     }
 
     /** The screen changed (fold, rotation): keep the bubble on its side at the same height share. */
@@ -127,7 +205,7 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         if (!shown) return
         val screen = screen()
         headParams.x = BubbleLayout.edgeX(prefs.getBoolean(KEY_LEFT, false), size, screen.first)
-        headParams.y = BubbleLayout.fromShare(prefs.getFloat(KEY_Y, 0.3f), size, screen.second)
+        headParams.y = BubbleLayout.fromShare(prefs.getFloat(KEY_Y, 0.3f), tall, screen.second)
         panel?.let { if (it.open) it.place(screen) }
         update()
     }
@@ -276,7 +354,7 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
                         return true
                     }
                     val screen = screen()
-                    val rest = BubbleLayout.settle(headParams.x, headParams.y, size, screen.first, screen.second)
+                    val rest = BubbleLayout.settle(headParams.x, headParams.y, size, screen.first, screen.second, tall)
                     prefs.edit {
                         putBoolean(KEY_LEFT, rest.left)
                         putFloat(KEY_Y, BubbleLayout.share(rest.y, screen.second))
@@ -419,7 +497,7 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         }
 
         fun place(screen: Pair<Int, Int>) {
-            val spot = BubbleLayout.panel(headParams.y, size, screen.second, dp(8), dp(620)).let {
+            val spot = BubbleLayout.panel(headParams.y, tall, screen.second, dp(8), dp(620)).let {
                 keyboardTop?.let { top -> BubbleLayout.aboveKeyboard(it, top, dp(8)) } ?: it
             }
             params.width = minOf(screen.first - dp(8) * 2, dp(480))
@@ -487,6 +565,9 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
         private val BORDER_LIGHT = Color.argb(31, 0, 0, 0)
         private val MUTED = "#B6A4B1".toColorInt()
         private val PINK = "#EC4899".toColorInt()
+        private val PINK_LIGHT = "#DB2777".toColorInt()
+        private val GREEN = "#10B981".toColorInt()
+        private val PILL = "#18181B".toColorInt()
 
         fun canDraw(context: Context) = Settings.canDrawOverlays(context)
 

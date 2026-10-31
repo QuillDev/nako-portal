@@ -8,7 +8,7 @@ const left = { x: -1280, y: 0, width: 1280, height: 984 }
 
 test("with nothing saved she starts on the main screen's right edge, a third down", () => {
   const spot = rest(undefined, [main, left])
-  assert.deepEqual(spot, { x: 1920 - STICKER - GAP, y: Math.round(1040 * 0.3) })
+  assert.deepEqual(spot, { x: 1920 - STICKER.width - GAP, y: Math.round(1040 * 0.3) })
 })
 
 test("she comes back where she was left", () => {
@@ -20,13 +20,13 @@ test("a spot on a screen that's gone or shrank pulls her onto the nearest screen
   // The left screen was unplugged.
   assert.deepEqual(rest({ x: -900, y: 100 }, [main]), { x: 0, y: 100 })
   // Saved below where the screen now ends.
-  assert.deepEqual(rest({ x: 300, y: 2000 }, [main]), { x: 300, y: 1040 - STICKER })
+  assert.deepEqual(rest({ x: 300, y: 2000 }, [main]), { x: 300, y: 1040 - STICKER.height })
 })
 
 test("let go half off the screen, she's pulled back fully on it", () => {
-  assert.deepEqual(inside(1900, -20, main), { x: 1920 - STICKER, y: 0 })
+  assert.deepEqual(inside(1900, -20, main), { x: 1920 - STICKER.width, y: 0 })
   assert.equal(nearest(-50, 500, [main, left]), left)
-  assert.equal(nearest(-STICKER / 2 + 5, 500, [main, left]), main)
+  assert.equal(nearest(-STICKER.width / 2 + 5, 500, [main, left]), main)
 })
 
 test("the panel opens beside her toward the roomier side, and she never moves", () => {
@@ -35,7 +35,7 @@ test("the panel opens beside her toward the roomier side, and she never moves", 
   assert.deepEqual(right, { x: 1830 - GAP - PANEL.width, y: 200, width: PANEL.width, height: PANEL.height })
   // On the left edge, bottom half: to her right, level with her bottom.
   const low = panelSpot(10, 900, main)
-  assert.deepEqual(low, { x: 10 + STICKER + GAP, y: 900 + STICKER - PANEL.height, width: PANEL.width, height: PANEL.height })
+  assert.deepEqual(low, { x: 10 + STICKER.width + GAP, y: 900 + STICKER.height - PANEL.height, width: PANEL.width, height: PANEL.height })
 })
 
 test("the panel stays on her screen and shrinks to fit a small one", () => {
@@ -68,4 +68,23 @@ test("frames that aren't statuses leave her mood alone", () => {
     assert.equal(statuses.apply(frame), false, frame)
   }
   assert.equal(statuses.mood, "working")
+})
+
+test("she counts the chats working and the ones that finished while you weren't looking", () => {
+  const statuses = new Statuses()
+  const send = (session, status, unread) => statuses.apply(JSON.stringify({ kind: "status", session, status, unread }))
+  assert.deepEqual(statuses.counts, { working: 0, finished: 0 })
+  send("a", "working", false)
+  send("b", "working", false)
+  send("c", "done", true)
+  assert.deepEqual(statuses.counts, { working: 2, finished: 1 })
+  // One finishes unseen, then you open the first finished chat.
+  send("a", "done", true)
+  send("c", "done", false)
+  assert.deepEqual(statuses.counts, { working: 1, finished: 1 })
+  // A failed turn you haven't seen counts as finished too; a new turn there takes it back to working.
+  send("b", "failed", true)
+  assert.deepEqual(statuses.counts, { working: 0, finished: 2 })
+  send("b", "working", false)
+  assert.deepEqual(statuses.counts, { working: 1, finished: 1 })
 })

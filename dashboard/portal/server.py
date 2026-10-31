@@ -781,6 +781,9 @@ class Portal:
         self.hub.join(client)
         try:
             await ws.send_json({"kind": "hub.connected" if self.hub.connected else "hub.disconnected"})
+            # Where every chat stands now; a socket that joins mid-turn would otherwise wait for the next change.
+            for frame in self.hub.status_frames():
+                await ws.send_json(frame)
             async for message in ws:
                 if message.type != WSMsgType.TEXT:
                     continue

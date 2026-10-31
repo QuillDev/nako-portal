@@ -10,7 +10,10 @@ body {
 
 #nako {
   position: absolute;
-  inset: 6px;
+  top: 6px;
+  left: 6px;
+  width: 64px;
+  height: 64px;
   padding: 0;
   border: 0;
   background: none;
@@ -48,4 +51,70 @@ img {
 
 #dot[hidden] {
   display: none;
+}
+
+/* Under her: how many chats are working (pink) and how many finished that you haven't opened (green). */
+#pill {
+  position: absolute;
+  left: 50%;
+  bottom: -14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 16px;
+  padding: 0 7px;
+  border-radius: 8px;
+  background: #18181b;
+  color: #ececef;
+  font: 600 10.5px/16px system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.25), 0 0 0 1px rgb(255 255 255 / 0.12);
+  pointer-events: none;
+}
+
+#pill[hidden],
+#pill [hidden] {
+  display: none;
+}
+
+#pill span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+#pill span::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+#working::before {
+  background: #ec4899;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+#finished::before {
+  background: #10b981;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  #pill {
+    background: #ffffff;
+    color: #18181b;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.2), 0 0 0 1px rgb(0 0 0 / 0.1);
+  }
+
+  #working::before {
+    background: #db2777;
+  }
 }
