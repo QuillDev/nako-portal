@@ -95,6 +95,8 @@ class Hub:
         self.viewing = {}
         self.looking = set()
         self.status = {}
+        # Chats whose last turn ended while nobody had them open; opening one clears it.
+        self.unread = set()
         self.requests = {}
         self.running = set()
         self.titles = {}
@@ -144,11 +146,13 @@ class Hub:
             return
         self.subscribers.setdefault(session, set()).add(client)
         self.viewing[client] = session
+        self._read(session)
 
     def look(self, client, looking):
         """The page on this socket came on screen and into focus, or left it."""
         if looking:
             self.looking.add(client)
+            self._read(self.viewing.get(client))
         else:
             self.looking.discard(client)
 
@@ -171,11 +175,31 @@ class Hub:
     async def _event(self, session, kind, payload=None):
         await self._publish(session, {"kind": "event", "type": kind, "payload": payload or {}})
 
+    def _status_frame(self, session):
+        return {"kind": "status", "session": session, "status": self.status[session], "unread": session in self.unread}
+
+    def status_frames(self):
+        """Every chat's status as it stands, for a socket that just joined."""
+        return [self._status_frame(session) for session in self.status]
+
+    def _read(self, session):
+        """The chat came in front of you: a turn that ended unseen there is seen now."""
+        if session not in self.unread or not self.seen(session):
+            return
+        self.unread.discard(session)
+        if session in self.status:
+            asyncio.get_running_loop().create_task(self.broadcast(self._status_frame(session)))
+
     async def _set_status(self, session, status):
-        if self.status.get(session) == status:
+        unread = status in (DONE, FAILED) and not self.seen(session)
+        if self.status.get(session) == status and (session in self.unread) == unread:
             return
         self.status[session] = status
-        await self.broadcast({"kind": "status", "session": session, "status": status})
+        if unread:
+            self.unread.add(session)
+        else:
+            self.unread.discard(session)
+        await self.broadcast(self._status_frame(session))
 
     # Sessions
 
