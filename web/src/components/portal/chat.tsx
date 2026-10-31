@@ -271,8 +271,9 @@ export function Chat({ portal }: { portal: Portal }) {
         <ConversationScrollButton style={{ bottom: dock + 16 }} />
         {!loading && (
           <Dock onHeight={setDock}>
-            {presence && !inBubble && !c.requests.length && (
+            {presence && !c.requests.length && (
               <Presence
+                bare={inBubble}
                 key={c.session}
                 live={portal.live}
                 outcome={portal.sessions.find(s => s.id === c.session)?.status}
