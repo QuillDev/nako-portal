@@ -357,6 +357,11 @@ class HermesBackend:
             self.owner[chat] = self.profile
         return chat
 
+    def title_of(self, session):
+        """Any session's title in the shown profile, portal or not: the thread a message came from."""
+        rows = self._read("SELECT title FROM sessions WHERE id=?", (session,))
+        return (rows[0][0] or "") if rows else None
+
     def session_of(self, chat):
         """The open thread for a chat: in the calling profile first, then any other (a turn that
         started before a switch still finds its thread)."""

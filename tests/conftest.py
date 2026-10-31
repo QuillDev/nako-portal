@@ -191,6 +191,10 @@ class FakeGateway:
         s = self._shown(sid)
         return None if s is None else {"title": s["title"], "messages": list(s["rows"])}
 
+    def title_of(self, sid):
+        s = self.sessions.get(sid) or self.elsewhere.get(sid)
+        return s["title"] if s else None
+
     def chat_of(self, sid):
         s = self._shown(sid)
         return s["chat"] if s else None

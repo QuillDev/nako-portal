@@ -1,4 +1,4 @@
-import { CheckIcon, CornerDownLeftIcon, FileIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
+import { CheckIcon, CornerDownLeftIcon, FileIcon, ForwardIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
 import { createContext, memo, useContext, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
@@ -10,14 +10,14 @@ import { fileUrl } from "@/lib/api"
 import { ImageViewer } from "./image-viewer"
 import { markdownComponents } from "./markdown-link"
 import { isImage, splitReply, splitUserTurn } from "@/lib/media"
-import { linkSessionRefs } from "@/lib/session-refs"
-import type { HistoryMessage, Live } from "@/lib/types"
+import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
+import type { HistoryMessage, Live, Sender } from "@/lib/types"
 
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
 
 type Block =
   | { kind: "user"; key: string; text: string; images?: string[]; steered?: boolean }
-  | { kind: "assistant"; key: string; text: string; reasoning?: string; label?: string }
+  | { kind: "assistant"; key: string; text: string; reasoning?: string; label?: string; sender?: Sender; steered?: boolean }
   | { kind: "tools"; key: string; steps: Step[] }
   | { kind: "note"; key: string; text: string }
 
@@ -65,7 +65,9 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
     if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !m.post && !ends[i]))) return
     flush()
     const key = String(m.row_id ?? i)
-    out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images, steered: m.steered } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
+    // Another thread's message is Nako's own words, so it reads as hers, under that thread's name.
+    if (m.role === "user" && m.sender) out.push({ kind: "assistant", key, text: m.text, sender: m.sender, steered: m.steered })
+    else out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images, steered: m.steered } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
   })
   notesAt(messages.length)
   flush()
@@ -202,7 +204,32 @@ const User = memo(function User({ session, text, images, steered }: { session: s
   )
 })
 
-const Assistant = memo(function Assistant({ session, text, reasoning, label, streaming }: { session: string; text: string; reasoning?: string; label?: string; streaming?: boolean }) {
+// Which thread a message came from, as a break in the chat that links to it; the chat list's
+// title once it has one. The message under it carries a pink rule down its side.
+function From({ sender, steered }: { sender: Sender; steered?: boolean }) {
+  const title = useChatTitle(sender.session) || sender.title || "another thread"
+  return (
+    <p className="flex min-w-0 items-center gap-1.5 font-medium text-primary text-xs">
+      <ForwardIcon aria-hidden className="size-3.5 shrink-0" />
+      <span className="shrink-0">from</span>
+      <a className="min-w-0 truncate underline decoration-primary/45 underline-offset-2" data-chat-link={sender.session} href={`${CHAT_HREF}${sender.session}`}>
+        {title}
+      </a>
+      {steered && <span className="shrink-0">· steered</span>}
+      <span aria-hidden className="ml-1 h-px min-w-6 flex-1 bg-primary/35" />
+    </p>
+  )
+}
+
+const Assistant = memo(function Assistant({
+  session,
+  text,
+  reasoning,
+  label,
+  sender,
+  steered,
+  streaming,
+}: { session: string; text: string; reasoning?: string; label?: string; sender?: Sender; steered?: boolean; streaming?: boolean }) {
   const { body: raw, files } = splitReply(text)
   const body = useMemo(() => linkSessionRefs(raw), [raw])
   const stopScroll = useContext(StopScroll)
@@ -210,18 +237,22 @@ const Assistant = memo(function Assistant({ session, text, reasoning, label, str
     <Message from="assistant">
       <MessageContent className="w-full">
         {label && <p className="text-muted-foreground text-xs">{label}</p>}
-        {reasoning && (
-          <Reasoning defaultOpen={false} isStreaming={streaming && !body}>
-            <ReasoningTrigger onClick={stopScroll} />
-            <ReasoningContent>{reasoning}</ReasoningContent>
-          </Reasoning>
-        )}
-        {body && (
-          <MessageResponse components={markdownComponents} isAnimating={streaming} linkSafety={{ enabled: false }} mode={streaming ? "streaming" : "static"}>
-            {body}
-          </MessageResponse>
-        )}
-        <Files urls={files.map(path => ({ url: fileUrl(session, path), name: named(path), path }))} />
+        {sender && <From sender={sender} steered={steered} />}
+        {/* Another thread's message: a pink rule down its side, however long it runs. */}
+        <div className={sender ? "flex min-w-0 flex-col gap-2 border-primary border-l-2 pl-3.5" : "contents"}>
+          {reasoning && (
+            <Reasoning defaultOpen={false} isStreaming={streaming && !body}>
+              <ReasoningTrigger onClick={stopScroll} />
+              <ReasoningContent>{reasoning}</ReasoningContent>
+            </Reasoning>
+          )}
+          {body && (
+            <MessageResponse components={markdownComponents} isAnimating={streaming} linkSafety={{ enabled: false }} mode={streaming ? "streaming" : "static"}>
+              {body}
+            </MessageResponse>
+          )}
+          <Files urls={files.map(path => ({ url: fileUrl(session, path), name: named(path), path }))} />
+        </div>
       </MessageContent>
     </Message>
   )
@@ -254,7 +285,7 @@ export function Transcript({
         b.kind === "user" ? (
           <User images={b.images} key={b.key} session={session} steered={b.steered} text={b.text} />
         ) : b.kind === "assistant" ? (
-          <Assistant key={b.key} label={b.label} reasoning={b.reasoning} session={session} text={b.text} />
+          <Assistant key={b.key} label={b.label} reasoning={b.reasoning} sender={b.sender} session={session} steered={b.steered} text={b.text} />
         ) : b.kind === "note" ? (
           <CommandNote key={b.key} text={b.text} />
         ) : (

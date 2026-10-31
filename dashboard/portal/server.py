@@ -204,14 +204,17 @@ class Portal:
         async def start(request):
             body, text = await brief(request)
             hub = await self._hub()
-            started = await hub.create(text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")), archived=bool(body.get("archived")))
+            started = await hub.create(
+                text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")), archived=bool(body.get("archived")), sender=body.get("from") or None
+            )
             return web.json_response(started)
 
         async def send(request):
             # Same turn lock as a typed message: a busy thread queues or steers it.
-            _, text = await brief(request)
+            # `from`: the thread sending it (nako-spawn passes its own session), shown as that thread's message.
+            body, text = await brief(request)
             hub = await self._hub()
-            return web.json_response(await hub.send(self._session(request), text))
+            return web.json_response(await hub.send(self._session(request), text, sender=body.get("from") or None))
 
         async def handoff(request):
             hub = await self._hub()
