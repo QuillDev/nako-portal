@@ -73,6 +73,33 @@ class BubbleLayoutTest {
     }
 
     @Test
+    fun theStickerCountsChatsWorkingAndFinishedUnseen() {
+        val statuses = Statuses()
+        fun send(chat: String, status: String, unread: Boolean) =
+            statuses.apply("""{"kind":"status","session":"$chat","status":"$status","unread":$unread}""")
+        assertEquals(Counts(working = 0, finished = 0), statuses.counts)
+        send("a", "working", false)
+        send("b", "working", false)
+        send("c", "done", true)
+        assertEquals(Counts(working = 2, finished = 1), statuses.counts)
+        // One finishes unseen, then you open the first finished chat.
+        send("a", "done", true)
+        send("c", "done", false)
+        assertEquals(Counts(working = 1, finished = 1), statuses.counts)
+        // A failed turn you haven't seen counts as finished; a new turn there takes it back to working.
+        send("b", "failed", true)
+        assertEquals(Counts(working = 0, finished = 2), statuses.counts)
+        send("b", "working", false)
+        assertEquals(Counts(working = 1, finished = 1), statuses.counts)
+    }
+
+    @Test
+    fun theStickerWithItsPillStaysOnScreen() {
+        // The window is taller than it is wide (the pill hangs under her): it's kept on screen by its height.
+        assertEquals(2200 - 196, BubbleLayout.settle(x = 10, y = 2500, size = 160, screenWidth = 1080, screenHeight = 2200, height = 196).y)
+    }
+
+    @Test
     fun otherFramesLeaveTheMoodAlone() {
         val statuses = Statuses()
         assertFalse(statuses.apply("""{"kind":"alert","title":"t","session":"a"}"""))

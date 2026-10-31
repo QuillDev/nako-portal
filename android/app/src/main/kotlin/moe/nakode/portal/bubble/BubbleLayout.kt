@@ -2,6 +2,7 @@ package moe.nakode.portal.bubble
 
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.math.hypot
@@ -10,9 +11,9 @@ import kotlin.math.roundToInt
 /** Where the floating sticker rests and how it reacts to a drag. All sizes in pixels. */
 object BubbleLayout {
     /** Where a released bubble settles: the nearer side edge, kept on screen vertically. */
-    fun settle(x: Int, y: Int, size: Int, screenWidth: Int, screenHeight: Int): Rest {
+    fun settle(x: Int, y: Int, size: Int, screenWidth: Int, screenHeight: Int, height: Int = size): Rest {
         val left = x + size / 2 < screenWidth / 2
-        return Rest(left, clampY(y, size, screenHeight))
+        return Rest(left, clampY(y, height, screenHeight))
     }
 
     fun clampY(y: Int, size: Int, screenHeight: Int): Int = y.coerceIn(0, maxOf(0, screenHeight - size))
@@ -60,9 +61,13 @@ object BubbleLayout {
 /** What the sticker shows: Nako working on something, waiting on you, or idle. */
 enum class Mood { IDLE, WORKING, NEEDS_YOU }
 
-/** Turn statuses per chat, from the portal's `{"kind":"status"}` frames. */
+/** How many chats are running a turn, and how many finished one you haven't opened since. */
+data class Counts(val working: Int, val finished: Int)
+
+/** Turn statuses per chat, from the portal's `{"kind":"status"}` frames: her mood and the counts under her. */
 class Statuses {
     private val byChat = mutableMapOf<String, String>()
+    private val unread = mutableSetOf<String>()
 
     /** Applies a socket frame; true when it was a status frame. */
     fun apply(frame: String): Boolean {
@@ -71,8 +76,12 @@ class Statuses {
         val chat = obj["session"]?.jsonPrimitive?.contentOrNull ?: return false
         val status = obj["status"]?.jsonPrimitive?.contentOrNull ?: return false
         byChat[chat] = status
+        if (obj["unread"]?.jsonPrimitive?.booleanOrNull == true) unread.add(chat) else unread.remove(chat)
         return true
     }
+
+    val counts: Counts
+        get() = Counts(working = byChat.values.count { it == "working" }, finished = unread.size)
 
     val mood: Mood
         get() = when {
