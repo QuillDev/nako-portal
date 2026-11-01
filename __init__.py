@@ -146,7 +146,12 @@ def _mesh(entry, home):
         exclude = entry.get("skill_sync_exclude") or []
         if isinstance(exclude, str):
             exclude = [part.strip() for part in exclude.split(",")]
-        return {"listen": listen, "skills_dir": str(home / "skills"), "skills_exclude": sorted({str(x) for x in exclude if str(x).strip()})}
+        return {
+            "listen": listen,
+            "skills_dir": str(home / "skills"),
+            "skills_exclude": sorted({str(x) for x in exclude if str(x).strip()}),
+            "plugin": _plugin_origin(entry),
+        }
     hub = str(entry.get("mesh_hub") or "").strip()
     if hub:
         token = os.environ.get("NAKO_MESH_TOKEN") or _env_value(home, "NAKO_MESH_TOKEN")
@@ -157,6 +162,25 @@ def _mesh(entry, home):
             hub += MESH_PATH
         return {"hub": hub, "name": str(entry.get("mesh_name") or _machine_name()), "token": token, "skills_into": str(home / MESH_SKILLS)}
     return {}
+
+
+def _plugin_origin(entry):
+    """Where a new machine installs this plugin from, and the commit this hub runs, so both sides
+    run the same code. A copy installed from a local path points machines at the public repo."""
+
+    def git(*args):
+        try:
+            done = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return done.stdout.strip() if done.returncode == 0 else ""
+
+    source = str(entry.get("mesh_plugin_source") or "").strip()
+    if not source:
+        remote = git("remote", "get-url", "origin")
+        source = remote if remote.startswith(("https://", "git@", "ssh://")) else ""
+    ref = git("rev-parse", "HEAD")
+    return {"source": source or None, "ref": ref if re.fullmatch(r"[0-9a-f]{40}", ref or "") else None}
 
 
 def _env_value(home, key):

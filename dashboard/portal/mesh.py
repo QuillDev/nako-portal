@@ -59,6 +59,11 @@ NODE_CALLS = (
     "process_log",
     "command",
 )
+# How long a new machine's one-line setup works.
+SETUP_TTL = 24 * 3600
+SETUP_PATH = MESH_PATH + "/setup/{code}"
+# Where machines install the plugin from when the hub's own copy came from somewhere they can't reach.
+PLUGIN_SOURCE = "https://github.com/QuillDev/nako-portal.git"
 SKILL_POLL = 60
 SKILL_BATCH = 8 * 1024 * 1024
 SKILL_FILE_MAX = 4 * 1024 * 1024
@@ -112,6 +117,73 @@ def add_node(data, name):
     nodes[name] = {"token_sha256": _digest(token), "added": int(time.time())}
     _write_private(data / NODES_FILE, json.dumps(nodes, indent=2) + "\n")
     return token
+
+
+def _save_nodes(data, nodes):
+    _write_private(Path(data) / NODES_FILE, json.dumps(nodes, indent=2) + "\n")
+
+
+def start_setup(data, name, token, now=None):
+    """A one-line setup for a machine just added: a code for its setup page, which holds the
+    token until the machine joins or a day passes. Only the code's hash is kept for lookups."""
+    now = time.time() if now is None else now
+    nodes = load_nodes(data)
+    code = secrets.token_urlsafe(18)
+    nodes[name]["setup"] = {"code_sha256": _digest(code), "token": token, "expires": now + SETUP_TTL}
+    _save_nodes(data, nodes)
+    return code
+
+
+def setup_for(data, code, now=None):
+    """(machine, its setup) for a live setup code, else (None, None)."""
+    now = time.time() if now is None else now
+    digest = _digest(str(code or ""))
+    for name, entry in load_nodes(data).items():
+        setup = entry.get("setup") or {}
+        if setup.get("code_sha256") and secrets.compare_digest(setup["code_sha256"], digest) and setup.get("expires", 0) > now:
+            return name, setup
+    return None, None
+
+
+def _joined(data, name):
+    """The machine is in: its setup page stops holding the token."""
+    nodes = load_nodes(data)
+    setup = (nodes.get(name) or {}).get("setup")
+    if setup and setup.get("token"):
+        setup.pop("token")
+        _save_nodes(data, nodes)
+
+
+def setup_page(*, name, address, token, code, plugin):
+    """What a stock Hermes on the new machine reads and follows to join."""
+    source = (plugin or {}).get("source") or PLUGIN_SOURCE
+    ref = (plugin or {}).get("ref")
+    install = f"hermes plugins install {source}" + (f" --ref {ref}" if ref else "") + " --enable --yes-deps --force"
+    status = f"curl -fsSL {address}{SETUP_PATH.format(code=code)}/status"
+    return f"""# Join the Nako mesh as "{name}"
+
+The user wants this machine to join their Nako mesh, so their main Hermes (the hub at {address}) can hand it tasks.
+Do every step yourself, in order, with your terminal. If a step fails, stop and tell the user which one and what it printed.
+Never repeat the token below to the user or write it anywhere except through these commands.
+
+1. Install the Nako Portal plugin:
+
+   {install}
+
+2. Join the mesh. This saves the token in this Hermes's .env, adds the hub's synced skills folder, and names the machine:
+
+   hermes mesh join {address} {token} --name {name}
+
+3. Keep the gateway running in the background so the machine stays reachable:
+   run `hermes gateway status`. If no background service is installed, run `hermes gateway install` and then `hermes gateway start`.
+   Otherwise run `hermes gateway restart`. If you are running inside that gateway and can't restart it, ask the user to run
+   `hermes gateway restart` in a terminal, then continue.
+
+4. Check that it joined: run `{status}` every 10 seconds for up to 2 minutes until it prints "online": true.
+   If it never does, show the user the end of ~/.hermes/logs/gateway.log and ~/.hermes/nako-portal/server.log.
+
+5. Tell the user in one line that "{name}" joined the mesh.
+"""
 
 
 def remove_node(data, name):
@@ -262,10 +334,12 @@ class Mesh:
 
     `hub` is this server's own hub; a node's live frames reach the app through it."""
 
-    def __init__(self, data, hub, *, address=None, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
+    def __init__(self, data, hub, *, address=None, plugin=None, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
         self.data = Path(data)
         # Where machines dial in (`mesh_listen`), for the join command a new machine runs.
         self.address = address
+        # {source, ref}: the plugin a new machine installs, so it runs the hub's own version.
+        self.plugin = plugin
         self.hub = hub
         self.skills_dir = Path(skills_dir) if skills_dir else None
         self.skills_exclude = list(skills_exclude or ())
@@ -282,7 +356,26 @@ class Mesh:
         """Let a machine join: its token, and the command that joins it, shown once."""
         token = add_node(self.data, name)
         command = f"hermes mesh join {self.address or '<this hub>'} {token} --name {name}"
-        return {"name": name, "token": token, "command": command}
+        code = start_setup(self.data, name, token, self.clock())
+        url = f"{self.address}{SETUP_PATH.format(code=code)}"
+        prompt = f'Set this machine up as "{name}" in my Nako mesh: run `curl -fsSL {url}` and follow the steps it prints, exactly and in order.'
+        return {"name": name, "token": token, "command": command, "prompt": prompt}
+
+    async def setup(self, request):
+        """GET /mesh/setup/{code}: the steps a new machine's Hermes follows (plain text)."""
+        name, setup = setup_for(self.data, request.match_info["code"], self.clock())
+        if name is None:
+            return web.Response(status=404, text="This setup link expired or was never made. Add the machine again in Settings.\n")
+        if not setup.get("token"):
+            return web.Response(text=f'"{name}" already joined the mesh. Nothing to do.\n')
+        page = setup_page(name=name, address=self.address, token=setup["token"], code=request.match_info["code"], plugin=self.plugin)
+        return web.Response(text=page, content_type="text/plain", headers={"Cache-Control": "no-store"})
+
+    async def setup_status(self, request):
+        name, _ = setup_for(self.data, request.match_info["code"], self.clock())
+        if name is None:
+            return web.json_response({"error": "unknown or expired setup"}, status=404)
+        return web.json_response({"machine": name, "online": name in self.peers})
 
     async def remove(self, name):
         """Revoke a machine's token and drop its link, so it's gone at once."""
@@ -452,6 +545,7 @@ class Mesh:
         if old is not None:
             await old.ws.close()
         log.info("portal: %s joined the mesh", name)
+        _joined(self.data, name)
         await self.hub.broadcast({"kind": "machines.changed"})
         try:
             await peer.run()
@@ -475,6 +569,8 @@ class Mesh:
     def app(self):
         app = web.Application(client_max_size=MAX_FRAME)
         app.router.add_get(MESH_PATH, self.handle)
+        app.router.add_get(SETUP_PATH, self.setup)
+        app.router.add_get(SETUP_PATH + "/status", self.setup_status)
         return app
 
 

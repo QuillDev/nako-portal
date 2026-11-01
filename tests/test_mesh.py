@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import stat
+import time
 
 import aiohttp
 import pytest
@@ -57,7 +59,7 @@ class Machine:
 async def mesh(world, tmp_path):
     data = tmp_path / "hub-data"
     skills = tmp_path / "hub-skills"
-    world.mesh = Mesh(data, world.hub, address="http://100.64.0.1:8799", skills_dir=skills, skills_exclude=["work-only"], store=world.store)
+    world.mesh = Mesh(data, world.hub, address="http://100.64.0.1:8799", plugin={"source": "https://example.test/portal.git", "ref": "a" * 40}, skills_dir=skills, skills_exclude=["work-only"], store=world.store)
     world.skills = skills
     world.mesh_data = data
     _portal_of(world).mesh = world.mesh
@@ -261,6 +263,50 @@ async def test_adding_a_machine_gives_a_join_command_that_works(mesh):
     await until(lambda: MACHINE in mesh.mesh.peers)
     again = await mesh.post("/api/mesh/machines", {"name": MACHINE})
     assert again.status == 400
+
+
+async def _setup(world, prompt):
+    url = re.search(r"curl -fsSL (\S+)`", prompt).group(1)
+    # The hub's real mesh address isn't this test server's; same path, though.
+    path = url.split("8799", 1)[1]
+    return path, await world.http.get(str(world.mesh_server.make_url(path)))
+
+
+async def test_one_line_setup_tells_a_stock_hermes_everything_and_the_machine_joins(mesh):
+    await mesh.sign_up()
+    prompt = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["prompt"]
+    assert "\n" not in prompt and prompt.startswith(f'Set this machine up as "{MACHINE}"')
+    path, page = await _setup(mesh, prompt)
+    assert page.status == 200
+    steps = await page.text()
+    assert f"hermes plugins install https://example.test/portal.git --ref {'a' * 40} --enable --yes-deps --force" in steps
+    join = re.search(rf"hermes mesh join http://100.64.0.1:8799 (\S+) --name {MACHINE}", steps)
+    assert join and "hermes gateway install" in steps
+    status = str(mesh.mesh_server.make_url(path + "/status"))
+    assert (await (await mesh.http.get(status)).json())["online"] is False
+    # Following the page: the machine joins with the token it gave.
+    await mesh.machine.start(mesh.mesh_url, join.group(1))
+    await until(lambda: MACHINE in mesh.mesh.peers)
+    assert (await (await mesh.http.get(status)).json()) == {"machine": MACHINE, "online": True}
+    # Once it's in, the page no longer gives the token out.
+    again = await (await mesh.http.get(str(mesh.mesh_server.make_url(path)))).text()
+    assert join.group(1) not in again and "already joined" in again
+
+
+async def test_a_setup_link_stops_working_after_a_day(mesh, monkeypatch):
+    await mesh.sign_up()
+    prompt = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["prompt"]
+    later = time.time() + mesh_module.SETUP_TTL + 1
+    monkeypatch.setattr(mesh.mesh, "clock", lambda: later)
+    _, page = await _setup(mesh, prompt)
+    assert page.status == 404
+    assert "hermes mesh join" not in await page.text()
+
+
+async def test_a_made_up_setup_code_gets_nothing(mesh):
+    add_node(mesh.mesh_data, MACHINE)
+    page = await mesh.http.get(str(mesh.mesh_server.make_url("/mesh/setup/not-a-code")))
+    assert page.status == 404
 
 
 async def test_a_bad_machine_name_is_refused(mesh):

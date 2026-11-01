@@ -138,7 +138,7 @@ function machineState(m: Machine) {
 function MachinesSection({ seen, onError }: { seen: number; onError: (message: string) => void }) {
   const [mesh, setMesh] = useState<Mesh | null>(null)
   const [name, setName] = useState("")
-  const [added, setAdded] = useState<{ name: string; command: string } | null>(null)
+  const [added, setAdded] = useState<{ name: string; prompt: string } | null>(null)
   const [copied, setCopied] = useState(false)
   const load = useCallback(() => api<Mesh>("/api/mesh").then(setMesh, e => onError((e as Error).message)), [onError])
   useEffect(() => void load(), [load, seen])
@@ -151,7 +151,7 @@ function MachinesSection({ seen, onError }: { seen: number; onError: (message: s
   if (!mesh?.hub) return null
   const add = async () => {
     try {
-      const made = await api<{ name: string; command: string }>("/api/mesh/machines", { method: "POST", body: { name } })
+      const made = await api<{ name: string; prompt: string }>("/api/mesh/machines", { method: "POST", body: { name } })
       setAdded(made)
       setCopied(false)
       setName("")
@@ -195,14 +195,14 @@ function MachinesSection({ seen, onError }: { seen: number; onError: (message: s
       ))}
       {added && (
         <div className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
-          <span>Run this on {added.name}. The token is shown only once.</span>
-          <code className="break-all rounded-md bg-muted px-2 py-1.5 font-mono text-xs">{added.command}</code>
+          <span>Send this to Hermes on {added.name}. It sets everything up. Works for a day, shown once.</span>
+          <code className="break-all rounded-md bg-muted px-2 py-1.5 font-mono text-xs">{added.prompt}</code>
           <div className="flex justify-end gap-2">
             <Button onClick={() => setAdded(null)} size="sm" variant="ghost">
               Done
             </Button>
             <Button
-              onClick={() => navigator.clipboard.writeText(added.command).then(() => setCopied(true), () => onError("couldn't copy"))}
+              onClick={() => navigator.clipboard.writeText(added.prompt).then(() => setCopied(true), () => onError("couldn't copy"))}
               size="sm"
               variant="outline"
             >
