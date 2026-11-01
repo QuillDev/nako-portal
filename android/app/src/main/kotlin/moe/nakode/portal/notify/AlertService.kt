@@ -20,7 +20,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import moe.nakode.portal.R
 import moe.nakode.portal.bubble.Bubble
-import moe.nakode.portal.bubble.Statuses
+import moe.nakode.portal.bubble.Sticker
 import moe.nakode.portal.shell.MainActivity
 import moe.nakode.portal.shell.ServerOrigin
 import okhttp3.OkHttpClient
@@ -42,7 +42,7 @@ class AlertService : Service() {
     private var attempts = 0
     private var stopped = false
     private val ids = AtomicInteger(100)
-    private val statuses = Statuses()
+    @Volatile private var sticker = Sticker.IDLE
     private var bubble: Bubble? = null
     private var night = 0
     private val handler by lazy { android.os.Handler(mainLooper) }
@@ -95,7 +95,7 @@ class AlertService : Service() {
             return
         }
         val current = bubble ?: Bubble(android.view.ContextThemeWrapper(this, R.style.Theme_Nako), server).also { bubble = it }
-        current.status(statuses.mood, statuses.counts)
+        current.status(sticker.mood, sticker.counts)
         current.show()
     }
 
@@ -142,14 +142,12 @@ class AlertService : Service() {
     private inner class Listener(private val origin: ServerOrigin) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             attempts = 0
-            statuses.reconnected()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            if (statuses.apply(text)) {
-                val mood = statuses.mood
-                val counts = statuses.counts
-                handler.post { bubble?.status(mood, counts) }
+            Sticker.parse(text)?.let { shown ->
+                sticker = shown
+                handler.post { bubble?.status(shown.mood, shown.counts) }
                 return
             }
             parseAlert(text)?.let { alert ->

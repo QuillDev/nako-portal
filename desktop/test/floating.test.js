@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { GAP, PANEL, STICKER, Statuses, inside, nearest, panelSpot, rest } from "../src/floating.js"
+import { GAP, PANEL, STICKER, inside, nearest, panelSpot, rest, sticker } from "../src/floating.js"
 
 const main = { x: 0, y: 0, width: 1920, height: 1040 }
 const left = { x: -1280, y: 0, width: 1280, height: 984 }
@@ -49,64 +49,16 @@ test("the panel stays on her screen and shrinks to fit a small one", () => {
   assert.ok(there.x >= left.x && there.x + there.width <= left.x + left.width)
 })
 
-test("she works while any chat runs and wants you when any chat waits on you", () => {
-  const statuses = new Statuses()
-  assert.equal(statuses.mood, "idle")
-  assert.ok(statuses.apply(JSON.stringify({ kind: "status", session: "a", status: "working" })))
-  assert.equal(statuses.mood, "working")
-  statuses.apply(JSON.stringify({ kind: "status", session: "b", status: "needs you" }))
-  assert.equal(statuses.mood, "needs-you")
-  statuses.apply(JSON.stringify({ kind: "status", session: "b", status: "done" }))
-  statuses.apply(JSON.stringify({ kind: "status", session: "a", status: "done" }))
-  assert.equal(statuses.mood, "idle")
-})
-
-test("frames that aren't statuses leave her mood alone", () => {
-  const statuses = new Statuses()
-  statuses.apply(JSON.stringify({ kind: "status", session: "a", status: "working" }))
-  for (const frame of ["junk", "null", JSON.stringify({ kind: "alert", title: "x" }), JSON.stringify({ kind: "status", session: 4, status: "done" })]) {
-    assert.equal(statuses.apply(frame), false, frame)
-  }
-  assert.equal(statuses.mood, "working")
-})
-
-test("she counts the chats working and the ones that finished while you weren't looking", () => {
-  const statuses = new Statuses()
-  const send = (session, status, unread) => statuses.apply(JSON.stringify({ kind: "status", session, status, unread }))
-  assert.deepEqual(statuses.counts, { working: 0, finished: 0 })
-  send("a", "working", false)
-  send("b", "working", false)
-  send("c", "done", true)
-  assert.deepEqual(statuses.counts, { working: 2, finished: 1 })
-  // One finishes unseen, then you open the first finished chat.
-  send("a", "done", true)
-  send("c", "done", false)
-  assert.deepEqual(statuses.counts, { working: 1, finished: 1 })
-  // A failed turn you haven't seen counts as finished too; a new turn there takes it back to working.
-  send("b", "failed", true)
-  assert.deepEqual(statuses.counts, { working: 0, finished: 2 })
-  send("b", "working", false)
-  assert.deepEqual(statuses.counts, { working: 1, finished: 1 })
-})
-
-test("chats the portal stops reporting drop out of her counts", () => {
-  const statuses = new Statuses()
-  const send = frame => statuses.apply(JSON.stringify(frame))
-  for (const chat of ["a", "b", "c", "d"]) send({ kind: "status", session: chat, status: "working", unread: false })
-  send({ kind: "status", session: "e", status: "done", unread: true })
-  // The gateway went away mid-turn: the portal clears that chat.
-  assert.ok(send({ kind: "status", session: "a", status: null, unread: false }))
-  assert.deepEqual(statuses.counts, { working: 3, finished: 1 })
-  assert.equal(statuses.mood, "working")
-  // The portal restarted; the new socket only knows about two of the working chats.
-  statuses.reconnected()
-  send({ kind: "status", session: "b", status: "working", unread: false })
-  send({ kind: "status", session: "c", status: "working", unread: false })
-  assert.ok(send({ kind: "status.synced" }))
-  assert.deepEqual(statuses.counts, { working: 2, finished: 0 })
-  // A reconnect where nothing is running anymore leaves her idle.
-  statuses.reconnected()
-  send({ kind: "status.synced" })
-  assert.deepEqual(statuses.counts, { working: 0, finished: 0 })
-  assert.equal(statuses.mood, "idle")
+test("she shows the portal's sticker frame and ignores anything else", () => {
+  assert.deepEqual(sticker(JSON.stringify({ kind: "sticker", mood: "working", working: 2, finished: 1 })), { mood: "working", working: 2, finished: 1 })
+  assert.deepEqual(sticker(JSON.stringify({ kind: "sticker", mood: "needs-you", working: 0, finished: 0 })), { mood: "needs-you", working: 0, finished: 0 })
+  const others = [
+    "junk",
+    "null",
+    JSON.stringify({ kind: "status", session: "a", status: "working" }),
+    JSON.stringify({ kind: "sticker", mood: "sleepy", working: 0, finished: 0 }),
+    JSON.stringify({ kind: "sticker", mood: "idle", working: -1, finished: 0 }),
+    JSON.stringify({ kind: "sticker", mood: "idle", working: 1 }),
+  ]
+  for (const frame of others) assert.equal(sticker(frame), null, frame)
 })

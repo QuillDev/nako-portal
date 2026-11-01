@@ -322,6 +322,39 @@ async def test_a_turn_that_ends_unseen_stays_unread_until_its_chat_is_opened(wor
         await ws.close()
 
 
+async def test_the_sticker_shows_the_chats_working_and_the_ones_finished_unseen(world):
+    a = world.hermes.add_session("20261101_010000_aaaaaa", "deploy")
+    b = world.hermes.add_session("20261101_020000_bbbbbb", "tests")
+    c = world.hermes.add_session("20261101_030000_cccccc", "notes")
+    await world.sign_up()
+    sticker = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    shows = lambda **want: next_message(sticker, lambda m: m.get("kind") == "sticker" and all(m[k] == v for k, v in want.items()))
+    await shows(mood="idle", working=0, finished=0)
+
+    await world.http.post(world.url(f"/api/sessions/{c}/messages"), data={"text": "jot this"}, headers={"Origin": ORIGIN})
+    await shows(mood="idle", working=0, finished=1)
+    world.hermes.hold = True
+    for session in (a, b):
+        await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+    await shows(mood="working", working=2, finished=1)
+
+    # The gateway goes away mid-turn: those turns are over, on every app at once.
+    await world.gateway.stop(world.hub)
+    await shows(mood="idle", working=0, finished=1)
+    await world.gateway.start(world.hub)
+
+    # An app that connects now (or reconnects after a restart) gets the same picture straight away.
+    late = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    joined = await next_message(late, lambda m: m.get("kind") == "sticker")
+    assert (joined["mood"], joined["working"], joined["finished"]) == ("idle", 0, 1)
+
+    # Opening the finished chat in front of you clears it from the count.
+    await late.send_json({"watch": c, "looking": True})
+    await shows(finished=0)
+    for ws in (sticker, late):
+        await ws.close()
+
+
 async def test_opening_the_notifications_chat_before_listing_chats_still_marks_it_read(world):
     inbox = world.hermes.add_session("20261024_040404_dddddd", "Notifications", chat="inbox", messages=[("user", "[Cron delivery: build watch]\nci red")])
     await world.sign_up()

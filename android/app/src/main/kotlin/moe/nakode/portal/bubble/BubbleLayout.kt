@@ -1,12 +1,9 @@
 package moe.nakode.portal.bubble
 
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -66,57 +63,26 @@ enum class Mood { IDLE, WORKING, NEEDS_YOU }
 /** How many chats are running a turn, and how many finished one you haven't opened since. */
 data class Counts(val working: Int, val finished: Int)
 
-/** Turn statuses per chat, from the portal's `{"kind":"status"}` frames: her mood and the counts under her. */
-class Statuses {
-    private val byChat = mutableMapOf<String, String>()
-    private val unread = mutableSetOf<String>()
+/** What the sticker shows: her mood and the counts under her. */
+data class Sticker(val mood: Mood, val counts: Counts) {
+    companion object {
+        val IDLE = Sticker(Mood.IDLE, Counts(working = 0, finished = 0))
+        private val json = Json { ignoreUnknownKeys = true }
+        private val moods = mapOf("idle" to Mood.IDLE, "working" to Mood.WORKING, "needs-you" to Mood.NEEDS_YOU)
 
-    // Chats the new socket's opening statuses have named, until its `status.synced`; null otherwise.
-    private var named: MutableSet<String>? = null
-
-    /** A new socket opened: what it reports up to `status.synced` replaces what's held now. */
-    fun reconnected() {
-        named = mutableSetOf()
-    }
-
-    /** Applies a socket frame; true when it was a status frame. */
-    fun apply(frame: String): Boolean {
-        val obj = runCatching { json.parseToJsonElement(frame) as? JsonObject }.getOrNull() ?: return false
-        when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
-            "status.synced" -> {
-                val kept = named ?: byChat.keys.toSet()
-                named = null
-                byChat.keys.retainAll(kept)
-                unread.retainAll(kept)
-                return true
-            }
-            "status" -> {}
-            else -> return false
-        }
-        val chat = (obj["session"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return false
-        val value = obj["status"]
-        val status = when {
-            value == null || value is JsonNull -> null
-            value is JsonPrimitive && value.isString -> value.content
-            else -> return false
-        }
-        named?.add(chat)
-        if (status == null) byChat.remove(chat) else byChat[chat] = status
-        if (obj["unread"]?.jsonPrimitive?.booleanOrNull == true) unread.add(chat) else unread.remove(chat)
-        return true
-    }
-
-    val counts: Counts
-        get() = Counts(working = byChat.values.count { it == "working" }, finished = unread.size)
-
-    val mood: Mood
-        get() = when {
-            byChat.values.any { it == "needs you" } -> Mood.NEEDS_YOU
-            byChat.values.any { it == "working" } -> Mood.WORKING
-            else -> Mood.IDLE
+        /** The portal's `{"kind":"sticker"}` frame (the portal does the counting); null for any other frame. */
+        fun parse(frame: String): Sticker? {
+            val obj = runCatching { json.parseToJsonElement(frame) as? JsonObject }.getOrNull() ?: return null
+            if (obj.string("kind") != "sticker") return null
+            val mood = moods[obj.string("mood")] ?: return null
+            val working = obj.count("working") ?: return null
+            val finished = obj.count("finished") ?: return null
+            return Sticker(mood, Counts(working, finished))
         }
 
-    private companion object {
-        val json = Json { ignoreUnknownKeys = true }
+        private fun JsonObject.string(key: String) = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+        private fun JsonObject.count(key: String) =
+            (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull?.takeIf { it >= 0 }
     }
 }
