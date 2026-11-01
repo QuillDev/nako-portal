@@ -194,7 +194,10 @@ async def _laptop(portal, hub, data, port):
 
     from portal.mesh import Mesh, Node, add_node
 
-    portal.mesh = Mesh(data, hub)
+    portal.mesh = Mesh(data, hub, address="http://100.64.0.1:8799", store=portal.store)
+    # A second machine that has been away a while.
+    add_node(data, "desktop")
+    portal.store.set_meta("mesh:seen:desktop", time.time() - 3 * 3600)
     runner = web.AppRunner(portal.mesh.app())
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()

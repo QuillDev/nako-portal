@@ -164,6 +164,9 @@ class Portal:
         r.add_post("/api/requests/{request}", self.answer)
         r.add_get("/api/file", self.file)
         r.add_get("/api/inbox", self.inbox)
+        r.add_get("/api/mesh", self.machines)
+        r.add_post("/api/mesh/machines", self.add_machine)
+        r.add_post("/api/mesh/machines/{machine}/remove", self.remove_machine)
         r.add_get("/api/push/key", self.push_key)
         r.add_post("/api/push/subscribe", self.push_subscribe)
         r.add_get("/api/android/release", self.android_release)
@@ -699,6 +702,31 @@ class Portal:
                 del self.shown[stale]
             self.shown[session] = (now + SHOWN_FILES_TTL, files)
         return files
+
+    # Other machines (mesh)
+
+    def _mesh(self):
+        if self.mesh is None:
+            raise ValueError("This portal isn't a mesh hub")
+        return self.mesh
+
+    async def machines(self, request):
+        self._require(request)
+        if self.mesh is None:
+            return web.json_response({"hub": False, "machines": []})
+        return web.json_response({"hub": True, "address": self.mesh.address, "machines": self.mesh.machines()})
+
+    async def add_machine(self, request):
+        self._require(request)
+        body = await request.json()
+        name = str(body.get("name") or "").strip().lower()
+        if name in {m["name"] for m in self._mesh().machines()}:
+            raise ValueError(f"There's already a machine called {name}")
+        return web.json_response(self._mesh().add(name))
+
+    async def remove_machine(self, request):
+        self._require(request)
+        return web.json_response(await self._mesh().remove(request.match_info["machine"]))
 
     async def inbox(self, request):
         self._require(request)

@@ -40,6 +40,20 @@ export type BackgroundProcess = {
 
 export type Status = "working" | "needs you" | "done" | "failed"
 
+// Another machine in this portal's mesh (`/api/mesh`).
+export type Machine = {
+  name: string
+  online: boolean
+  // Its Hermes gateway is up, so it can run tasks (only while online).
+  gateway: boolean
+  os: string | null
+  hostname: string | null
+  last_seen: number | null
+  working: number
+}
+
+export type Mesh = { hub: boolean; address?: string | null; machines: Machine[] }
+
 export type Sender = { session: string; title: string }
 
 export type HistoryMessage =
@@ -97,4 +111,5 @@ export type Frame =
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }
   | { kind: "profile.changed"; profile: string }
+  | { kind: "machines.changed" }
   | { kind: "event"; session: string; type: string; payload: Record<string, unknown> }

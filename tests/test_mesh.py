@@ -57,7 +57,7 @@ class Machine:
 async def mesh(world, tmp_path):
     data = tmp_path / "hub-data"
     skills = tmp_path / "hub-skills"
-    world.mesh = Mesh(data, world.hub, skills_dir=skills, skills_exclude=["work-only"], store=world.store)
+    world.mesh = Mesh(data, world.hub, address="http://100.64.0.1:8799", skills_dir=skills, skills_exclude=["work-only"], store=world.store)
     world.skills = skills
     world.mesh_data = data
     _portal_of(world).mesh = world.mesh
@@ -231,6 +231,60 @@ async def test_an_unknown_machine_is_a_clear_error(mesh):
     response = await mesh.http.post(_local(mesh, "/mesh/machines/toaster/sessions"), json={"text": "hi"}, headers=AUTH)
     assert response.status == 400
     assert "toaster" in (await response.json())["error"]
+
+
+# Settings → Machines
+
+
+async def test_settings_lists_the_machines_with_who_is_online(mesh):
+    await mesh.sign_up()
+    add_node(mesh.mesh_data, "desktop")
+    await _join(mesh)
+    shown = await (await mesh.http.get(mesh.url("/api/mesh"))).json()
+    assert shown["hub"] is True
+    assert [(m["name"], m["online"]) for m in shown["machines"]] == [("desktop", False), (MACHINE, True)]
+
+
+async def test_a_portal_that_isnt_a_hub_says_so(world):
+    await world.sign_up()
+    assert await (await world.http.get(world.url("/api/mesh"))).json() == {"hub": False, "machines": []}
+
+
+async def test_adding_a_machine_gives_a_join_command_that_works(mesh):
+    await mesh.sign_up()
+    added = await mesh.post("/api/mesh/machines", {"name": MACHINE})
+    assert added.status == 200, await added.text()
+    command = (await added.json())["command"]
+    assert command.startswith(f"hermes mesh join http://100.64.0.1:8799 ") and command.endswith(f"--name {MACHINE}")
+    token = command.split()[4]
+    await mesh.machine.start(mesh.mesh_url, token)
+    await until(lambda: MACHINE in mesh.mesh.peers)
+    again = await mesh.post("/api/mesh/machines", {"name": MACHINE})
+    assert again.status == 400
+
+
+async def test_a_bad_machine_name_is_refused(mesh):
+    await mesh.sign_up()
+    refused = await mesh.post("/api/mesh/machines", {"name": "My Laptop!"})
+    assert refused.status == 400
+    assert await (await mesh.http.get(mesh.url("/api/mesh"))).json() == {"hub": True, "address": "http://100.64.0.1:8799", "machines": []}
+
+
+async def test_removing_a_machine_disconnects_it_and_keeps_it_out(mesh):
+    await mesh.sign_up()
+    await _join(mesh)
+    removed = await mesh.post(f"/api/mesh/machines/{MACHINE}/remove")
+    assert removed.status == 200, await removed.text()
+    await until(lambda: MACHINE not in mesh.mesh.peers)
+    await asyncio.sleep(0.3)  # the machine retries with its old token
+    assert MACHINE not in mesh.mesh.peers
+    assert (await (await mesh.http.get(mesh.url("/api/mesh"))).json())["machines"] == []
+
+
+async def test_machine_settings_need_sign_in(mesh):
+    assert (await mesh.http.get(mesh.url("/api/mesh"))).status == 401
+    assert (await mesh.post("/api/mesh/machines", {"name": MACHINE})).status == 401
+    assert MACHINE not in mesh_module.load_nodes(mesh.mesh_data)
 
 
 # Skills

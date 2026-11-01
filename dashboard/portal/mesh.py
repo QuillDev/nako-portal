@@ -262,8 +262,10 @@ class Mesh:
 
     `hub` is this server's own hub; a node's live frames reach the app through it."""
 
-    def __init__(self, data, hub, *, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
+    def __init__(self, data, hub, *, address=None, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
         self.data = Path(data)
+        # Where machines dial in (`mesh_listen`), for the join command a new machine runs.
+        self.address = address
         self.hub = hub
         self.skills_dir = Path(skills_dir) if skills_dir else None
         self.skills_exclude = list(skills_exclude or ())
@@ -275,6 +277,25 @@ class Mesh:
         self.requests = {}
 
     # Who's there
+
+    def add(self, name):
+        """Let a machine join: its token, and the command that joins it, shown once."""
+        token = add_node(self.data, name)
+        command = f"hermes mesh join {self.address or '<this hub>'} {token} --name {name}"
+        return {"name": name, "token": token, "command": command}
+
+    async def remove(self, name):
+        """Revoke a machine's token and drop its link, so it's gone at once."""
+        if not remove_node(self.data, name) and name not in self.peers:
+            raise ValueError(f"No machine called {name}")
+        peer = self.peers.get(name)
+        if peer is not None:
+            await peer.ws.close()
+        self.info.pop(name, None)
+        if self.store is not None:
+            self.store.set_meta(f"mesh:seen:{name}", None)
+        await self.hub.broadcast({"kind": "machines.changed"})
+        return {"ok": True}
 
     def machines(self):
         nodes = load_nodes(self.data)
@@ -370,6 +391,7 @@ class Mesh:
         elif kind == "status" and session:
             self.status[session] = {"status": frame.get("status"), "unread": bool(frame.get("unread")) and not self.hub.seen(session)}
             await self.hub.broadcast({"kind": "status", "session": session, **self.status[session]})
+            await self.hub.broadcast({"kind": "machines.changed"})
         elif kind == "alert" and session:
             self.hub.notify(session, f"{machine} · {frame.get('title') or 'Nako'}", str(frame.get("body") or ""))
         elif session and kind in {"event", "request", "request.closed"}:
@@ -383,6 +405,7 @@ class Mesh:
         if kind in {"hub.connected", "hub.disconnected"} and machine in self.info:
             self.info[machine]["gateway"] = kind == "hub.connected"
             await self.hub.broadcast({"kind": "sessions.changed"})
+            await self.hub.broadcast({"kind": "machines.changed"})
 
     def _methods(self, machine):
         async def hello(info):
@@ -395,6 +418,7 @@ class Mesh:
             }
             for frame in info.get("statuses") or []:
                 await self._frame(machine, frame)
+            await self.hub.broadcast({"kind": "machines.changed"})
             return {"hub": socket.gethostname()}
 
         async def frame(value):
@@ -428,6 +452,7 @@ class Mesh:
         if old is not None:
             await old.ws.close()
         log.info("portal: %s joined the mesh", name)
+        await self.hub.broadcast({"kind": "machines.changed"})
         try:
             await peer.run()
         finally:
@@ -444,6 +469,7 @@ class Mesh:
                     self.requests.pop(rid, None)
                 log.info("portal: %s left the mesh", name)
                 await self.hub.broadcast({"kind": "sessions.changed"})
+                await self.hub.broadcast({"kind": "machines.changed"})
         return ws
 
     def app(self):

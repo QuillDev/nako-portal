@@ -80,6 +80,8 @@ export function usePortal() {
   const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [connected, setConnected] = useState(true)
+  // Bumped when a machine in the mesh joins, leaves or starts work; Settings rereads the list.
+  const [machinesSeen, setMachinesSeen] = useState(0)
   // Whether this page's socket to the portal is up; while it's down nothing live arrives.
   const [linked, setLinked] = useState(true)
   const [error, setError] = useState("")
@@ -185,6 +187,9 @@ export function usePortal() {
           setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status } : r)))
           return
         case "alert":
+          return
+        case "machines.changed":
+          setMachinesSeen(n => n + 1)
           return
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.
@@ -471,7 +476,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, loadOlder, prefetch, commands, command, notes, signOff }
+  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

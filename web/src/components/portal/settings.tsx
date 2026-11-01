@@ -7,12 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
 import { cancelled, register } from "@/lib/passkeys"
 import { appAlerts, appBubble, enablePush, openAppNotificationSettings, pushState, setAppBubble } from "@/lib/push"
 import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
-import type { Passkey } from "@/lib/types"
+import type { Machine, Mesh, Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
 import { type ModelChoice, ModelPicker, SignOffSettings } from "./sign-off-settings"
 
@@ -118,6 +119,120 @@ function BrowserSection() {
   )
 }
 
+function ago(seconds: number) {
+  const s = Math.max(0, Date.now() / 1000 - seconds)
+  if (s < 90) return "just now"
+  if (s < 3600) return `${Math.round(s / 60)}m ago`
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`
+  return `${Math.round(s / 86400)}d ago`
+}
+
+function machineState(m: Machine) {
+  if (!m.online) return m.last_seen ? `seen ${ago(m.last_seen)}` : "never connected"
+  if (!m.gateway) return "hermes offline"
+  return m.working ? `working on ${m.working}` : "online"
+}
+
+// Other machines' Hermes, reached through this portal: who's there, adding one, removing one.
+// Only a mesh hub shows it.
+function MachinesSection({ seen, onError }: { seen: number; onError: (message: string) => void }) {
+  const [mesh, setMesh] = useState<Mesh | null>(null)
+  const [name, setName] = useState("")
+  const [added, setAdded] = useState<{ name: string; command: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const load = useCallback(() => api<Mesh>("/api/mesh").then(setMesh, e => onError((e as Error).message)), [onError])
+  useEffect(() => void load(), [load, seen])
+  // "seen 5m ago" keeps moving while the page is open.
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const timer = setInterval(() => tick(n => n + 1), 30_000)
+    return () => clearInterval(timer)
+  }, [])
+  if (!mesh?.hub) return null
+  const add = async () => {
+    try {
+      const made = await api<{ name: string; command: string }>("/api/mesh/machines", { method: "POST", body: { name } })
+      setAdded(made)
+      setCopied(false)
+      setName("")
+      await load()
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+  const remove = async (machine: string) => {
+    if (!confirm(`Remove ${machine}? It disconnects now and needs a new token to come back.`)) return
+    try {
+      await api(`/api/mesh/machines/${encodeURIComponent(machine)}/remove`, { method: "POST" })
+      if (added?.name === machine) setAdded(null)
+      await load()
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+  return (
+    <Section defaultOpen title="Machines">
+      {mesh.machines.map(m => (
+        <Row
+          key={m.name}
+          label={
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                className={cn("size-2 shrink-0 rounded-full", m.online && m.gateway ? "bg-emerald-500" : m.online ? "bg-amber-500" : "bg-muted-foreground/40")}
+              />
+              <span className="truncate">{m.name}</span>
+              {m.os && <span className="truncate text-muted-foreground text-xs">{m.os}</span>}
+            </span>
+          }
+        >
+          <span className="flex shrink-0 items-center gap-2">
+            <span className="text-muted-foreground text-xs">{machineState(m)}</span>
+            <Button onClick={() => remove(m.name)} size="sm" variant="ghost">
+              Remove
+            </Button>
+          </span>
+        </Row>
+      ))}
+      {added && (
+        <div className="flex flex-col gap-2 rounded-lg border p-3 text-sm">
+          <span>Run this on {added.name}. The token is shown only once.</span>
+          <code className="break-all rounded-md bg-muted px-2 py-1.5 font-mono text-xs">{added.command}</code>
+          <div className="flex justify-end gap-2">
+            <Button onClick={() => setAdded(null)} size="sm" variant="ghost">
+              Done
+            </Button>
+            <Button
+              onClick={() => navigator.clipboard.writeText(added.command).then(() => setCopied(true), () => onError("couldn't copy"))}
+              size="sm"
+              variant="outline"
+            >
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        </div>
+      )}
+      <form
+        className="flex items-center gap-2"
+        onSubmit={e => {
+          e.preventDefault()
+          if (name.trim()) void add()
+        }}
+      >
+        <Input
+          aria-label="New machine name"
+          className="h-8 flex-1"
+          onChange={e => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+          placeholder="machine name"
+          value={name}
+        />
+        <Button disabled={!name.trim()} size="sm" type="submit" variant="outline">
+          Add machine
+        </Button>
+      </form>
+    </Section>
+  )
+}
+
 // One settings group: a title row that folds its rows away.
 function Section({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
   return (
@@ -196,6 +311,7 @@ export function Settings({ portal }: { portal: Portal }) {
           <SignOffSettings onError={setError} />
         </Section>
         <BrowserSection />
+        <MachinesSection onError={setError} seen={portal.machinesSeen} />
         <Section title="Notifications">
           {app ? (
             <Row label="Alerts">
