@@ -182,9 +182,32 @@ async def main(port):
     runner = web.AppRunner(portal.app())
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()
+    await _laptop(portal, hub, data, port + 2)
     (data / "setup-link").write_text(f"{origin}/#setup={store.new_setup_link()}\n")
     print(f"setup link file: {data / 'setup-link'}", flush=True)
     await asyncio.Event().wait()
+
+
+async def _laptop(portal, hub, data, port):
+    """Another machine in this portal's mesh, with chats of its own, dialing in like a real one."""
+    import aiohttp
+
+    from portal.mesh import Mesh, Node, add_node
+
+    portal.mesh = Mesh(data, hub)
+    runner = web.AppRunner(portal.mesh.app())
+    await runner.setup()
+    await web.TCPSite(runner, "127.0.0.1", port).start()
+    laptop = DemoGateway()
+    laptop.pause = 1
+    laptop.reply = "Printer queue is clear and the driver is updated."
+    laptop.add_session("20261024_095500_m00001", "Fix the printer driver", messages=[("user", "the printer stopped working"), ("assistant", "on it")])
+    laptop.add_session("20261024_083000_m00002", "Clean up Downloads", messages=[("user", "sort my downloads folder")])
+    laptop_hub = Hub(Backend(laptop))
+    laptop.hub = laptop_hub
+    http = aiohttp.ClientSession()
+    node = Node(f"http://127.0.0.1:{port}/mesh", "laptop", add_node(data, "laptop"), laptop_hub)
+    asyncio.get_running_loop().create_task(node.run(http))
 
 
 asyncio.run(main(int(sys.argv[1])))

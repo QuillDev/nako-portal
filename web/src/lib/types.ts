@@ -12,6 +12,8 @@ export type SessionRow = {
   // A post landed in the Notifications or Reviews chat since it was last opened.
   unread?: boolean
   status?: Status | null
+  // Another machine's chat, reached through this portal's mesh: that machine's name.
+  machine?: string
 }
 
 // A slash command a portal chat can run (`/api/commands`).

@@ -62,6 +62,9 @@ SERVER = ROOT / "dashboard" / "serve.py"
 SERVER_CODE = [SERVER, *sorted((ROOT / "dashboard" / "portal").glob("*.py"))]
 # Don't start servers faster than this while one is still coming up.
 SPAWN_GAP = 30
+# Where a machine in a mesh dials its hub, and the folder it mirrors the hub's skills into.
+MESH_PATH = "/mesh"
+MESH_SKILLS = "mesh-skills"
 # Gateway commands with no use in a portal thread (platform setup, the portal's own list).
 UNSUPPORTED = {"start", "sethome", "topic", "platform", "commands"}
 
@@ -120,22 +123,75 @@ def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE, profile=Non
     return entry.session_id
 
 
-def _settings():
+def _plugin_settings():
     from hermes_cli.config import load_config
+
+    return load_config().get("plugins", {}).get("entries", {}).get(PLUGIN, {}).get("settings", {}) or {}
+
+
+def _machine_name():
+    """This machine's name in a mesh unless settings give one: its hostname, cleaned up."""
+    import socket
+
+    name = re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-")
+    return (name or "machine")[:32]
+
+
+def _mesh(entry, home):
+    """The mesh part of the server's settings. A hub (`mesh_listen`, host:port other machines
+    reach) shares this home's skills, minus `skill_sync_exclude`; a machine (`mesh_hub`, the hub's
+    URL) dials in with NAKO_MESH_TOKEN and mirrors those skills into `mesh-skills`."""
+    listen = str(entry.get("mesh_listen") or "").strip()
+    if listen:
+        exclude = entry.get("skill_sync_exclude") or []
+        if isinstance(exclude, str):
+            exclude = [part.strip() for part in exclude.split(",")]
+        return {"listen": listen, "skills_dir": str(home / "skills"), "skills_exclude": sorted({str(x) for x in exclude if str(x).strip()})}
+    hub = str(entry.get("mesh_hub") or "").strip()
+    if hub:
+        token = os.environ.get("NAKO_MESH_TOKEN") or _env_value(home, "NAKO_MESH_TOKEN")
+        if not token:
+            raise RuntimeError("Set NAKO_MESH_TOKEN in .env to the token the hub's `hermes mesh add` printed")
+        hub = hub.rstrip("/")
+        if not hub.endswith(MESH_PATH):
+            hub += MESH_PATH
+        return {"hub": hub, "name": str(entry.get("mesh_name") or _machine_name()), "token": token, "skills_into": str(home / MESH_SKILLS)}
+    return {}
+
+
+def _env_value(home, key):
+    """One line of `.env`, read plainly (the gateway may have started before it was written)."""
+    try:
+        for line in (home / ".env").read_text().splitlines():
+            name, _, value = line.partition("=")
+            if name.strip() == key:
+                return value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
+def _settings():
     from hermes_constants import get_hermes_home
 
-    config = load_config()
-    entry = config.get("plugins", {}).get("entries", {}).get(PLUGIN, {}).get("settings", {})
+    entry = _plugin_settings()
+    home = get_hermes_home().resolve()
+    port = int(entry.get("port") or DEFAULT_PORT)
+    mesh = _mesh(entry, home)
     origin = str(entry.get("origin") or "").strip()
-    if not origin.startswith("https://"):
+    if not origin and mesh.get("hub"):
+        # A machine in a mesh is used through its hub; its own site only answers on loopback.
+        origin = f"http://127.0.0.1:{port}"
+    elif not origin.startswith("https://"):
         raise RuntimeError("Set plugins.entries.nako-portal.settings.origin to the portal's https URL")
     apps = {
         "android_release_dir": entry.get("android_release_dir") or None,
         "android_cert_sha256": entry.get("android_cert_sha256") or None,
         "desktop_release_dir": entry.get("desktop_release_dir") or None,
+        "mesh": mesh,
     }
     contact = str(entry.get("contact") or "mailto:owner@localhost")
-    return get_hermes_home().resolve(), origin.rstrip("/"), int(entry.get("port") or DEFAULT_PORT), contact, apps
+    return home, origin.rstrip("/"), port, contact, apps
 
 
 def _server_config(home, origin, port, contact, apps):
@@ -179,7 +235,12 @@ def _spawn_server(config_path, data):
             log.warning("Nako portal: systemd-run failed; starting the server directly", exc_info=True)
     with open(data / "server.log", "ab") as out:
         env = {**os.environ, "PYTHONPATH": path}
-        subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, start_new_session=True, close_fds=True)
+        if os.name == "nt":
+            # Windows has no sessions: a detached process in its own group outlives the gateway.
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, creationflags=flags, close_fds=True)
+        else:
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, start_new_session=True, close_fds=True)
     log.info("Nako portal: started the server (log in %s)", data / "server.log")
 
 
@@ -951,8 +1012,26 @@ def _forward_tool(state):
     return hook
 
 
+def _mesh_tools():
+    """The mesh tools and `hermes mesh` command (mesh_tools.py), loaded once under a private name."""
+    name = "nako_portal_mesh_tools"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "mesh_tools.py")
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules[name] = loaded
+        spec.loader.exec_module(loaded)
+        loaded.PORTAL = _portal
+    return sys.modules[name]
+
+
 def register(ctx):
     _quiet_display_defaults()
+    # Other machines in this portal's mesh: the agent's tools for them and `hermes mesh`.
+    tools = _mesh_tools()
+    if hasattr(ctx, "register_tool"):
+        tools.register(ctx)
+    if hasattr(ctx, "register_cli_command"):
+        tools.register_cli(ctx)
     # Live tool calls for the chat's activity view (the gateway's own text breadcrumbs are off).
     ctx.register_hook("pre_tool_call", _forward_tool("running"))
     ctx.register_hook("post_tool_call", _forward_tool(None))

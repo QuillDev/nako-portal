@@ -155,6 +155,7 @@ export const ChatSearch = memo(function ChatSearch({
                   >
                     {s.notifications ? <BellIcon /> : s.reviews ? <GitPullRequestIcon /> : <MessageSquareIcon />}
                     <span className="min-w-0 flex-1 truncate">{s.title}</span>
+                    {s.machine && <span className="shrink-0 text-xs text-muted-foreground">{s.machine}</span>}
                   </CommandItem>
                 ))}
               </CommandGroup>

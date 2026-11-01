@@ -108,6 +108,9 @@ const ChatRow = memo(function ChatRow({
           type="button"
         >
           <span className="min-w-0 flex-1 truncate">{row.title}</span>
+          {row.machine && (
+            <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{row.machine}</span>
+          )}
           {row.status && DOT[row.status] && (
             <span
               className={cn("size-2 shrink-0 rounded-full", DOT[row.status])}
