@@ -12,6 +12,8 @@ export type SessionRow = {
   // A post landed in the Notifications or Reviews chat since it was last opened.
   unread?: boolean
   status?: Status | null
+  // Another machine's chat, reached through this portal's mesh: that machine's name.
+  machine?: string
 }
 
 // A slash command a portal chat can run (`/api/commands`).
@@ -37,6 +39,23 @@ export type BackgroundProcess = {
 }
 
 export type Status = "working" | "needs you" | "done" | "failed"
+
+// Another machine in this portal's mesh (`/api/mesh`).
+export type Machine = {
+  name: string
+  online: boolean
+  // Its Hermes gateway is up, so it can run tasks (only while online).
+  gateway: boolean
+  os: string | null
+  hostname: string | null
+  last_seen: number | null
+  working: number
+}
+
+// Where new machines install the portal plugin from: saved on the Mesh page, else detected.
+export type PluginSource = { source: string | null; detected: string | null; saved: boolean }
+
+export type Mesh = { hub: boolean; name?: string; address?: string | null; plugin?: PluginSource; machines: Machine[] }
 
 export type Sender = { session: string; title: string }
 
@@ -95,4 +114,5 @@ export type Frame =
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }
   | { kind: "profile.changed"; profile: string }
+  | { kind: "machines.changed" }
   | { kind: "event"; session: string; type: string; payload: Record<string, unknown> }

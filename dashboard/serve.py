@@ -20,6 +20,7 @@ from aiohttp import web
 from portal import push
 from portal.hub import Hub
 from portal.link import GatewayLink
+from portal.mesh import Mesh, Node
 from portal.server import Portal
 from portal.store import Store
 
@@ -30,17 +31,17 @@ BIND_RETRY = 2
 BIND_GIVE_UP = 120
 
 
-async def listen(runner, port):
+async def listen(runner, port, host="127.0.0.1"):
     """Bind, waiting while an older server hands over the port."""
     waited = 0
     while True:
         try:
-            await web.TCPSite(runner, "127.0.0.1", port).start()
+            await web.TCPSite(runner, host, port).start()
             return
         except OSError as error:
             if waited >= BIND_GIVE_UP:
-                raise SystemExit(f"portal: 127.0.0.1:{port} stays taken ({error}); another server is running")
-            log.info("portal: 127.0.0.1:%s is taken (%s); waiting", port, error)
+                raise SystemExit(f"portal: {host}:{port} stays taken ({error}); another server is running")
+            log.info("portal: %s:%s is taken (%s); waiting", host, port, error)
             await asyncio.sleep(BIND_RETRY)
             waited += BIND_RETRY
 
@@ -53,7 +54,12 @@ async def main(config_path):
     done = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, done.set)
+        try:
+            loop.add_signal_handler(sig, done.set)
+        except (NotImplementedError, RuntimeError):
+            # Windows: no loop signal handlers; Ctrl+C still raises KeyboardInterrupt, and the
+            # gateway replaces a stale server through the link (409) rather than a signal.
+            pass
 
     async with aiohttp.ClientSession() as http:
         pusher = push.Pusher(http, store, vapid)
@@ -77,12 +83,27 @@ async def main(config_path):
         link.on_change = portal.gateway_changed
         port = int(config["port"])
         token = (data / "local-token").read_text().strip()
+        sites = [(portal.app(), "127.0.0.1", port), (portal.local_app(token, link), "127.0.0.1", port + 1)]
+        mesh = config.get("mesh") or {}
+        tasks = []
+        if mesh.get("address"):
+            # This portal is a hub: machines dial in on its own address (the public app serves
+            # /mesh), and on `listen` too when one is set.
+            portal.mesh = Mesh(data, hub, name=mesh.get("name") or "hub", address=mesh["address"], plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store)
+            if mesh.get("listen"):
+                host, _, at = str(mesh["listen"]).rpartition(":")
+                sites.append((portal.mesh.app(), host or "127.0.0.1", int(at)))
+        elif mesh.get("hub"):
+            # This portal is a machine in someone's mesh: dial its hub.
+            node = Node(mesh["hub"], mesh["name"], mesh["token"], hub, skills_into=mesh.get("skills_into"))
+            portal.node = node
+            tasks.append(loop.create_task(node.run(http)))
         runners = []
-        for app, at in ((portal.app(), port), (portal.local_app(token, link), port + 1)):
+        for app, host, at in sites:
             runner = web.AppRunner(app, access_log=None)
             await runner.setup()
             runners.append(runner)
-            await listen(runner, at)
+            await listen(runner, at, host)
         (data / "local-url").write_text(f"http://127.0.0.1:{port + 1}\n")
         if not store.has_credentials():
             (data / "setup-link").write_text(f"{config['origin']}/#setup={store.new_setup_link()}\n")
@@ -91,6 +112,8 @@ async def main(config_path):
         log.info("portal: serving %s on 127.0.0.1:%s", config["origin"], port)
         await done.wait()
         log.info("portal: shutting down")
+        for task in tasks:
+            task.cancel()
         for runner in runners:
             await runner.cleanup()
 

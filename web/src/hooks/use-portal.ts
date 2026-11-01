@@ -8,7 +8,7 @@ import type { Command, CommandNote, Frame, HistoryMessage, Live, Me, OpenSession
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "mesh" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -17,6 +17,7 @@ function parseRoute(hash: string): Route {
   if (chat) return { view: "chat", session: chat[1] }
   if (hash === "#/new") return { view: "new" }
   if (hash === "#/settings") return { view: "settings" }
+  if (hash === "#/mesh") return { view: "mesh" }
   if (hash.startsWith("#/desktop?")) return { view: "desktop", query: hash.slice("#/desktop?".length) }
   return { view: "list" }
 }
@@ -80,6 +81,8 @@ export function usePortal() {
   const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [connected, setConnected] = useState(true)
+  // Bumped when a machine in the mesh joins, leaves or starts work; Settings rereads the list.
+  const [machinesSeen, setMachinesSeen] = useState(0)
   // Whether this page's socket to the portal is up; while it's down nothing live arrives.
   const [linked, setLinked] = useState(true)
   const [error, setError] = useState("")
@@ -185,6 +188,9 @@ export function usePortal() {
           setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status } : r)))
           return
         case "alert":
+          return
+        case "machines.changed":
+          setMachinesSeen(n => n + 1)
           return
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.
@@ -471,7 +477,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, loadOlder, prefetch, commands, command, notes, signOff }
+  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

@@ -62,6 +62,9 @@ SERVER = ROOT / "dashboard" / "serve.py"
 SERVER_CODE = [SERVER, *sorted((ROOT / "dashboard" / "portal").glob("*.py"))]
 # Don't start servers faster than this while one is still coming up.
 SPAWN_GAP = 30
+# Where a machine in a mesh dials its hub, and the folder it mirrors the hub's skills into.
+MESH_PATH = "/mesh"
+MESH_SKILLS = "mesh-skills"
 # Gateway commands with no use in a portal thread (platform setup, the portal's own list).
 UNSUPPORTED = {"start", "sethome", "topic", "platform", "commands"}
 
@@ -120,22 +123,106 @@ def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE, profile=Non
     return entry.session_id
 
 
-def _settings():
+def _plugin_settings():
     from hermes_cli.config import load_config
+
+    return load_config().get("plugins", {}).get("entries", {}).get(PLUGIN, {}).get("settings", {}) or {}
+
+
+def _machine_name():
+    """This machine's name in a mesh unless settings give one: its hostname, cleaned up."""
+    import socket
+
+    name = re.sub(r"[^a-z0-9-]+", "-", socket.gethostname().split(".")[0].lower()).strip("-")
+    return (name or "machine")[:32]
+
+
+def _mesh(entry, home, origin=None):
+    """The mesh part of the server's settings.
+
+    A machine in someone's mesh (`mesh_hub`, the hub portal's URL) dials in with NAKO_MESH_TOKEN
+    and mirrors the hub's skills into `mesh-skills`. Any other portal is a hub, with no machines
+    until one is added: machines reach it on the portal's own address (`origin`, or
+    `mesh_address`), and `mesh_listen` (host:port) adds a listener of its own, e.g. on a private
+    network. It shares this home's skills, minus `skill_sync_exclude`."""
+    hub = str(entry.get("mesh_hub") or "").strip()
+    if not hub:
+        listen = str(entry.get("mesh_listen") or "").strip() or None
+        exclude = entry.get("skill_sync_exclude") or []
+        if isinstance(exclude, str):
+            exclude = [part.strip() for part in exclude.split(",")]
+        address = str(entry.get("mesh_address") or "").strip().rstrip("/") or (f"http://{listen}" if listen and not origin else origin)
+        return {
+            "name": str(entry.get("mesh_name") or _machine_name()),
+            "address": address,
+            "listen": listen,
+            "skills_dir": str(home / "skills"),
+            "skills_exclude": sorted({str(x) for x in exclude if str(x).strip()}),
+            "plugin": _plugin_origin(entry),
+        }
+    if hub:
+        token = os.environ.get("NAKO_MESH_TOKEN") or _env_value(home, "NAKO_MESH_TOKEN")
+        if not token:
+            raise RuntimeError("Set NAKO_MESH_TOKEN in .env to the token the hub's `hermes mesh add` printed")
+        hub = hub.rstrip("/")
+        if not hub.endswith(MESH_PATH):
+            hub += MESH_PATH
+        return {"hub": hub, "name": str(entry.get("mesh_name") or _machine_name()), "token": token, "skills_into": str(home / MESH_SKILLS)}
+    return {}
+
+
+def _plugin_origin(entry):
+    """Where a new machine installs this plugin from, and the commit this hub runs, so both sides
+    run the same code. A copy installed from a local path points machines at the public repo."""
+
+    def git(*args):
+        try:
+            done = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        return done.stdout.strip() if done.returncode == 0 else ""
+
+    source = str(entry.get("mesh_plugin_source") or "").strip()
+    if not source:
+        remote = git("remote", "get-url", "origin")
+        source = remote if remote.startswith(("https://", "git@", "ssh://")) else ""
+    ref = git("rev-parse", "HEAD")
+    return {"source": source or None, "ref": ref if re.fullmatch(r"[0-9a-f]{40}", ref or "") else None}
+
+
+def _env_value(home, key):
+    """One line of `.env`, read plainly (the gateway may have started before it was written)."""
+    try:
+        for line in (home / ".env").read_text().splitlines():
+            name, _, value = line.partition("=")
+            if name.strip() == key:
+                return value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
+def _settings():
     from hermes_constants import get_hermes_home
 
-    config = load_config()
-    entry = config.get("plugins", {}).get("entries", {}).get(PLUGIN, {}).get("settings", {})
-    origin = str(entry.get("origin") or "").strip()
-    if not origin.startswith("https://"):
+    entry = _plugin_settings()
+    home = get_hermes_home().resolve()
+    port = int(entry.get("port") or DEFAULT_PORT)
+    origin = str(entry.get("origin") or "").strip().rstrip("/")
+    mesh = _mesh(entry, home, origin if origin.startswith("https://") else None)
+    if not origin and mesh.get("hub"):
+        # A machine in a mesh is used through its hub; its own site only answers on loopback.
+        origin = f"http://127.0.0.1:{port}"
+    elif not origin.startswith("https://"):
         raise RuntimeError("Set plugins.entries.nako-portal.settings.origin to the portal's https URL")
     apps = {
         "android_release_dir": entry.get("android_release_dir") or None,
         "android_cert_sha256": entry.get("android_cert_sha256") or None,
         "desktop_release_dir": entry.get("desktop_release_dir") or None,
+        "mesh": mesh,
     }
     contact = str(entry.get("contact") or "mailto:owner@localhost")
-    return get_hermes_home().resolve(), origin.rstrip("/"), int(entry.get("port") or DEFAULT_PORT), contact, apps
+    return home, origin.rstrip("/"), port, contact, apps
 
 
 def _server_config(home, origin, port, contact, apps):
@@ -179,7 +266,12 @@ def _spawn_server(config_path, data):
             log.warning("Nako portal: systemd-run failed; starting the server directly", exc_info=True)
     with open(data / "server.log", "ab") as out:
         env = {**os.environ, "PYTHONPATH": path}
-        subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, start_new_session=True, close_fds=True)
+        if os.name == "nt":
+            # Windows has no sessions: a detached process in its own group outlives the gateway.
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, creationflags=flags, close_fds=True)
+        else:
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env, start_new_session=True, close_fds=True)
     log.info("Nako portal: started the server (log in %s)", data / "server.log")
 
 
@@ -951,8 +1043,29 @@ def _forward_tool(state):
     return hook
 
 
+def _mesh_tools():
+    """The mesh tools and `hermes mesh` command (mesh_tools.py), loaded once under a private name."""
+    name = "nako_portal_mesh_tools"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "mesh_tools.py")
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules[name] = loaded
+        spec.loader.exec_module(loaded)
+        loaded.PORTAL = _portal
+    return sys.modules[name]
+
+
 def register(ctx):
     _quiet_display_defaults()
+    # Other machines in this portal's mesh: the agent's tools for them and `hermes mesh`.
+    tools = _mesh_tools()
+    if hasattr(ctx, "register_tool"):
+        tools.register(ctx)
+    if hasattr(ctx, "register_cli_command"):
+        tools.register_cli(ctx)
+    # How the mesh works, for any agent on any machine in it (`nako-portal:mesh`).
+    if hasattr(ctx, "register_skill"):
+        ctx.register_skill("mesh", ROOT / "skills" / "mesh" / "SKILL.md")
     # Live tool calls for the chat's activity view (the gateway's own text breadcrumbs are off).
     ctx.register_hook("pre_tool_call", _forward_tool("running"))
     ctx.register_hook("post_tool_call", _forward_tool(None))

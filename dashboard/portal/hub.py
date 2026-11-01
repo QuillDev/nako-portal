@@ -110,6 +110,9 @@ class Hub:
         self.connected = True
         # Whether a finished turn gets Nako's sign-off line (Settings; the server keeps it).
         self.sign_off_on = True
+        # Callables that see every frame this hub sends its app, chat events included; a machine
+        # in a mesh passes them up to its hub this way (`mesh.Node`).
+        self.taps = set()
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -166,11 +169,21 @@ class Hub:
             except Exception:
                 self.leave(client)
 
+    def _tap(self, frame):
+        for tap in list(self.taps):
+            try:
+                tap(frame)
+            except Exception:
+                log.debug("portal: a tap failed", exc_info=True)
+
     async def broadcast(self, message):
+        self._tap(message)
         await self._send(self.clients, message)
 
     async def _publish(self, session, message):
-        await self._send(self.subscribers.get(session, ()), {"session": session, **message})
+        frame = {"session": session, **message}
+        self._tap(frame)
+        await self._send(self.subscribers.get(session, ()), frame)
 
     async def _event(self, session, kind, payload=None):
         await self._publish(session, {"kind": "event", "type": kind, "payload": payload or {}})

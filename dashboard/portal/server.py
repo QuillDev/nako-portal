@@ -17,9 +17,10 @@ from urllib.parse import urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
-from .hub import NEEDS_YOU, WORKING, for_app, page
+from .hub import NEEDS_YOU, WORKING, for_app, from_thread_line, page
 from .link import GATEWAY_PATH
 from .media import shown_files
+from .mesh import parse as remote
 
 log = logging.getLogger("hermes.portal")
 
@@ -104,6 +105,10 @@ class Portal:
         self.secure = parsed.scheme == "https"
         # session -> (expires, files its transcript shows), so a chat's images don't each reread it.
         self.shown = {}
+        # Other machines' Hermes when this portal is a mesh hub (`mesh.Mesh`), else None.
+        self.mesh = None
+        # This portal's link to its hub when it's a machine in someone's mesh (`mesh.Node`), else None.
+        self.node = None
 
     async def gateway_changed(self, connected):
         """A gateway connected (show the saved profile, then say so) or went away. Turns and
@@ -161,6 +166,10 @@ class Portal:
         r.add_post("/api/requests/{request}", self.answer)
         r.add_get("/api/file", self.file)
         r.add_get("/api/inbox", self.inbox)
+        r.add_get("/api/mesh", self.machines)
+        r.add_post("/api/mesh/machines", self.add_machine)
+        r.add_post("/api/mesh/plugin-source", self.set_plugin_source)
+        r.add_post("/api/mesh/machines/{machine}/remove", self.remove_machine)
         r.add_get("/api/push/key", self.push_key)
         r.add_post("/api/push/subscribe", self.push_subscribe)
         r.add_get("/api/android/release", self.android_release)
@@ -171,8 +180,22 @@ class Portal:
         r.add_get("/api/desktop/release", self.desktop_release)
         r.add_get("/desktop/{file}", self.desktop_app)
         r.add_get("/ws", self.socket)
+        # Other machines in this portal's mesh dial in and fetch their setup here, by token or
+        # setup code rather than sign-in (`mesh.Mesh`); a portal with no mesh answers 404.
+        r.add_get("/mesh", self._mesh_route("handle"))
+        r.add_get("/mesh/setup/{code}", self._mesh_route("setup"))
+        r.add_get("/mesh/setup/{code}/status", self._mesh_route("setup_status"))
+        r.add_get("/mesh/setup/{code}/{kind:sh|ps1}", self._mesh_route("script"))
         r.add_get("/{path:.*}", self.static)
         return app
+
+    def _mesh_route(self, name):
+        async def route(request):
+            if self.mesh is None:
+                raise web.HTTPNotFound()
+            return await getattr(self.mesh, name)(request)
+
+        return route
 
     def local_app(self, token, link=None):
         """Starts chats for scripts on this machine (an agent handing work to a new thread), and
@@ -213,20 +236,104 @@ class Portal:
             # Same turn lock as a typed message: a busy thread queues or steers it.
             # `from`: the thread sending it (nako-spawn passes its own session), shown as that thread's message.
             body, text = await brief(request)
-            hub = await self._hub()
-            return web.json_response(await hub.send(self._session(request), text, sender=body.get("from") or None))
+            hub, session = await self._target(self._session(request))
+            if hub is not self.hub:
+                return web.json_response(await hub.send(session, await self._signed(text, body.get("from")), []))
+            return web.json_response(await hub.send(session, text, sender=body.get("from") or None))
 
         async def handoff(request):
             hub = await self._hub()
             return web.json_response(await hub.adopt(self._session(request)))
 
+        async def read(request):
+            """Where a chat stands, for an agent following it: running or not, any open question,
+            and its last few messages (?last=, default 4) as plain text."""
+            hub, session = await self._target(self._session(request))
+            opened = await hub.open(session)
+            last = max(1, min(int(request.query.get("last") or 4), 50))
+            shown = [m for m in opened.get("messages") or [] if m.get("role") in ("user", "assistant") and (m.get("text") or "").strip()]
+            return web.json_response(
+                {
+                    "session": request.match_info["session"],
+                    "title": opened.get("title"),
+                    "running": bool(opened.get("running")),
+                    "status": opened.get("status"),
+                    "requests": opened.get("requests") or [],
+                    "messages": [{"role": m["role"], "text": m["text"]} for m in shown[-last:]],
+                }
+            )
+
+        async def stop(request):
+            hub, session = await self._target(self._session(request))
+            return web.json_response(await hub.interrupt(session))
+
+        async def machines(request):
+            if self.node is not None:
+                return web.json_response(await self.node.call("machines"))
+            return web.json_response(self.mesh.machines() if self.mesh is not None else [])
+
+        async def threads(request):
+            """Another machine's chats, so an agent can pick one up."""
+            machine = request.match_info["machine"]
+            if self.node is not None:
+                return web.json_response(await self.node.call("threads", machine))
+            if self.mesh is None:
+                raise ValueError("This machine isn't in a mesh")
+            return web.json_response(await self.mesh.threads(machine))
+
+        async def answer(request):
+            """Answer a question or approval a chat on another machine is waiting on."""
+            body = await request.json()
+            request_id = str(body.get("request") or "")
+            if not request_id:
+                raise ValueError("Say which request")
+            hub, session = await self._target(self._session(request))
+            if hub is self.hub:
+                raise ValueError("Answer this machine's own questions in its chat")
+            return web.json_response(await hub.answer(request_id, body.get("result") or {}))
+
+        async def start_on(request):
+            """A new chat on another machine, running a brief from a thread here."""
+            body, text = await brief(request)
+            machine = request.match_info["machine"]
+            signed = await self._signed(text, body.get("from"))
+            cwd, title, yolo = body.get("cwd") or None, body.get("title") or None, body.get("yolo", True) is not False
+            if self.node is not None:
+                return web.json_response(await self.node.call("start", machine, signed, title, cwd, yolo))
+            if self.mesh is None:
+                raise ValueError("This machine isn't in a mesh")
+            return web.json_response(await self.mesh.machine_hub(machine).create(signed, [], title, cwd, yolo))
+
         app = web.Application(client_max_size=MAX_BODY, middlewares=[guard])
         app.router.add_post("/sessions", start)
+        app.router.add_get("/sessions/{session}", read)
         app.router.add_post("/sessions/{session}/messages", send)
+        app.router.add_post("/sessions/{session}/stop", stop)
         app.router.add_post("/sessions/{session}/handoff", handoff)
+        app.router.add_get("/mesh/machines", machines)
+        app.router.add_get("/mesh/machines/{machine}/sessions", threads)
+        app.router.add_post("/sessions/{session}/answer", answer)
+        app.router.add_post("/mesh/machines/{machine}/sessions", start_on)
         if link is not None:
             app.router.add_get(GATEWAY_PATH, link.handle)
         return app
+
+    async def _signed(self, text, sender):
+        """A message from a thread here, going to another machine: it opens with the line saying
+        which thread sent it, so that machine's model doesn't read it as the person's own words."""
+        if not sender or text.startswith("/"):
+            return text
+        if not SESSION_ID.match(str(sender)):
+            raise ValueError("The sending thread's id isn't a session id")
+        try:
+            title = await asyncio.to_thread(self.hub.backend.title_of, str(sender))
+        except Exception:
+            title = None
+        # Named the way the other machine reaches it, so its agent can answer that thread.
+        here = self.mesh_name
+        if here:
+            sender, title = f"mesh.{here}.{sender}", f"{title or 'untitled'} on {here}"
+        return from_thread_line(str(sender), title) + text
 
     @web.middleware
     async def _guard(self, request, handler):
@@ -296,6 +403,18 @@ class Portal:
         if not self.hub.connected:
             raise ConnectionError("offline")
         return self.hub
+
+    async def _target(self, session):
+        """The hub holding a chat (this one, or a mesh machine's) and the chat's id there."""
+        if self.mesh is not None and remote(session):
+            return self.mesh.target(session)
+        if self.node is not None and remote(session):
+            return self.node.remote(session), session
+        return await self._hub(), session
+
+    @property
+    def mesh_name(self):
+        return self.mesh.name if self.mesh is not None else self.node.name if self.node is not None else None
 
     # Sign-in
 
@@ -495,15 +614,17 @@ class Portal:
         for row in rows:
             # A post nobody has opened the chat for since: the sidebar marks it.
             row["unread"] = (row["notifications"] or row["reviews"]) and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
+        if self.mesh is not None:
+            rows += await self.mesh.sessions()
         return web.json_response(rows)
 
     async def open(self, request):
         self._require(request)
-        hub = await self._hub()
         session = self._session(request)
-        opened = await hub.open(session)
+        hub, inner = await self._target(session)
+        opened = await hub.open(inner)
         # Only the Notifications and Reviews chats keep a read mark, so other chats skip relisting every chat.
-        if hub.inboxes is None or session in hub.inboxes:
+        if hub is self.hub and (hub.inboxes is None or session in hub.inboxes):
             listed = next((row for row in await hub.sessions() if row["id"] == session), None)
             if listed and (listed["notifications"] or listed["reviews"]):
                 self.store.set_meta(f"seen:{session}", listed["message_count"])
@@ -537,9 +658,9 @@ class Portal:
 
     async def send(self, request):
         self._require(request)
-        hub = await self._hub()
+        hub, session = await self._target(self._session(request))
         text, files = await self._message(request)
-        return web.json_response(await hub.send(self._session(request), text, files))
+        return web.json_response(await hub.send(session, text, files))
 
     async def commands(self, request):
         self._require(request)
@@ -548,58 +669,61 @@ class Portal:
 
     async def processes(self, request):
         self._require(request)
-        hub = await self._hub()
-        return web.json_response(await hub.processes(self._session(request)))
+        hub, session = await self._target(self._session(request))
+        return web.json_response(await hub.processes(session))
 
     async def process_log(self, request):
         self._require(request)
-        hub = await self._hub()
+        hub, session = await self._target(self._session(request))
         proc = request.match_info["process"]
         if not re.fullmatch(r"proc_[0-9a-f]{1,32}", proc):
             raise ValueError("bad process id")
-        log = await hub.process_log(self._session(request), proc, 200)
+        log = await hub.process_log(session, proc, 200)
         if log is None:
             raise web.HTTPNotFound()
         return web.json_response(log)
 
     async def command(self, request):
         self._require(request)
-        hub = await self._hub()
+        hub, session = await self._target(self._session(request))
         body = await request.json()
-        return web.json_response(await hub.command(self._session(request), str(body.get("text") or "")))
+        return web.json_response(await hub.command(session, str(body.get("text") or "")))
 
     async def stop(self, request):
         self._require(request)
-        hub = await self._hub()
-        return web.json_response(await hub.interrupt(self._session(request)))
+        hub, session = await self._target(self._session(request))
+        return web.json_response(await hub.interrupt(session))
 
     async def archive(self, request):
         self._require(request)
-        hub = await self._hub()
+        hub, session = await self._target(self._session(request))
         body = await request.json()
-        return web.json_response(await hub.archive(self._session(request), bool(body.get("archived", True))))
+        return web.json_response(await hub.archive(session, bool(body.get("archived", True))))
 
     async def pin(self, request):
         self._require(request)
-        hub = await self._hub()
+        hub, session = await self._target(self._session(request))
         body = await request.json()
-        await hub.pin(self._session(request), bool(body.get("pinned", True)))
+        await hub.pin(session, bool(body.get("pinned", True)))
         return web.json_response({"ok": True})
 
     async def title(self, request):
         self._require(request)
-        hub = await self._hub()
+        hub, session = await self._target(self._session(request))
         body = await request.json()
         title = str(body.get("title") or "").strip()[:200]
         if not title:
             raise ValueError("Give it a title")
-        return web.json_response(await hub.rename(self._session(request), title))
+        return web.json_response(await hub.rename(session, title))
 
     async def answer(self, request):
         self._require(request)
-        hub = await self._hub()
         body = await request.json()
-        return web.json_response(await hub.answer(request.match_info["request"], body.get("result") or {}))
+        request_id = request.match_info["request"]
+        if self.mesh is not None and request_id in self.mesh.requests:
+            return web.json_response(await self.mesh.answer(request_id, body.get("result") or {}))
+        hub = await self._hub()
+        return web.json_response(await hub.answer(request_id, body.get("result") or {}))
 
     async def file(self, request):
         """A file shown in that session's transcript (a reply's MEDIA: tag or an image the user attached), and nothing else."""
@@ -607,7 +731,8 @@ class Portal:
         hub = await self._hub()
         session = request.query.get("session", "")
         raw = request.query.get("path", "")
-        if not SESSION_ID.match(session) or not raw.startswith(("/", "~/")):
+        # Another machine's files stay on that machine.
+        if not SESSION_ID.match(session) or not raw.startswith(("/", "~/")) or remote(session):
             raise web.HTTPNotFound()
         path = Path(raw).expanduser()
         if raw not in await self._shown_files(hub, session, raw) or not path.is_file() or path.stat().st_size > MAX_FILE:
@@ -630,6 +755,38 @@ class Portal:
                 del self.shown[stale]
             self.shown[session] = (now + SHOWN_FILES_TTL, files)
         return files
+
+    # Other machines (mesh)
+
+    def _mesh(self):
+        if self.mesh is None:
+            raise ValueError("This portal isn't a mesh hub")
+        return self.mesh
+
+    async def machines(self, request):
+        self._require(request)
+        if self.mesh is None:
+            return web.json_response({"hub": False, "machines": []})
+        return web.json_response(
+            {"hub": True, "name": self.mesh.name, "address": self.mesh.address, "plugin": self.mesh.source_view(), "machines": self.mesh.machines()}
+        )
+
+    async def set_plugin_source(self, request):
+        self._require(request)
+        body = await request.json()
+        return web.json_response(self._mesh().set_source(body.get("source")))
+
+    async def add_machine(self, request):
+        self._require(request)
+        body = await request.json()
+        name = str(body.get("name") or "").strip().lower()
+        if name in {m["name"] for m in self._mesh().machines()}:
+            raise ValueError(f"There's already a machine called {name}")
+        return web.json_response(self._mesh().add(name))
+
+    async def remove_machine(self, request):
+        self._require(request)
+        return web.json_response(await self._mesh().remove(request.match_info["machine"]))
 
     async def inbox(self, request):
         self._require(request)
@@ -782,7 +939,7 @@ class Portal:
         try:
             await ws.send_json({"kind": "hub.connected" if self.hub.connected else "hub.disconnected"})
             # Where every chat stands now; a socket that joins mid-turn would otherwise wait for the next change.
-            for frame in self.hub.status_frames():
+            for frame in self.hub.status_frames() + (self.mesh.status_frames() if self.mesh is not None else []):
                 await ws.send_json(frame)
             async for message in ws:
                 if message.type != WSMsgType.TEXT:
@@ -797,6 +954,8 @@ class Portal:
                     session = str(data["watch"] or "")
                     # No chat open (the new-chat screen) clears what this socket shows.
                     self.hub.watch(client, session if SESSION_ID.match(session) else None)
+                    if self.mesh is not None and remote(session):
+                        await self.mesh.read(session)
                 if isinstance(data.get("looking"), bool):
                     self.hub.look(client, data["looking"])
         finally:

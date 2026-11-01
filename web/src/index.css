@@ -289,3 +289,18 @@
 html.bubble {
   font-size: 14px;
 }
+
+/* A mesh line to a machine that is working: its dashes run toward the machine. */
+@keyframes mesh-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+.mesh-flow {
+  animation: mesh-flow 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mesh-flow {
+    animation: none;
+  }
+}
