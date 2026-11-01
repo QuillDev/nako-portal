@@ -312,10 +312,10 @@ def _cli(args):
 
 def _join(home, args):
     from hermes_cli.config import load_config, set_config_value
-    from hermes_cli.config_env_routing import save_env_setting
 
     if args.token:
-        save_env_setting("NAKO_MESH_TOKEN", args.token)
+        # An UPPER_SNAKE key goes to .env, not config.yaml.
+        set_config_value("NAKO_MESH_TOKEN", args.token)
     elif not os.environ.get("NAKO_MESH_TOKEN") and "NAKO_MESH_TOKEN=" not in ((Path(home) / ".env").read_text() if (Path(home) / ".env").exists() else ""):
         raise SystemExit("No token yet: give the one the hub printed (or add the machine on the hub's Mesh page)")
     set_config_value("plugins.entries.nako-portal.settings.mesh_hub", args.hub)
