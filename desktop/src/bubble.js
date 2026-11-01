@@ -79,6 +79,11 @@ export class FloatingNako {
     this.#send()
   }
 
+  /** The alert socket (re)opened: its opening statuses replace the ones held from before. */
+  reconnected() {
+    this.statuses.reconnected()
+  }
+
   /** Every socket frame; status frames change what she shows. */
   frame(text) {
     if (!this.statuses.apply(text)) return

@@ -112,8 +112,8 @@ export type Live = { messages: LiveMessage[]; tools: LiveTool[] }
 export type Passkey = { id: string; label: string; current?: boolean }
 
 export type Frame =
-  | { kind: "hub.connected" | "hub.disconnected" | "sessions.changed" }
-  | { kind: "status"; session: string; status: Status }
+  | { kind: "hub.connected" | "hub.disconnected" | "sessions.changed" | "status.synced" }
+  | { kind: "status"; session: string; status: Status | null }
   | { kind: "request"; session: string; request: PortalRequest }
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }

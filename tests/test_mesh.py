@@ -694,14 +694,32 @@ async def test_the_app_on_the_hub_opens_a_machines_chat_while_its_gateway_is_dow
 
 
 async def test_a_machines_running_task_stops_counting_once_its_gateway_drops(mesh):
+    await mesh.sign_up()
     await _join(mesh)
     mesh.machine.hermes.hold = True
     await _run(mesh, "a long job")
     await until(lambda: [r["working"] for r in mesh.mesh.machines()] == [1])
-    await mesh.machine.gateway.stop(mesh.machine.hub)
-    await until(lambda: mesh.mesh.info[MACHINE]["gateway"] is False)
+    async with mesh.http.ws_connect(mesh.url("/ws"), headers={"Origin": ORIGIN}) as sticker:
+        working = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("status") == "working")
+        await mesh.machine.gateway.stop(mesh.machine.hub)
+        await until(lambda: mesh.mesh.info[MACHINE]["gateway"] is False)
+        # The hub's apps hear the task is gone, so a sticker stops counting it.
+        cleared = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("session") == working["session"])
+        assert cleared["status"] is None
     laptop = next(r for r in await _machines(mesh) if r["name"] == MACHINE)
     assert (laptop["gateway"], laptop["working"]) == (False, 0)
+
+
+async def test_a_machine_that_leaves_mid_task_stops_counting_on_the_hubs_apps(mesh):
+    await mesh.sign_up()
+    await _join(mesh)
+    mesh.machine.hermes.hold = True
+    await _run(mesh, "a long job")
+    async with mesh.http.ws_connect(mesh.url("/ws"), headers={"Origin": ORIGIN}) as sticker:
+        working = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("status") == "working")
+        await mesh.machine.stop()
+        cleared = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("session") == working["session"])
+        assert cleared["status"] is None
 
 
 @pytest.fixture

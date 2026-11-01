@@ -44,11 +44,17 @@ async def test_a_turn_and_its_question_end_when_the_gateway_goes_away(world):
     await until(lambda: world.hub.requests)
     opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
     assert (opened["running"], len(opened["requests"])) == (True, 1)
+    sticker = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await next_message(sticker, lambda m: m.get("kind") == "status.synced")
 
     await world.gateway.stop(world.hub)
+    # Apps already connected hear the chat stopped, or their sticker keeps counting it as running.
+    cleared = await next_message(sticker, lambda m: m.get("kind") == "status")
+    assert (cleared["session"], cleared["status"]) == (sid, None)
     await world.gateway.start(world.hub)
     opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
     assert (opened["running"], opened["requests"], opened["status"]) == (False, [], None)
+    await sticker.close()
 
 
 async def test_a_gateway_on_other_code_is_told_to_start_a_fresh_server(world):

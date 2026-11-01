@@ -94,6 +94,30 @@ class BubbleLayoutTest {
     }
 
     @Test
+    fun chatsThePortalStopsReportingDropOutOfTheCounts() {
+        val statuses = Statuses()
+        fun send(chat: String, status: String, unread: Boolean = false) =
+            statuses.apply("""{"kind":"status","session":"$chat","status":$status,"unread":$unread}""")
+        for (chat in listOf("a", "b", "c", "d")) send(chat, "\"working\"")
+        send("e", "\"done\"", unread = true)
+        // The gateway went away mid-turn: the portal clears that chat.
+        assertTrue(send("a", "null"))
+        assertEquals(Counts(working = 3, finished = 1), statuses.counts)
+        assertEquals(Mood.WORKING, statuses.mood)
+        // The portal restarted; the new socket only knows about two of the working chats.
+        statuses.reconnected()
+        send("b", "\"working\"")
+        send("c", "\"working\"")
+        assertTrue(statuses.apply("""{"kind":"status.synced"}"""))
+        assertEquals(Counts(working = 2, finished = 0), statuses.counts)
+        // A reconnect where nothing is running anymore leaves her idle.
+        statuses.reconnected()
+        statuses.apply("""{"kind":"status.synced"}""")
+        assertEquals(Counts(working = 0, finished = 0), statuses.counts)
+        assertEquals(Mood.IDLE, statuses.mood)
+    }
+
+    @Test
     fun theStickerWithItsPillStaysOnScreen() {
         // The window is taller than it is wide (the pill hangs under her): it's kept on screen by its height.
         assertEquals(2200 - 196, BubbleLayout.settle(x = 10, y = 2500, size = 160, screenWidth = 1080, screenHeight = 2200, height = 196).y)

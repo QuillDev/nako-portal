@@ -191,6 +191,7 @@ export function usePortal() {
           setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status } : r)))
           return
         case "alert":
+        case "status.synced":
           return
         case "machines.changed":
           setMachinesSeen(n => n + 1)
