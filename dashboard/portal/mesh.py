@@ -165,6 +165,7 @@ def setup_page(*, name, address, token, code, plugin):
 The user wants this machine to join their Nako mesh, so their main Hermes (the hub at {address}) can hand it tasks.
 Do every step yourself, in order, with your terminal. If a step fails, stop and tell the user which one and what it printed.
 Never repeat the token below to the user or write it anywhere except through these commands.
+On Windows, type curl.exe wherever these steps say curl (PowerShell's curl is something else), and ~/.hermes is %USERPROFILE%\\.hermes.
 
 1. Install the Nako Portal plugin:
 
@@ -358,7 +359,7 @@ class Mesh:
         command = f"hermes mesh join {self.address or '<this hub>'} {token} --name {name}"
         code = start_setup(self.data, name, token, self.clock())
         url = f"{self.address}{SETUP_PATH.format(code=code)}"
-        prompt = f'Set this machine up as "{name}" in my Nako mesh: run `curl -fsSL {url}` and follow the steps it prints, exactly and in order.'
+        prompt = f'Set this machine up as "{name}" in my Nako mesh: run `curl -fsSL {url}` (curl.exe on Windows) and follow the steps it prints, exactly and in order.'
         return {"name": name, "token": token, "command": command, "prompt": prompt}
 
     async def setup(self, request):

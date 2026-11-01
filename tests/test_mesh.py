@@ -267,6 +267,7 @@ async def test_adding_a_machine_gives_a_join_command_that_works(mesh):
 
 async def _setup(world, prompt):
     url = re.search(r"curl -fsSL (\S+)`", prompt).group(1)
+    assert "curl.exe on Windows" in prompt
     # The hub's real mesh address isn't this test server's; same path, though.
     path = url.split("8799", 1)[1]
     return path, await world.http.get(str(world.mesh_server.make_url(path)))
