@@ -16,7 +16,7 @@ import { InputGroupAddon } from "@/components/ui/input-group"
 import type { Portal } from "@/hooks/use-portal"
 import { burstHearts, saysThanks } from "@/lib/hearts"
 import { isCommand, SlashMenu, useSlashMenu } from "./slash-menu"
-import { SessionModel } from "./model-picker"
+import { type ModelSelection, NewChatModel, SessionModel } from "./model-picker"
 
 const MAX_FILE = 25 * 1024 * 1024
 
@@ -116,6 +116,7 @@ const NO_COMMANDS: ComposerProps["commands"] = []
 
 function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
   const [sending, setSending] = useState(false)
+  const [model, setModel] = useState<ModelSelection>({})
   const box = useRef<HTMLDivElement>(null)
   const { textInput } = usePromptInputController()
   const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
@@ -149,6 +150,7 @@ function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, c
             await send(
               message.text,
               message.files.map(f => ({ url: f.url, filename: f.filename, mediaType: f.mediaType })),
+              !inChat && Object.keys(model).length ? model : undefined,
             )
             localStorage.removeItem(draftKey)
           } finally {
@@ -158,6 +160,7 @@ function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, c
       >
         <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${expanded ? TALL.start : ""}`}>
           <AttachButton />
+          {!inChat && <NewChatModel selection={model} onPick={setModel} />}
           {session && expanded && <SessionModel key={session} session={session} running={running} />}
         </InputGroupAddon>
         <PromptInputTextarea

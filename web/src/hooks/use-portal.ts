@@ -1,6 +1,8 @@
 // Portal state: the signed-in user, the chat list, the open chat and its live turn.
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
+import type { ModelSelection } from "@/components/portal/model-picker"
+import { z } from "zod"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
 import { reloadSecrets } from "@/lib/secrets"
 import { rememberTitles } from "@/lib/session-refs"
@@ -351,9 +353,10 @@ export function usePortal() {
   }, [routedSession, me?.signed_in, refresh])
 
   const send = useCallback(
-    async (text: string, attachments: Attachment[]) => {
+    async (text: string, attachments: Attachment[], model?: ModelSelection) => {
       const form = new FormData()
       form.set("text", text)
+      if (model) form.set("model", JSON.stringify(model))
       for (const a of attachments) {
         const name = a.filename || "file"
         form.append("file", a.url.startsWith("data:") ? dataUrlToFile(a.url, name, a.mediaType) : new File([], name), name)
@@ -366,7 +369,13 @@ export function usePortal() {
           setCurrent(c => c && { ...c, running: true, messages: [...c.messages, { role: "user", text, row_id: `pending-${Date.now()}`, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }] })
           setLive(l => l || emptyLive())
         } else {
-          const created = await api<{ session: string }>("/api/sessions", { method: "POST", form })
+          const created = z.object({ session: z.string(), confirmation: z.string().optional(), message: z.string().optional() }).parse(await api<unknown>("/api/sessions", { method: "POST", form }))
+          if (created.confirmation) {
+            if (!window.confirm(created.message)) throw new Error("Message not sent")
+            const selected = z.object({ confirmation: z.string().optional() }).parse(await api<unknown>(sessionPath(created.session, "/model"), { method: "POST", body: { ...model, confirm: created.confirmation } }))
+            if (selected.confirmation) throw new Error("Model selection changed. Pick it again before sending.")
+            await api(sessionPath(created.session, "/messages"), { method: "POST", form })
+          }
           await loadSessions()
           navigate(`#/c/${created.session}`)
         }
