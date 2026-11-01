@@ -142,6 +142,8 @@ class FakeGateway:
         self.elsewhere = {}
         self.next_row = 1
         self.reply = "hello from hermes"
+        # A turn that starts and keeps running (until the gateway goes away).
+        self.hold = False
         self.ask_approval = False
         self.sign_off_error = None
         # The adapter's final send can reach the hub after the turn has ended.
@@ -305,6 +307,8 @@ class FakeGateway:
 
     async def _turn(self, chat, sid):
         await self.hub.turn_started(chat)
+        if self.hold:
+            return
         if self.ask_approval:
             request = {"id": "req-1", "method": "approval", "params": {"command": "rm -rf build", "description": "delete build", "choices": ["once", "session", "deny"]}, "private": {"session_key": f"key-{chat}"}}
             await self.hub.ask(chat, request)

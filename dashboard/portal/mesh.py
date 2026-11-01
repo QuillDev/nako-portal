@@ -64,6 +64,8 @@ NODE_CALLS = (
     "set_session_model",
     "command",
 )
+# What the hub may ask a machine's portal server to do to that machine's Hermes (`machine_ops`).
+MACHINE_OPS = ("restart_gateway", "update_hermes", "job")
 # How long a new machine's one-line setup works.
 SETUP_TTL = 24 * 3600
 SETUP_PATH = MESH_PATH + "/setup/{code}"
@@ -199,9 +201,10 @@ On Windows, type curl.exe wherever these steps say curl (PowerShell's curl is so
    hermes mesh join {address} {token} --name {name}
 
 3. Keep the gateway running in the background so the machine stays reachable:
-   run `hermes gateway status`. If no background service is installed, run `hermes gateway install` and then `hermes gateway start`.
-   Otherwise run `hermes gateway restart`. If you are running inside that gateway and can't restart it, ask the user to run
-   `hermes gateway restart` in a terminal, then continue.
+   run `hermes gateway status`. If no background service is installed, run `hermes gateway install` first.
+   On Windows, start it through its scheduled task, `schtasks /Run /TN Hermes_Gateway` (after `hermes gateway stop` if one runs),
+   never with `hermes gateway start` or `restart`, which run it outside the task. Elsewhere run `hermes gateway restart`.
+   If you are running inside that gateway and can't restart it, ask the user to do it in a terminal, then continue.
 
 4. Check that it joined: run `{status}` every 10 seconds for up to 2 minutes until it prints "online": true.
    If it never does, show the user the end of ~/.hermes/logs/gateway.log and ~/.hermes/nako-portal/server.log.
@@ -374,7 +377,7 @@ class Mesh:
 
     `hub` is this server's own hub; a node's live frames reach the app through it."""
 
-    def __init__(self, data, hub, *, name="hub", address=None, plugin=None, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
+    def __init__(self, data, hub, *, name="hub", address=None, plugin=None, skills_dir=None, skills_exclude=(), store=None, ops=None, clock=time.time):
         self.data = Path(data)
         # The hub's own name in the mesh: other machines reach its chats as `mesh.<name>.<id>`.
         self.name = name
@@ -386,6 +389,8 @@ class Mesh:
         self.skills_dir = Path(skills_dir) if skills_dir else None
         self.skills_exclude = list(skills_exclude or ())
         self.store = store
+        # The hub's own Hermes, for its version in the machine list (`machine_ops.MachineOps`).
+        self.ops = ops
         self.clock = clock
         self.peers = {}
         self.info = {}
@@ -475,7 +480,8 @@ class Mesh:
         name, _ = setup_for(self.data, request.match_info["code"], self.clock())
         if name is None:
             return web.json_response({"error": "unknown or expired setup"}, status=404)
-        return web.json_response({"machine": name, "online": name in self.peers})
+        online = name in self.peers
+        return web.json_response({"machine": name, "online": online, "gateway": online and bool(self.info.get(name, {}).get("gateway"))})
 
     async def remove(self, name):
         """Revoke a machine's token and drop its link, so it's gone at once."""
@@ -507,9 +513,43 @@ class Mesh:
                     "connected_at": info.get("connected_at") if online else None,
                     "last_seen": self.clock() if online else last,
                     "working": sum(1 for s, v in self.status.items() if (parse(s) or ("",))[0] == name and v.get("status") == "working"),
+                    # Its Hermes: {version, date, channel, commit, line} from `hermes --version` there.
+                    "hermes": info.get("hermes"),
                 }
             )
         return rows
+
+    def me(self):
+        """The hub's own row, as the machine list shows it."""
+        return {
+            "name": self.name,
+            "hub": True,
+            "online": True,
+            "gateway": bool(self.hub.connected),
+            "os": f"{platform.system()} {platform.release()}".strip(),
+            "hostname": socket.gethostname(),
+            "last_seen": self.clock(),
+            "working": sum(1 for v in self.hub.status.values() if v == "working"),
+            "hermes": self.ops.info if self.ops is not None else None,
+        }
+
+    async def machine_op(self, machine, op, *args):
+        """Restart a machine's gateway, update its Hermes, or read how that's going. The machine's
+        portal server does it, so this works while the machine's gateway is down."""
+        if op not in MACHINE_OPS:
+            raise ValueError(f"no such machine op: {op}")
+        if machine == self.name:
+            raise ValueError("That's the hub itself; do that on the hub, not through the mesh")
+        self.machine_hub(machine)  # offline or unknown machines fail here, clearly
+        return await self.call(machine, op, *args)
+
+    def _settle(self, machine):
+        """A machine's gateway went away: its turns and questions went with it."""
+        for session in [s for s in self.status if (parse(s) or ("",))[0] == machine]:
+            if self.status[session].get("status") in ("working", "needs you"):
+                del self.status[session]
+        for rid in [r for r, m in self.requests.items() if m == machine]:
+            self.requests.pop(rid, None)
 
     def target(self, session):
         """The hub that holds a chat and its id there."""
@@ -605,9 +645,14 @@ class Mesh:
                 self.requests.pop(str(frame.get("id")), None)
             payload = {k: v for k, v in frame.items() if k != "session"}
             await self.hub._publish(session, payload)
+        elif kind == "node.info" and machine in self.info:
+            self.info[machine]["hermes"] = frame.get("hermes") if isinstance(frame.get("hermes"), dict) else None
+            await self.hub.broadcast({"kind": "machines.changed"})
         # hub.connected / hub.disconnected: the node's own gateway; kept in its info instead.
         if kind in {"hub.connected", "hub.disconnected"} and machine in self.info:
             self.info[machine]["gateway"] = kind == "hub.connected"
+            if kind == "hub.disconnected":
+                self._settle(machine)
             await self.hub.broadcast({"kind": "sessions.changed"})
             await self.hub.broadcast({"kind": "machines.changed"})
 
@@ -619,6 +664,7 @@ class Mesh:
                 "hostname": str(info.get("hostname") or "")[:80] or None,
                 "gateway": bool(info.get("gateway")),
                 "connected_at": self.clock(),
+                "hermes": info.get("hermes") if isinstance(info.get("hermes"), dict) else None,
             }
             for frame in info.get("statuses") or []:
                 await self._frame(machine, frame)
@@ -640,8 +686,13 @@ class Mesh:
 
         async def machines():
             """The mesh as this machine's agent sees it: the hub and every other machine."""
-            me = {"name": self.name, "hub": True, "online": True, "gateway": bool(self.hub.connected), "os": None, "hostname": socket.gethostname(), "last_seen": self.clock(), "working": sum(1 for v in self.hub.status.values() if v == "working")}  # noqa: E501
-            return [me] + [row for row in self.machines() if row["name"] != machine]
+            return [self.me()] + [row for row in self.machines() if row["name"] != machine]
+
+        async def machine_op(target, op, args):
+            """A restart, update or job check on another machine, for this machine's agent."""
+            if target == machine:
+                raise ValueError("That's this machine; do it here")
+            return await self.machine_op(target, op, *(args or []))
 
         async def start(target, text, title=None, cwd=None, yolo=True):
             """A new chat on another machine (or the hub), for this machine's agent."""
@@ -681,6 +732,7 @@ class Mesh:
             "start": start,
             "relay": relay,
             "threads": threads,
+            "machine_op": machine_op,
         }
 
     async def handle(self, request):
@@ -710,11 +762,7 @@ class Mesh:
                 self.info.setdefault(name, {})["last_seen"] = seen
                 if self.store is not None:
                     self.store.set_meta(f"mesh:seen:{name}", seen)
-                for session in [s for s in self.status if (parse(s) or ("",))[0] == name]:
-                    if self.status[session].get("status") in ("working", "needs you"):
-                        del self.status[session]
-                for rid in [r for r, m in self.requests.items() if m == name]:
-                    self.requests.pop(rid, None)
+                self._settle(name)
                 log.info("portal: %s left the mesh", name)
                 await self.hub.broadcast({"kind": "sessions.changed"})
                 await self.hub.broadcast({"kind": "machines.changed"})
@@ -738,15 +786,19 @@ class Node:
 
     RETRY = 3.0
 
-    def __init__(self, url, name, token, hub, *, skills_into=None):
+    def __init__(self, url, name, token, hub, *, skills_into=None, ops=None):
         self.url = url
         self.name = name
         self.token = token
         self.hub = hub
         self.skills_into = Path(skills_into) if skills_into else None
+        # This machine's Hermes (`machine_ops.MachineOps`): its version, restarts and updates.
+        self.ops = ops
         self.peer = None
         self.connected_event = asyncio.Event()
         hub.taps.add(self._tap)
+        if ops is not None:
+            ops.on_info = lambda info: self._tap({"kind": "node.info", "hermes": info})
 
     def _tap(self, frame):
         peer = self.peer
@@ -790,6 +842,19 @@ class Node:
             return await self.hub.create(text, decode_files(files or []), *rest)
 
         methods.update(send=send, create=create)
+        ops = self.ops
+        if ops is not None:
+
+            async def bounce():
+                return await ops.start("restart")
+
+            async def update_hermes(channel=None):
+                return await ops.start("update", channel)
+
+            async def job():
+                return ops.job()
+
+            methods.update({MACHINE_OPS[0]: bounce, "update_hermes": update_hermes, "job": job})
         return methods
 
     def _hello(self):
@@ -798,6 +863,7 @@ class Node:
             "hostname": socket.gethostname(),
             "gateway": bool(self.hub.connected),
             "statuses": self.hub.status_frames(),
+            "hermes": self.ops.info if self.ops is not None else None,
         }
 
     async def run(self, http):

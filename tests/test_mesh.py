@@ -4,10 +4,14 @@ fake gateway, joined over the real mesh socket."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
+import sqlite3
 import stat
+import sys
 import time
+from pathlib import Path
 
 import aiohttp
 import pytest
@@ -18,7 +22,9 @@ from conftest import LOCAL_TOKEN, ORIGIN, SERVER_CODE, FakeGateway, Gateway, nex
 from portal import mesh as mesh_module
 from portal.hub import Hub
 from portal.link import GatewayLink
+from portal.machine_ops import MachineOps
 from portal.mesh import Mesh, Node, add_node, mirror_skills, remove_node, skill_manifest
+from portal.offline import Offline
 from portal.server import Portal
 from portal.store import Store
 
@@ -39,12 +45,13 @@ class Machine:
         self.node = None
         self.task = None
 
-    async def start(self, url, token, name=MACHINE, skills_into=None):
+    async def start(self, url, token, name=MACHINE, skills_into=None, ops=None):
         self.local = TestServer(self.portal.local_app(LOCAL_TOKEN, self.link))
         await self.local.start_server()
         self.gateway = Gateway(self.hermes, self.local, self.http)
         await self.gateway.start(self.hub)
-        self.node = Node(url, name, token, self.hub, skills_into=skills_into)
+        self.portal.ops = ops
+        self.node = Node(url, name, token, self.hub, skills_into=skills_into, ops=ops)
         self.node.RETRY = 0.05
         self.portal.node = self.node
         self.task = asyncio.get_running_loop().create_task(self.node.run(self.http))
@@ -111,8 +118,10 @@ async def _run(world, text, **extra):
 async def test_a_machine_with_its_token_joins_and_shows_online(mesh):
     await _join(mesh)
     rows = await _machines(mesh)
-    assert [(r["name"], r["online"], r["gateway"]) for r in rows] == [(MACHINE, True, True)]
-    assert rows[0]["hostname"]
+    # The hub lists itself first, so its agent can compare versions with it.
+    assert [(r["name"], r["online"], r["gateway"]) for r in rows] == [("hub", True, True), (MACHINE, True, True)]
+    assert rows[0]["hub"] is True
+    assert rows[1]["hostname"]
 
 
 async def test_a_machine_with_a_wrong_token_is_refused(mesh):
@@ -121,7 +130,7 @@ async def test_a_machine_with_a_wrong_token_is_refused(mesh):
         with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
             await http.ws_connect(mesh.mesh_url, params={"name": MACHINE}, headers={"Authorization": "Bearer nope"})
     assert refused.value.status == 401
-    assert [(r["name"], r["online"]) for r in await _machines(mesh)] == [(MACHINE, False)]
+    assert [(r["name"], r["online"]) for r in await _machines(mesh)] == [("hub", True), (MACHINE, False)]
 
 
 async def test_a_revoked_machine_cant_rejoin(mesh):
@@ -236,8 +245,8 @@ async def test_a_machine_that_leaves_goes_offline_and_its_chats_are_unreachable(
     await mesh.machine.stop()
     mesh.machine.task = None
     await until(lambda: MACHINE not in mesh.mesh.peers)
-    rows = await _machines(mesh)
-    assert rows[0]["online"] is False and rows[0]["last_seen"]
+    laptop = next(r for r in await _machines(mesh) if r["name"] == MACHINE)
+    assert laptop["online"] is False and laptop["last_seen"]
     refused = await mesh.http.post(_local(mesh, f"/sessions/{session}/messages"), json={"text": "still there?"}, headers=AUTH)
     assert refused.status == 503
     started = await _run(mesh, "anyone?")
@@ -445,8 +454,8 @@ async def test_one_line_setup_tells_a_stock_hermes_everything_and_the_machine_jo
     assert (await (await mesh.http.get(status)).json())["online"] is False
     # Following the page: the machine joins with the token it gave.
     await mesh.machine.start(mesh.mesh_url, join.group(1))
-    await until(lambda: MACHINE in mesh.mesh.peers)
-    assert (await (await mesh.http.get(status)).json()) == {"machine": MACHINE, "online": True}
+    await until(lambda: MACHINE in mesh.mesh.peers and MACHINE in mesh.mesh.info)
+    assert (await (await mesh.http.get(status)).json()) == {"machine": MACHINE, "online": True, "gateway": True}
     # Once it's in, the page no longer gives the token out.
     again = await (await mesh.http.get(str(mesh.mesh_server.make_url(path)))).text()
     assert join.group(1) not in again and "already joined" in again
@@ -591,3 +600,206 @@ async def test_the_mirror_leaves_the_machines_own_skills_alone(tmp_path):
     assert (into / "a/SKILL.md").exists()
     assert not (tmp_path / "escape").exists()
     assert own.resolve().exists()
+
+
+# A machine whose gateway is down, restarted or updated from the hub
+
+
+def _state_db(home, session, rows, *, title="Update Hermes", chat="chat-1"):
+    """A Hermes session store with one portal chat, laid out like Hermes's own tables."""
+    home.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(home / "state.db")
+    db.executescript(
+        """
+        CREATE TABLE sessions (id TEXT PRIMARY KEY, source TEXT NOT NULL, chat_id TEXT, title TEXT,
+            parent_session_id TEXT, started_at REAL NOT NULL);
+        CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, role TEXT NOT NULL,
+            content TEXT, tool_call_id TEXT, tool_calls TEXT, tool_name TEXT, timestamp REAL NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1, display_kind TEXT);
+        """
+    )
+    db.execute("INSERT INTO sessions (id, source, chat_id, title, started_at) VALUES (?, 'portal', ?, ?, 1700000000)", (session, chat, title))
+    for row in rows:
+        db.execute(
+            "INSERT INTO messages (session_id, role, content, tool_call_id, tool_calls, tool_name, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (session, row["role"], row.get("content"), row.get("tool_call_id"), json.dumps(row["tool_calls"]) if row.get("tool_calls") else None, row.get("tool_name"), row["timestamp"]),
+        )
+    db.commit()
+    db.close()
+
+
+UPDATE_CHAT = [
+    {"role": "user", "content": "run hermes update please", "timestamp": 1_700_000_100},
+    {"role": "assistant", "content": "Updating now.", "timestamp": 1_700_000_101,
+     "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "terminal", "arguments": json.dumps({"command": "hermes update"})}}]},
+    {"role": "tool", "content": json.dumps({"output": "Updating Hermes Agent v0.22.2 -> v0.22.5\nStopping the gateway"}), "tool_call_id": "call-1", "timestamp": 1_700_000_160},
+]
+
+
+def _tools_module(world):
+    """The agent's mesh tools, pointed at the hub's loopback API."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("mesh_tools_under_test", Path(__file__).resolve().parents[1] / "mesh_tools.py")
+    tools = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tools)
+    tools._api = lambda: (str(world.local.make_url("")).rstrip("/"), LOCAL_TOKEN)
+    tools.POLL = 0.1
+    return tools
+
+
+async def test_the_hub_reads_a_machines_chat_while_its_gateway_is_down(mesh, tmp_path):
+    session = "20261101_120000_aa11bb22"
+    home = tmp_path / "laptop-home"
+    _state_db(home, session, UPDATE_CHAT)
+    mesh.machine.link.offline = Offline(home, projection=False)
+    await _join(mesh)
+    await mesh.machine.gateway.stop(mesh.machine.hub)
+    await until(lambda: mesh.mesh.info[MACHINE]["gateway"] is False)
+
+    remote = f"mesh.{MACHINE}.{session}"
+    response = await mesh.http.get(_local(mesh, f"/sessions/{remote}?last=4&tools=5"), headers=AUTH)
+    assert response.status == 200, await response.text()
+    state = await response.json()
+    assert state["gateway"] is False
+    assert state["title"] == "Update Hermes"
+    assert state["messages"] == [{"role": "user", "text": "run hermes update please"}, {"role": "assistant", "text": "Updating now."}]
+    assert [(t["name"], t["context"]) for t in state["tools"]] == [("terminal", "hermes update")]
+    assert "v0.22.2 -> v0.22.5" in state["tools"][0]["result"]
+    assert state["last_active"] == 1_700_000_160
+
+    # What the hub's agent gets from mesh_read: the gateway is down, and when the chat last moved.
+    read = json.loads(await asyncio.to_thread(_tools_module(mesh).TOOL_HANDLERS["mesh_read"], {"session": remote}))
+    assert read["gateway"] is False
+    assert read["latest_reply"] == "Updating now."
+    assert "gateway is down" in read["note"] and "2023-11-14 22:16:00 UTC" in read["note"]
+    assert "v0.22.5" in read["tool_calls"][0]["result"]
+
+
+async def test_the_app_on_the_hub_opens_a_machines_chat_while_its_gateway_is_down(mesh, tmp_path):
+    session = "20261101_120000_aa11bb22"
+    home = tmp_path / "laptop-home"
+    _state_db(home, session, UPDATE_CHAT)
+    mesh.machine.link.offline = Offline(home, projection=False)
+    await mesh.sign_up()
+    await _join(mesh)
+    await mesh.machine.gateway.stop(mesh.machine.hub)
+    await until(lambda: mesh.mesh.info[MACHINE]["gateway"] is False)
+    opened = await mesh.http.get(mesh.url(f"/api/sessions/mesh.{MACHINE}.{session}"))
+    assert opened.status == 200, await opened.text()
+    shown = (await opened.json())["messages"]
+    assert [(m["role"], m.get("text") or m.get("name")) for m in shown] == [("user", "run hermes update please"), ("assistant", "Updating now."), ("tool", "terminal")]
+    # The app's rows stay small: tool results are only for agents that ask.
+    assert "result" not in shown[-1]
+
+
+async def test_a_machines_running_task_stops_counting_once_its_gateway_drops(mesh):
+    await _join(mesh)
+    mesh.machine.hermes.hold = True
+    await _run(mesh, "a long job")
+    await until(lambda: [r["working"] for r in mesh.mesh.machines()] == [1])
+    await mesh.machine.gateway.stop(mesh.machine.hub)
+    await until(lambda: mesh.mesh.info[MACHINE]["gateway"] is False)
+    laptop = next(r for r in await _machines(mesh) if r["name"] == MACHINE)
+    assert (laptop["gateway"], laptop["working"]) == (False, 0)
+
+
+@pytest.fixture
+def fake_hermes(tmp_path, monkeypatch):
+    """A machine's Hermes as the portal server drives it: v0.22.2 installed, v0.22.5 available."""
+    state = tmp_path / "fake-hermes"
+    state.mkdir()
+    (state / "version").write_text(json.dumps({"version": "v0.22.2", "date": "2026.9.1", "channel": "stable", "commit": "1111aaaa2222"}))
+    (state / "next").write_text(json.dumps({"version": "v0.22.5", "date": "2026.9.24", "channel": "stable", "commit": "3333bbbb4444"}))
+    script = Path(__file__).with_name("fake_machine.py")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    schtasks = bin_dir / "schtasks"
+    schtasks.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" schtasks "$@"\n')
+    schtasks.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("FAKE_HERMES_DIR", str(state))
+    monkeypatch.setenv("FAKE_HERMES_TOKEN", LOCAL_TOKEN)
+    monkeypatch.setenv("FAKE_HERMES_CODE", SERVER_CODE)
+    yield {"state": state, "hermes": [sys.executable, str(script), "hermes"]}
+    try:
+        os.kill(int((state / "gateway.pid").read_text()), 15)
+    except (OSError, ValueError):
+        pass
+
+
+async def _join_with_ops(world, fake, tmp_path, monkeypatch, **options):
+    ops = MachineOps(tmp_path / "laptop-data", tmp_path / "laptop-home", fake["hermes"], world.machine.hub, python=sys.executable, **options)
+    token = add_node(world.mesh_data, MACHINE)
+    await world.machine.start(world.mesh_url, token, ops=ops)
+    monkeypatch.setenv("FAKE_HERMES_LINK", str(world.machine.local.make_url("/gateway")))
+    await until(lambda: MACHINE in world.mesh.peers and MACHINE in world.mesh.info)
+    await ops.refresh()
+    return ops
+
+
+def _laptop(rows):
+    return next(r for r in rows if r["name"] == MACHINE)
+
+
+async def test_the_hub_updates_a_machines_hermes_and_its_gateway_comes_back(mesh, fake_hermes, tmp_path, monkeypatch):
+    await _join_with_ops(mesh, fake_hermes, tmp_path, monkeypatch, platform="posix")
+    await until(lambda: (_laptop(mesh.mesh.machines())["hermes"] or {}).get("version") == "v0.22.2")
+    # The update stops the gateway on its way, like the gateway the user lost.
+    await mesh.machine.gateway.stop(mesh.machine.hub)
+    started = await mesh.http.post(_local(mesh, f"/mesh/machines/{MACHINE}/update"), json={}, headers=AUTH)
+    assert started.status == 200, await started.text()
+
+    async def finished():
+        state = await (await mesh.http.get(_local(mesh, f"/mesh/machines/{MACHINE}/job"), headers=AUTH)).json()
+        return state if state["job"]["status"] not in ("starting", "running") and state["gateway"] else None
+
+    state = None
+    for _ in range(300):
+        state = await finished()
+        if state:
+            break
+        await asyncio.sleep(0.05)
+    assert state, "the update never finished with the gateway back"
+    job = state["job"]
+    assert job["status"] == "done"
+    assert (job["old"]["version"], job["new"]["version"]) == ("v0.22.2", "v0.22.5")
+    assert "Updating Hermes Agent v0.22.2 -> v0.22.5" in job["log_tail"]
+    # The hub's machine list shows the new version once the machine reads it again.
+    await until(lambda: (_laptop(mesh.mesh.machines())["hermes"] or {}).get("commit") == "3333bbbb4444")
+    assert _laptop(mesh.mesh.machines())["gateway"] is True
+
+
+async def test_mesh_restart_gateway_brings_a_dead_gateway_back_through_the_windows_task(mesh, fake_hermes, tmp_path, monkeypatch):
+    # On Windows the gateway may only start through its scheduled task: a direct start fails here.
+    monkeypatch.setenv("FAKE_HERMES_NO_DIRECT", "1")
+    await _join_with_ops(mesh, fake_hermes, tmp_path, monkeypatch, platform="windows")
+    await mesh.machine.gateway.stop(mesh.machine.hub)
+    await until(lambda: _laptop(mesh.mesh.machines())["gateway"] is False)
+    tools = _tools_module(mesh)
+    result = json.loads(await asyncio.to_thread(tools.TOOL_HANDLERS["mesh_restart_gateway"], {"machine": MACHINE, "wait_seconds": 20}))
+    assert result["gateway"] is True, result
+    assert result["status"] == "done"
+    assert result["hermes_now"].startswith("Hermes Agent v0.22.2")
+    assert _laptop(mesh.mesh.machines())["gateway"] is True
+
+
+async def test_a_machines_server_brings_its_gateway_back_when_it_stays_away(mesh, fake_hermes, tmp_path, monkeypatch):
+    ops = await _join_with_ops(mesh, fake_hermes, tmp_path, monkeypatch, platform="posix", watchdog=True, grace=0.2)
+    # `hermes update` run inside a chat there: the gateway stops and nothing restarts it.
+    await mesh.machine.gateway.stop(mesh.machine.hub)
+    await until(lambda: _laptop(mesh.mesh.machines())["gateway"] is False)
+    await until(lambda: _laptop(mesh.mesh.machines())["gateway"] is True, timeout=15)
+    assert ops.job()["job"]["kind"] == "start"
+
+
+async def test_the_hub_cant_update_itself_or_a_machine_that_isnt_there(mesh):
+    for machine, status in (("hub", 400), ("toaster", 400)):
+        response = await mesh.http.post(_local(mesh, f"/mesh/machines/{machine}/update"), json={}, headers=AUTH)
+        assert response.status == status, machine
+    await _join(mesh)
+    await mesh.machine.stop()
+    mesh.machine.task = None
+    await until(lambda: MACHINE not in mesh.mesh.peers)
+    gone = await mesh.http.post(_local(mesh, f"/mesh/machines/{MACHINE}/gateway/restart"), json={}, headers=AUTH)
+    assert gone.status == 503

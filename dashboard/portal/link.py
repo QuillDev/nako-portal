@@ -6,7 +6,8 @@ the server asks the gateway about chats and hands it messages (the hub's `backen
 gateway tells the hub what happens in a thread (a turn starting, a reply, a question).
 
 While no gateway is connected, every backend call raises ConnectionError, which the web
-server answers with "Nako is offline".
+server answers with "Nako is offline", except reading a chat: that comes from the session
+store itself (`offline.Offline`), so what a chat did can still be read with its gateway down.
 """
 
 from __future__ import annotations
@@ -59,6 +60,8 @@ BACKEND_SYNC = (
 )
 # These are awaited.
 BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve", "set_session_model")
+# Reads the server answers itself from the session store while no gateway is connected.
+OFFLINE_READS = ("thread", "chat_of", "title_of")
 # What the gateway tells the hub.
 HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed")
 
@@ -167,6 +170,8 @@ class GatewayLink:
         self.peer = None
         self.hub = None
         self.loop = None
+        # `offline.Offline` (or anything with its read calls): chats read with no gateway here.
+        self.offline = None
 
     def serve(self, hub):
         self.hub = hub
@@ -221,9 +226,17 @@ class GatewayLink:
             except Exception:
                 log.exception("portal: handling the gateway %s failed", "connecting" if connected else "leaving")
 
+    def _offline(self, method):
+        if self.offline is not None and method in OFFLINE_READS:
+            return getattr(self.offline, method)
+        return None
+
     async def call(self, method, *args):
         peer = self.peer
         if peer is None:
+            read = self._offline(method)
+            if read is not None:
+                return await asyncio.to_thread(read, *args)
             raise ConnectionError("Nako is offline")
         return await peer.call(method, *args)
 
@@ -231,6 +244,9 @@ class GatewayLink:
         """A backend call from one of the hub's worker threads."""
         loop = self.loop
         if loop is None or self.peer is None:
+            read = self._offline(method)
+            if read is not None:
+                return read(*args)
             raise ConnectionError("Nako is offline")
         try:
             running = asyncio.get_running_loop()

@@ -193,7 +193,14 @@ def _mesh(entry, home, origin=None):
         hub = hub.rstrip("/")
         if not hub.endswith(MESH_PATH):
             hub += MESH_PATH
-        return {"hub": hub, "name": str(entry.get("mesh_name") or _machine_name()), "token": token, "skills_into": str(home / MESH_SKILLS)}
+        return {
+            "hub": hub,
+            "name": str(entry.get("mesh_name") or _machine_name()),
+            "token": token,
+            "skills_into": str(home / MESH_SKILLS),
+            # Off: the server leaves a gateway that went away alone instead of starting it again.
+            "watchdog": str(entry.get("mesh_gateway_watchdog", True)).lower() not in ("false", "0", "no", "off"),
+        }
     return {}
 
 
@@ -255,7 +262,9 @@ def _server_config(home, origin, port, contact, apps):
     """What the server runs with, written to a file it reads. `code` names this code and these
     settings, so a server started from anything else is replaced."""
     data = home / "nako-portal"
-    config = {"data": str(data), "origin": origin, "port": port, "contact": contact, **apps}
+    # `home`: whose session store the server reads chats from while no gateway is connected.
+    # `hermes`: the command the server runs to restart or update this machine's Hermes.
+    config = {"data": str(data), "home": str(home), "hermes": _hermes_command(), "origin": origin, "port": port, "contact": contact, **apps}
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode())
     for path in SERVER_CODE:
         digest.update(path.name.encode() + b"\0" + path.read_bytes())
@@ -265,6 +274,12 @@ def _server_config(home, origin, port, contact, apps):
     path.write_text(json.dumps(config, indent=2) + "\n")
     path.chmod(0o600)
     return path, config
+
+
+def _hermes_command():
+    """The `hermes` command as this machine runs it (argv), for the server; None if not found."""
+    found = shutil.which("hermes")
+    return [found] if found else None
 
 
 def _spawn_server(config_path, data):
@@ -457,7 +472,8 @@ class HermesBackend:
                     history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
                 except TypeError:  # a Hermes from before display reads
                     history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
-                messages = _history_to_messages(history, profile_home=home)
+                # Tool rows keep the start of their result, for agents following the chat (the app drops it).
+                messages = _portal("offline").with_results(_history_to_messages(history, profile_home=home), history)
                 if revision is not None:
                     with self.threads_lock:
                         self.threads.pop(key, None)

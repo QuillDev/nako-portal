@@ -27,6 +27,8 @@ log = logging.getLogger("hermes.portal")
 CHALLENGE_TTL = 300
 MAX_FILE = 25 * 1024 * 1024
 MAX_BODY = 60 * 1024 * 1024
+# How much of each tool result an agent following another chat gets back (loopback read, ?tools=).
+TOOL_RESULT_CHARS = 600
 SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 ANDROID_APK_PATH = "/android/nako.apk"
 ANDROID_PACKAGE = "moe.nakode.portal"
@@ -109,10 +111,14 @@ class Portal:
         self.mesh = None
         # This portal's link to its hub when it's a machine in someone's mesh (`mesh.Node`), else None.
         self.node = None
+        # This machine's Hermes as the server looks after it (`machine_ops.MachineOps`), else None.
+        self.ops = None
 
     async def gateway_changed(self, connected):
         """A gateway connected (show the saved profile, then say so) or went away. Turns and
         questions die with the gateway, so the chats stop showing them as running."""
+        if self.ops is not None:
+            self.ops.gateway_changed(connected)
         if connected:
             saved = self.store.meta("profile", None)
             if saved:
@@ -253,11 +259,22 @@ class Portal:
 
         async def read(request):
             """Where a chat stands, for an agent following it: running or not, any open question,
-            and its last few messages (?last=, default 4) as plain text."""
-            hub, session = await self._target(self._session(request))
-            opened = await hub.open(session)
+            its last few messages (?last=, default 4) as plain text, and with ?tools=N the last N
+            tool calls among them with the start of each result. It reads with this machine's
+            gateway down too (from the session store), and says so in `gateway`."""
+            session = self._session(request)
+            hub, inner = await self._target(session) if remote(session) else (self.hub, session)
+            try:
+                opened = await hub.open(inner, True)
+            except RuntimeError:
+                # A machine on a plugin from before tool results: its transcript without them.
+                opened = await hub.open(inner)
             last = max(1, min(int(request.query.get("last") or 4), 50))
-            shown = [m for m in opened.get("messages") or [] if m.get("role") in ("user", "assistant") and (m.get("text") or "").strip()]
+            tools = max(0, min(int(request.query.get("tools") or 0), 50))
+            rows = opened.get("messages") or []
+            spoken = [i for i, m in enumerate(rows) if m.get("role") in ("user", "assistant") and (m.get("text") or "").strip()]
+            window = spoken[-last:]
+            calls = [m for m in rows[window[0] if window else 0 :] if m.get("role") == "tool"][-tools:] if tools else []
             return web.json_response(
                 {
                     "session": request.match_info["session"],
@@ -265,7 +282,10 @@ class Portal:
                     "running": bool(opened.get("running")),
                     "status": opened.get("status"),
                     "requests": opened.get("requests") or [],
-                    "messages": [{"role": m["role"], "text": m["text"]} for m in shown[-last:]],
+                    "gateway": opened.get("gateway", True),
+                    "last_active": opened.get("last_active"),
+                    "messages": [{"role": rows[i]["role"], "text": rows[i]["text"]} for i in window],
+                    **({"tools": [{"name": m.get("name"), "context": m.get("context") or "", "result": (m.get("result") or "")[:TOOL_RESULT_CHARS]} for m in calls]} if tools else {}),
                 }
             )
 
@@ -276,7 +296,26 @@ class Portal:
         async def machines(request):
             if self.node is not None:
                 return web.json_response(await self.node.call("machines"))
-            return web.json_response(self.mesh.machines() if self.mesh is not None else [])
+            return web.json_response([self.mesh.me()] + self.mesh.machines() if self.mesh is not None else [])
+
+        async def machine_op(request, op, *args):
+            """A restart, update or job check on another machine, run by that machine's portal server."""
+            machine = request.match_info["machine"]
+            if self.node is not None:
+                return web.json_response(await self.node.call("machine_op", machine, op, list(args)))
+            if self.mesh is None:
+                raise ValueError("This machine isn't in a mesh")
+            return web.json_response(await self.mesh.machine_op(machine, op, *args))
+
+        async def restart_gateway(request):
+            return await machine_op(request, "restart_gateway")
+
+        async def update(request):
+            body = await request.json() if request.can_read_body else {}
+            return await machine_op(request, "update_hermes", body.get("channel") or None)
+
+        async def job(request):
+            return await machine_op(request, "job")
 
         async def threads(request):
             """Another machine's chats, so an agent can pick one up."""
@@ -320,6 +359,9 @@ class Portal:
         app.router.add_get("/mesh/machines/{machine}/sessions", threads)
         app.router.add_post("/sessions/{session}/answer", answer)
         app.router.add_post("/mesh/machines/{machine}/sessions", start_on)
+        app.router.add_post("/mesh/machines/{machine}/gateway/restart", restart_gateway)
+        app.router.add_post("/mesh/machines/{machine}/update", update)
+        app.router.add_get("/mesh/machines/{machine}/job", job)
         if link is not None:
             app.router.add_get(GATEWAY_PATH, link.handle)
         return app

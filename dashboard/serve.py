@@ -20,7 +20,9 @@ from aiohttp import web
 from portal import push
 from portal.hub import Hub
 from portal.link import GatewayLink
+from portal.machine_ops import MachineOps
 from portal.mesh import Mesh, Node
+from portal.offline import Offline
 from portal.server import Portal
 from portal.store import Store
 
@@ -70,6 +72,13 @@ async def main(config_path):
         link = GatewayLink(config["code"], on_stale=done.set)
         hub = Hub(link, alert=alert)
         link.serve(hub)
+        # Hermes's home: chats are read from its session store while no gateway is connected.
+        home = Path(config.get("home") or data.parent)
+        link.offline = Offline(home)
+        mesh = config.get("mesh") or {}
+        # This machine's Hermes, looked after from here: its version, gateway restarts, updates.
+        # A machine in someone's mesh also brings its gateway back when it goes away and stays away.
+        ops = MachineOps(data, home, config.get("hermes"), hub, watchdog=bool(mesh.get("hub")) and mesh.get("watchdog", True) is not False)
         portal = Portal(
             hub,
             store,
@@ -81,21 +90,21 @@ async def main(config_path):
             desktop_release_dir=config.get("desktop_release_dir"),
         )
         link.on_change = portal.gateway_changed
+        portal.ops = ops
         port = int(config["port"])
         token = (data / "local-token").read_text().strip()
         sites = [(portal.app(), "127.0.0.1", port), (portal.local_app(token, link), "127.0.0.1", port + 1)]
-        mesh = config.get("mesh") or {}
-        tasks = []
+        tasks = [loop.create_task(ops.refresh())]
         if mesh.get("address"):
             # This portal is a hub: machines dial in on its own address (the public app serves
             # /mesh), and on `listen` too when one is set.
-            portal.mesh = Mesh(data, hub, name=mesh.get("name") or "hub", address=mesh["address"], plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store)
+            portal.mesh = Mesh(data, hub, name=mesh.get("name") or "hub", address=mesh["address"], plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store, ops=ops)
             if mesh.get("listen"):
                 host, _, at = str(mesh["listen"]).rpartition(":")
                 sites.append((portal.mesh.app(), host or "127.0.0.1", int(at)))
         elif mesh.get("hub"):
             # This portal is a machine in someone's mesh: dial its hub.
-            node = Node(mesh["hub"], mesh["name"], mesh["token"], hub, skills_into=mesh.get("skills_into"))
+            node = Node(mesh["hub"], mesh["name"], mesh["token"], hub, skills_into=mesh.get("skills_into"), ops=ops)
             portal.node = node
             tasks.append(loop.create_task(node.run(http)))
         runners = []
