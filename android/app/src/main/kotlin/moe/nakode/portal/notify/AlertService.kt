@@ -142,6 +142,7 @@ class AlertService : Service() {
     private inner class Listener(private val origin: ServerOrigin) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             attempts = 0
+            statuses.reconnected()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {

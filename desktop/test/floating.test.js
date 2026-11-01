@@ -88,3 +88,25 @@ test("she counts the chats working and the ones that finished while you weren't 
   send("b", "working", false)
   assert.deepEqual(statuses.counts, { working: 1, finished: 1 })
 })
+
+test("chats the portal stops reporting drop out of her counts", () => {
+  const statuses = new Statuses()
+  const send = frame => statuses.apply(JSON.stringify(frame))
+  for (const chat of ["a", "b", "c", "d"]) send({ kind: "status", session: chat, status: "working", unread: false })
+  send({ kind: "status", session: "e", status: "done", unread: true })
+  // The gateway went away mid-turn: the portal clears that chat.
+  assert.ok(send({ kind: "status", session: "a", status: null, unread: false }))
+  assert.deepEqual(statuses.counts, { working: 3, finished: 1 })
+  assert.equal(statuses.mood, "working")
+  // The portal restarted; the new socket only knows about two of the working chats.
+  statuses.reconnected()
+  send({ kind: "status", session: "b", status: "working", unread: false })
+  send({ kind: "status", session: "c", status: "working", unread: false })
+  assert.ok(send({ kind: "status.synced" }))
+  assert.deepEqual(statuses.counts, { working: 2, finished: 0 })
+  // A reconnect where nothing is running anymore leaves her idle.
+  statuses.reconnected()
+  send({ kind: "status.synced" })
+  assert.deepEqual(statuses.counts, { working: 0, finished: 0 })
+  assert.equal(statuses.mood, "idle")
+})

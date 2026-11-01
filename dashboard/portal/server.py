@@ -135,6 +135,7 @@ class Portal:
         for session, status in list(self.hub.status.items()):
             if status in (WORKING, NEEDS_YOU):
                 del self.hub.status[session]
+                await self.hub.broadcast({"kind": "status", "session": session, "status": None, "unread": False})
         await self.hub.broadcast({"kind": "hub.disconnected"})
 
     # Plumbing
@@ -1050,6 +1051,8 @@ class Portal:
             # Where every chat stands now; a socket that joins mid-turn would otherwise wait for the next change.
             for frame in self.hub.status_frames() + (self.mesh.status_frames() if self.mesh is not None else []):
                 await ws.send_json(frame)
+            # That's all of them: anything a reconnecting app still holds beyond these is gone.
+            await ws.send_json({"kind": "status.synced"})
             async for message in ws:
                 if message.type != WSMsgType.TEXT:
                     continue

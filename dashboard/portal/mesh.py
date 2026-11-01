@@ -543,11 +543,12 @@ class Mesh:
         self.machine_hub(machine)  # offline or unknown machines fail here, clearly
         return await self.call(machine, op, *args)
 
-    def _settle(self, machine):
+    async def _settle(self, machine):
         """A machine's gateway went away: its turns and questions went with it."""
         for session in [s for s in self.status if (parse(s) or ("",))[0] == machine]:
             if self.status[session].get("status") in ("working", "needs you"):
                 del self.status[session]
+                await self.hub.broadcast({"kind": "status", "session": session, "status": None, "unread": False})
         for rid in [r for r, m in self.requests.items() if m == machine]:
             self.requests.pop(rid, None)
 
@@ -633,8 +634,12 @@ class Mesh:
         if kind == "sessions.changed":
             await self.hub.broadcast({"kind": "sessions.changed"})
         elif kind == "status" and session:
-            self.status[session] = {"status": frame.get("status"), "unread": bool(frame.get("unread")) and not self.hub.seen(session)}
-            await self.hub.broadcast({"kind": "status", "session": session, **self.status[session]})
+            entry = {"status": frame.get("status"), "unread": bool(frame.get("unread")) and not self.hub.seen(session)}
+            if entry["status"] is None:
+                self.status.pop(session, None)
+            else:
+                self.status[session] = entry
+            await self.hub.broadcast({"kind": "status", "session": session, **entry})
             await self.hub.broadcast({"kind": "machines.changed"})
         elif kind == "alert" and session:
             self.hub.notify(session, f"{machine} · {frame.get('title') or 'Nako'}", str(frame.get("body") or ""))
@@ -652,7 +657,7 @@ class Mesh:
         if kind in {"hub.connected", "hub.disconnected"} and machine in self.info:
             self.info[machine]["gateway"] = kind == "hub.connected"
             if kind == "hub.disconnected":
-                self._settle(machine)
+                await self._settle(machine)
             await self.hub.broadcast({"kind": "sessions.changed"})
             await self.hub.broadcast({"kind": "machines.changed"})
 
@@ -762,7 +767,7 @@ class Mesh:
                 self.info.setdefault(name, {})["last_seen"] = seen
                 if self.store is not None:
                     self.store.set_meta(f"mesh:seen:{name}", seen)
-                self._settle(name)
+                await self._settle(name)
                 log.info("portal: %s left the mesh", name)
                 await self.hub.broadcast({"kind": "sessions.changed"})
                 await self.hub.broadcast({"kind": "machines.changed"})

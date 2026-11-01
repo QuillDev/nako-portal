@@ -1,7 +1,9 @@
 package moe.nakode.portal.bubble
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -69,13 +71,37 @@ class Statuses {
     private val byChat = mutableMapOf<String, String>()
     private val unread = mutableSetOf<String>()
 
+    // Chats the new socket's opening statuses have named, until its `status.synced`; null otherwise.
+    private var named: MutableSet<String>? = null
+
+    /** A new socket opened: what it reports up to `status.synced` replaces what's held now. */
+    fun reconnected() {
+        named = mutableSetOf()
+    }
+
     /** Applies a socket frame; true when it was a status frame. */
     fun apply(frame: String): Boolean {
         val obj = runCatching { json.parseToJsonElement(frame) as? JsonObject }.getOrNull() ?: return false
-        if (obj["kind"]?.jsonPrimitive?.contentOrNull != "status") return false
-        val chat = obj["session"]?.jsonPrimitive?.contentOrNull ?: return false
-        val status = obj["status"]?.jsonPrimitive?.contentOrNull ?: return false
-        byChat[chat] = status
+        when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
+            "status.synced" -> {
+                val kept = named ?: byChat.keys.toSet()
+                named = null
+                byChat.keys.retainAll(kept)
+                unread.retainAll(kept)
+                return true
+            }
+            "status" -> {}
+            else -> return false
+        }
+        val chat = (obj["session"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return false
+        val value = obj["status"]
+        val status = when {
+            value == null || value is JsonNull -> null
+            value is JsonPrimitive && value.isString -> value.content
+            else -> return false
+        }
+        named?.add(chat)
+        if (status == null) byChat.remove(chat) else byChat[chat] = status
         if (obj["unread"]?.jsonPrimitive?.booleanOrNull == true) unread.add(chat) else unread.remove(chat)
         return true
     }

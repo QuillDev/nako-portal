@@ -58,6 +58,13 @@ export function panelSpot(x, y, area, size = STICKER, panel = PANEL, gap = GAP) 
 export class Statuses {
   #byChat = new Map()
   #unread = new Set()
+  // Chats the new socket's opening statuses have named, until its `status.synced`; null otherwise.
+  #named = null
+
+  /** A new socket opened: what it reports up to `status.synced` replaces what's held now. */
+  reconnected() {
+    this.#named = new Set()
+  }
 
   /** Applies a socket frame; true when it was a status frame. */
   apply(frame) {
@@ -67,8 +74,18 @@ export class Statuses {
     } catch {
       return false
     }
-    if (value?.kind !== "status" || typeof value.session !== "string" || typeof value.status !== "string") return false
-    this.#byChat.set(value.session, value.status)
+    if (value?.kind === "status.synced") {
+      const named = this.#named ?? new Set(this.#byChat.keys())
+      this.#named = null
+      for (const chat of [...this.#byChat.keys()]) if (!named.has(chat)) this.#byChat.delete(chat)
+      for (const chat of [...this.#unread]) if (!named.has(chat)) this.#unread.delete(chat)
+      return true
+    }
+    if (value?.kind !== "status" || typeof value.session !== "string") return false
+    if (typeof value.status !== "string" && value.status !== null) return false
+    this.#named?.add(value.session)
+    if (value.status === null) this.#byChat.delete(value.session)
+    else this.#byChat.set(value.session, value.status)
     if (value.unread === true) this.#unread.add(value.session)
     else this.#unread.delete(value.session)
     return true

@@ -305,6 +305,8 @@ async def test_a_turn_that_ends_unseen_stays_unread_until_its_chat_is_opened(wor
     late = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
     joined = await next_message(late, lambda m: m.get("kind") == "status")
     assert (joined["session"], joined["status"], joined["unread"]) == (sid, "done", True)
+    # Then says that was all of them, so a reconnecting sticker drops chats it holds from before.
+    assert (await asyncio.wait_for(late.receive_json(), 5))["kind"] == "status.synced"
 
     # Opening the chat in front of you reads it, and every socket hears so.
     page = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})

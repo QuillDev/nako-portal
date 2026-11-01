@@ -78,7 +78,7 @@ function openPortal(next) {
   origin = next
   if (changed || !listener) {
     listener?.stop()
-    listener = listen({ origin, cookie: cookieHeader, onAlert: showAlert, onFrame: text => floating?.frame(text), log })
+    listener = listen({ origin, cookie: cookieHeader, onAlert: showAlert, onFrame: text => floating?.frame(text), onOpen: () => floating?.reconnected(), log })
     updater.watch(origin)
     if (changed) {
       pane?.reset()
