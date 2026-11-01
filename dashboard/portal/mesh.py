@@ -65,8 +65,11 @@ NODE_CALLS = (
 # How long a new machine's one-line setup works.
 SETUP_TTL = 24 * 3600
 SETUP_PATH = MESH_PATH + "/setup/{code}"
-# Where machines install the plugin from when the hub's own copy came from somewhere they can't reach.
-PLUGIN_SOURCE = "https://github.com/QuillDev/nako-portal.git"
+NO_SOURCE = (
+    "Machines can't install this plugin from where the hub's copy came from. Set "
+    "plugins.entries.nako-portal.settings.mesh_plugin_source to a git URL they can reach "
+    "(the repo this plugin was published to)."
+)
 SKILL_POLL = 60
 SKILL_BATCH = 8 * 1024 * 1024
 SKILL_FILE_MAX = 4 * 1024 * 1024
@@ -174,7 +177,7 @@ def _joined(data, name):
 
 def setup_page(*, name, address, token, code, plugin):
     """What a stock Hermes on the new machine reads and follows to join."""
-    source = (plugin or {}).get("source") or PLUGIN_SOURCE
+    source = (plugin or {}).get("source")
     ref = (plugin or {}).get("ref")
     install = f"hermes plugins install {source}" + (f" --ref {ref}" if ref else "") + " --enable --yes-deps --force"
     status = f"curl -fsSL {address}{SETUP_PATH.format(code=code)}/status"
@@ -393,6 +396,10 @@ class Mesh:
         """Let a machine join: its token, and the command that joins it, shown once."""
         if name == self.name:
             raise ValueError(f"{name} is this hub's own name")
+        if not (self.plugin or {}).get("source"):
+            raise ValueError(NO_SOURCE)
+        if not self.address:
+            raise ValueError("Machines need an address for this hub: set the portal's origin (or mesh_address)")
         token = add_node(self.data, name)
         command = f"hermes mesh join {self.address or '<this hub>'} {token} --name {name}"
         code = start_setup(self.data, name, token, self.clock())
@@ -419,7 +426,7 @@ class Mesh:
             "name": name,
             "token": setup["token"],
             "status": f"{self.address}{SETUP_PATH.format(code=code)}/status",
-            "source": plugin.get("source") or PLUGIN_SOURCE,
+            "source": plugin.get("source") or "",
             "ref": plugin.get("ref") or "",
         }
         text = shell_script(**values) if kind == "sh" else powershell_script(**values)

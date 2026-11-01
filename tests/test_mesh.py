@@ -60,7 +60,7 @@ class Machine:
 async def mesh(world, tmp_path):
     data = tmp_path / "hub-data"
     skills = tmp_path / "hub-skills"
-    world.mesh = Mesh(data, world.hub, address="http://100.64.0.1:8799", plugin={"source": "https://example.test/portal.git", "ref": "a" * 40}, skills_dir=skills, skills_exclude=["work-only"], store=world.store)
+    world.mesh = Mesh(data, world.hub, address="https://hub.example.test", plugin={"source": "https://example.test/portal.git", "ref": "a" * 40}, skills_dir=skills, skills_exclude=["work-only"], store=world.store)
     world.skills = skills
     world.mesh_data = data
     _portal_of(world).mesh = world.mesh
@@ -349,6 +349,15 @@ async def test_the_hub_cant_take_its_own_name_for_a_machine(mesh):
     assert refused.status == 400
 
 
+async def test_a_hub_without_a_reachable_plugin_source_says_how_to_set_one(mesh):
+    await mesh.sign_up()
+    mesh.mesh.plugin = {"source": None, "ref": None}
+    refused = await mesh.post("/api/mesh/machines", {"name": MACHINE})
+    assert refused.status == 400
+    assert "mesh_plugin_source" in (await refused.json())["error"]
+    assert MACHINE not in mesh_module.load_nodes(mesh.mesh_data)
+
+
 # Settings → Machines
 
 
@@ -371,7 +380,7 @@ async def test_adding_a_machine_gives_a_join_command_that_works(mesh):
     added = await mesh.post("/api/mesh/machines", {"name": MACHINE})
     assert added.status == 200, await added.text()
     command = (await added.json())["command"]
-    assert command.startswith(f"hermes mesh join http://100.64.0.1:8799 ") and command.endswith(f"--name {MACHINE}")
+    assert command.startswith("hermes mesh join https://hub.example.test ") and command.endswith(f"--name {MACHINE}")
     token = command.split()[4]
     await mesh.machine.start(mesh.mesh_url, token)
     await until(lambda: MACHINE in mesh.mesh.peers)
@@ -383,7 +392,7 @@ async def _setup(world, prompt):
     url = re.search(r"curl -fsSL (\S+)`", prompt).group(1)
     assert "curl.exe on Windows" in prompt
     # The hub's real mesh address isn't this test server's; same path, though.
-    path = url.split("8799", 1)[1]
+    path = url.split("hub.example.test", 1)[1]
     return path, await world.http.get(str(world.mesh_server.make_url(path)))
 
 
@@ -395,7 +404,7 @@ async def test_one_line_setup_tells_a_stock_hermes_everything_and_the_machine_jo
     assert page.status == 200
     steps = await page.text()
     assert f"hermes plugins install https://example.test/portal.git --ref {'a' * 40} --enable --yes-deps --force" in steps
-    join = re.search(rf"hermes mesh join http://100.64.0.1:8799 (\S+) --name {MACHINE}", steps)
+    join = re.search(rf"hermes mesh join https://hub.example.test (\S+) --name {MACHINE}", steps)
     assert join and "hermes gateway install" in steps
     status = str(mesh.mesh_server.make_url(path + "/status"))
     assert (await (await mesh.http.get(status)).json())["online"] is False
@@ -412,9 +421,9 @@ async def test_the_setup_lines_fetch_a_script_for_each_os_that_joins_the_machine
     await mesh.sign_up()
     lines = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["lines"]
     unix, windows = lines["unix"], lines["windows"]
-    assert unix.startswith("curl -fsSL http://100.64.0.1:8799/mesh/setup/") and unix.endswith("/sh | bash")
-    assert windows.startswith("iex (irm http://100.64.0.1:8799/mesh/setup/") and windows.endswith("/ps1)")
-    base = unix.split("8799", 1)[1].removesuffix("/sh | bash")
+    assert unix.startswith("curl -fsSL https://hub.example.test/mesh/setup/") and unix.endswith("/sh | bash")
+    assert windows.startswith("iex (irm https://hub.example.test/mesh/setup/") and windows.endswith("/ps1)")
+    base = unix.split("hub.example.test", 1)[1].removesuffix("/sh | bash")
     sh = await (await mesh.http.get(str(mesh.mesh_server.make_url(base + "/sh")))).text()
     ps1 = await (await mesh.http.get(str(mesh.mesh_server.make_url(base + "/ps1")))).text()
     for script in (sh, ps1):
@@ -432,7 +441,7 @@ async def test_machines_join_and_set_up_through_the_portals_own_address(mesh):
     """No private network needed: the public portal app serves the mesh too."""
     await mesh.sign_up()
     lines = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["lines"]
-    path = lines["unix"].split("8799", 1)[1].removesuffix(" | bash")
+    path = lines["unix"].split("hub.example.test", 1)[1].removesuffix(" | bash")
     script = await mesh.http.get(mesh.url(path))
     assert script.status == 200
     token = re.search(r"mesh join \S+ '([^']+)'", await script.text()).group(1)
@@ -451,7 +460,7 @@ async def test_a_portal_that_isnt_a_hub_has_no_mesh_door(world):
 def test_a_setup_script_refuses_values_that_could_break_out_of_its_quotes():
     from portal.mesh_setup import powershell_script, shell_script
 
-    good = {"hub": "http://100.64.0.1:8799", "name": "laptop", "token": "a" * 30, "status": "http://100.64.0.1:8799/mesh/setup/x/status", "source": "https://example.test/p.git", "ref": ""}
+    good = {"hub": "https://hub.example.test", "name": "laptop", "token": "a" * 30, "status": "https://hub.example.test/mesh/setup/x/status", "source": "https://example.test/p.git", "ref": ""}
     for script in (shell_script, powershell_script):
         script(**good)
         for key, bad in (("name", "x'; rm -rf ~; '"), ("token", "a" * 25 + "'$(id)'"), ("hub", "http://h/'`whoami`"), ("source", "https://x/$(id)")):
@@ -479,7 +488,7 @@ async def test_a_bad_machine_name_is_refused(mesh):
     await mesh.sign_up()
     refused = await mesh.post("/api/mesh/machines", {"name": "My Laptop!"})
     assert refused.status == 400
-    assert await (await mesh.http.get(mesh.url("/api/mesh"))).json() == {"hub": True, "name": "hub", "address": "http://100.64.0.1:8799", "machines": []}
+    assert await (await mesh.http.get(mesh.url("/api/mesh"))).json() == {"hub": True, "name": "hub", "address": "https://hub.example.test", "machines": []}
 
 
 async def test_removing_a_machine_disconnects_it_and_keeps_it_out(mesh):

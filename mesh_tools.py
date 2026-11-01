@@ -276,8 +276,8 @@ def _setup_cli(parser):
     remove.add_argument("name")
     sub.add_parser("list", help="On the hub: the machines and whether they're online")
     join = sub.add_parser("join", help="On a machine: join a hub's mesh")
-    join.add_argument("hub", help="The hub portal's address, e.g. https://portal.example.com")
-    join.add_argument("token", help="The token `hermes mesh add` printed on the hub")
+    join.add_argument("hub", help="The hub portal's address, e.g. https://portal.example.com (run again with a new address after the hub moves)")
+    join.add_argument("token", nargs="?", help="The token from the hub (leave out to keep this machine's token, e.g. after the hub moved)")
     join.add_argument("--name", help="This machine's name (default: its hostname)")
 
 
@@ -314,7 +314,10 @@ def _join(home, args):
     from hermes_cli.config import load_config, set_config_value
     from hermes_cli.config_env_routing import save_env_setting
 
-    save_env_setting("NAKO_MESH_TOKEN", args.token)
+    if args.token:
+        save_env_setting("NAKO_MESH_TOKEN", args.token)
+    elif not os.environ.get("NAKO_MESH_TOKEN") and "NAKO_MESH_TOKEN=" not in ((Path(home) / ".env").read_text() if (Path(home) / ".env").exists() else ""):
+        raise SystemExit("No token yet: give the one the hub printed (or add the machine on the hub's Mesh page)")
     set_config_value("plugins.entries.nako-portal.settings.mesh_hub", args.hub)
     if args.name:
         set_config_value("plugins.entries.nako-portal.settings.mesh_name", args.name)
