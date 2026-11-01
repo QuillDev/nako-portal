@@ -51,6 +51,9 @@ DEFAULT_PORT = 8797
 DEFAULT_PROFILE = "default"
 # The one person portal threads belong to; passkey sign-in already decided who that is.
 OWNER = "owner"
+# Who every portal thread is with. Threads created ahead of their first message (a new chat, the
+# Notifications thread) must carry it too: a background process's wake is checked against it.
+PERSON = {"chat_name": "Nako", "user_id": OWNER, "user_name": "you"}
 INBOX_POLL = 2
 # How long an out-of-process send waits for the gateway to open a named thread (a few inbox polls).
 CHANNEL_WAIT = 4 * INBOX_POLL + 2
@@ -98,7 +101,30 @@ def _source(chat, profile=None, **fields):
     from gateway.config import Platform
     from gateway.session import SessionSource
 
-    return SessionSource(platform=Platform("portal"), chat_id=chat, chat_type="dm", profile=_named(profile), **fields)
+    return SessionSource(platform=Platform("portal"), chat_id=chat, chat_type="dm", profile=_named(profile),
+                         **(PERSON | fields))
+
+
+def _own_origins(session_store):
+    """Give portal threads stored without their person (plugin releases before PERSON) the one
+    their messages carry. Hermes sets a thread's origin once, when it's created, and rebuilds a
+    finished background process's wake from it; with no person on it the wake doesn't match the
+    thread's last message and is refused (``admission_conflict``), so the agent never hears back."""
+    import dataclasses
+
+    try:
+        with session_store._lock:
+            stale = [e for e in session_store._entries.values()
+                     if e.origin is not None and getattr(e.origin.platform, "value", None) == "portal"
+                     and e.origin.user_id is None]
+            for entry in stale:
+                entry.origin = dataclasses.replace(entry.origin, **PERSON)
+        if stale:
+            session_store._save_entries()
+        return len(stale)
+    except Exception:
+        log.exception("portal: could not repair stored threads; background process wakes may be refused")
+        return 0
 
 
 def _named(profile):
@@ -110,7 +136,7 @@ def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE, profile=Non
     appends to a session that already exists, so the Notifications thread must be there first."""
     if session_store is None:
         return None
-    source = _source(chat, profile, chat_name="Nako")
+    source = _source(chat, profile)
     entry = session_store.get_or_create_session(source, touch_activity=False)
     # The thread's own profile store, whichever profile the caller is scoped to.
     owner = getattr(session_store, "_db_for_key", None)
@@ -501,7 +527,7 @@ class HermesBackend:
                 raise ValueError("That chat is in the middle of a turn; hand it off once it finishes")
 
         def repoint():
-            thread = _source(chat, self.profile, chat_name="Nako")
+            thread = _source(chat, self.profile)
             key = self.store.get_or_create_session(thread, touch_activity=False).session_key
             return self.store.switch_session(key, session, preserve_prompt_pin=False)
 
@@ -527,7 +553,7 @@ class HermesBackend:
             kinds.append(mime)
         if text.startswith("/"):
             kind = MessageType.COMMAND
-        source = self.adapter.build_source(chat_id=chat, chat_name="Nako", chat_type="dm", user_id=OWNER, user_name="you")
+        source = self.adapter.build_source(chat_id=chat, chat_type="dm", **PERSON)
         source = dataclasses.replace(source, profile=_named(self.owner.get(chat, self.profile)))
         event = MessageEvent(text=text, message_type=kind, source=source, message_id=uuid.uuid4().hex, media_urls=paths, media_types=kinds)
         await self.adapter.handle_message(event)
@@ -859,6 +885,9 @@ def _adapter(config):
                 self._tasks.append(loop.create_task(self.link.run(self._http)))
                 self._tasks.append(loop.create_task(_forward_inbox(_portal("store").Store(data / "portal.db"), self)))
                 _LIVE_TOOLS.update(link=self.link, loop=loop)
+            store = getattr(self, "_session_store", None)
+            if store is not None:
+                await asyncio.to_thread(_own_origins, store)
             # Every served profile gets its Notifications thread, so its cron posts have one to land in.
             for profile in await asyncio.to_thread(self.backend.homes):
                 await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE, profile)
