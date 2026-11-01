@@ -288,6 +288,7 @@ export function Chat({ portal }: { portal: Portal }) {
         command={portal.command}
         commands={portal.commands}
         draftKey={draftKey}
+        session={c.session}
         inChat
         running={c.running}
         send={portal.send}

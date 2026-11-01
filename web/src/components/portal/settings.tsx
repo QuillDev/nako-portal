@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import type { Portal } from "@/hooks/use-portal"
-import { api } from "@/lib/api"
+import { api, ApiError } from "@/lib/api"
 import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
 import { cancelled, register } from "@/lib/passkeys"
 import { appAlerts, appBubble, enablePush, openAppNotificationSettings, pushState, setAppBubble } from "@/lib/push"
@@ -15,7 +15,8 @@ import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
 import { SecretsSettings } from "./secrets"
-import { type ModelChoice, ModelPicker, SignOffSettings } from "./sign-off-settings"
+import { SignOffSettings } from "./sign-off-settings"
+import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
 
 const THEMES: Theme[] = ["system", "light", "dark"]
 
@@ -62,15 +63,17 @@ function ProfileRows({ onError }: { onError: (message: string) => void }) {
   useEffect(() => {
     if (!shown) return
     setModel(null)
-    api<ModelChoice>("/api/model").then(setModel, fail)
+    api<unknown>("/api/model").then(raw => setModel(modelChoice.parse(raw))).catch(e => {
+      if (!(e instanceof ApiError && e.status === 404)) fail(e)
+    })
   }, [shown, fail])
   if (!state) return null
   const pick = (profile: string) => profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, fail)
-  const pickModel = (provider: string, chosen: string) => api<ModelChoice>("/api/model", { method: "POST", body: { provider, model: chosen } }).then(setModel, fail)
+  const pickModel = async (body: { provider?: string; model?: string; effort?: string; speed?: string }) => setModel(modelChoice.parse(await api<unknown>("/api/model", { method: "POST", body })))
   return (
     <>
       {state.profiles.length > 1 && <ProfileRow onPick={pick} state={state} />}
-      <Row label="Model">{model && <ModelPicker onPick={pickModel} value={model} />}</Row>
+      {model && <Row label="Default model"><ModelPicker label="default model" onPick={pickModel} value={model} /></Row>}
     </>
   )
 }

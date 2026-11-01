@@ -50,14 +50,15 @@ BACKEND_SYNC = (
     "use_profile",
     "models",
     "model",
-    "set_model",
     "secrets",
     "secret",
     "set_secret",
     "remove_secret",
+    "set_model_options",
+    "session_model",
 )
 # These are awaited.
-BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve")
+BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve", "set_session_model")
 # What the gateway tells the hub.
 HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed")
 

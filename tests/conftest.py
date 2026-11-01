@@ -109,6 +109,25 @@ class Authenticator:
 # --- the fake gateway ---
 
 
+def validate_model_options(body):
+    """Validate every field before any part of a selection is written."""
+    if not isinstance(body, dict) or not body or set(body) - {"provider", "model", "effort", "speed", "reset", "confirm"}:
+        raise ValueError("Invalid model settings")
+    for key in ("provider", "model", "effort", "speed"):
+        if key in body and not isinstance(body[key], str):
+            raise ValueError(f"Invalid {key}")
+    if ("model" in body) != ("provider" in body) or ("model" in body and (not body["model"] or not body["provider"])):
+        raise ValueError("Pick a model and provider")
+    if "effort" in body and body["effort"] not in ("", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"):
+        raise ValueError("Unknown reasoning effort")
+    if "speed" in body and body["speed"] not in ("", "normal", "fast", "auto", "cold", "ultrafast"):
+        raise ValueError("Unknown speed")
+    if "reset" in body and body["reset"] is not True:
+        raise ValueError("Invalid reset")
+    if body.get("reset") and len(body) != 1:
+        raise ValueError("Reset cannot include other settings")
+
+
 class FakeGateway:
     """Portal threads, transcripts and turns, behind the backend interface the hub uses.
 
@@ -134,6 +153,7 @@ class FakeGateway:
         self.profile_names = ["default", "work", "research"]
         self.profile = "default"
         self.profile_models = {}
+        self.model_controls = True
         # Background processes per thread, as the gateway's process registry lists them.
         self.procs = {}
         self.proc_logs = {}
@@ -205,15 +225,49 @@ class FakeGateway:
         return {"profile": self.profile, "profiles": list(self.profile_names)}
 
     def models(self):
+        if not self.model_controls:
+            return []
         return [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}, {"provider": "big", "label": "Big Co", "models": ["large"]}]
 
     def model(self):
-        return dict(self.profile_models.get(self.profile, {"provider": "fast", "model": "tiny"}))
+        if not self.model_controls:
+            return None
+        return {"effort": "medium", "speed": "normal", "efforts": ["none", "low", "medium", "high", "max"],
+                "speeds": ["normal", "fast", "auto", "cold"], **self.profile_models.get(self.profile, {"provider": "fast", "model": "tiny"})}
 
     def set_model(self, provider, model):
         if not any(p["provider"] == provider and model in p["models"] for p in self.models()):
             raise ValueError("Model not found for that provider")
         self.profile_models[self.profile] = {"provider": provider, "model": model}
+
+    def set_model_options(self, body):
+        validate_model_options(body)
+        if "model" in body:
+            self.set_model(body["provider"], body["model"])
+        self.profile_models[self.profile] = {**(self.model() or {}), **{k: body[k] for k in ("effort", "speed") if k in body}}
+        return self.model()
+
+    def session_model(self, sid):
+        if not self.model_controls:
+            return None
+        if not self._shown(sid):
+            raise ValueError("No chat with that id")
+        saved = self.sessions[sid].get("model_options", {})
+        return {"effort": "medium", "speed": "normal", **(self.model() or {}), **saved,
+                "overridden": bool(saved), "efforts": ["none", "low", "medium", "high", "max"], "speeds": ["normal", "fast", "auto", "cold"]}
+
+    async def set_session_model(self, sid, body):
+        validate_model_options(body)
+        if not self._shown(sid):
+            raise ValueError("No chat with that id")
+        if "model" in body and not any(p["provider"] == body.get("provider") and body["model"] in p["models"] for p in self.models()):
+            raise ValueError("Model not found for that provider")
+        saved = self.sessions[sid].setdefault("model_options", {})
+        if body.get("reset"):
+            saved.clear()
+        else:
+            saved.update({k: v for k, v in body.items() if k != "reset"})
+        return self.session_model(sid)
 
     def use_profile(self, name):
         if name not in self.profile_names:

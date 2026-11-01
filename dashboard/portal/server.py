@@ -154,6 +154,8 @@ class Portal:
         r.add_get("/api/sessions", self.sessions)
         r.add_post("/api/sessions", self.create)
         r.add_get("/api/sessions/{session}", self.open)
+        r.add_get("/api/sessions/{session}/model", self.session_model)
+        r.add_post("/api/sessions/{session}/model", self.set_session_model)
         r.add_post("/api/sessions/{session}/messages", self.send)
         r.add_post("/api/sessions/{session}/stop", self.stop)
         r.add_post("/api/sessions/{session}/command", self.command)
@@ -482,19 +484,38 @@ class Portal:
         self._require(request)
         backend = self.hub.backend
         current, providers = await asyncio.gather(asyncio.to_thread(backend.model), asyncio.to_thread(backend.models))
+        if current is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "model-controls is not enabled"}), content_type="application/json")
         return web.json_response({**current, "providers": providers})
 
     async def set_model(self, request):
         self._require(request)
+        await self.model(request)
         body = await request.json()
-        provider, model = str(body.get("provider") or ""), str(body.get("model") or "")
-        if not provider or not model:
-            raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a model"}), content_type="application/json")
         try:
-            await asyncio.to_thread(self.hub.backend.set_model, provider, model)
+            await asyncio.to_thread(self.hub.backend.set_model_options, body)
         except ValueError as error:
             raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
         return await self.model(request)
+
+    async def session_model(self, request):
+        self._require(request)
+        hub, session = await self._target(self._session(request))
+        try:
+            return web.json_response(await hub.session_model(session))
+        except ValueError:
+            raise web.HTTPNotFound()
+
+    async def set_session_model(self, request):
+        self._require(request)
+        hub, session = await self._target(self._session(request))
+        await self.session_model(request)
+        if hub is self.hub and session in self.hub.running:
+            raise web.HTTPConflict(text=json.dumps({"error": "Wait for this turn to finish"}), content_type="application/json")
+        try:
+            return web.json_response(await hub.set_session_model(session, await request.json()))
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
 
     async def register_options(self, request):
         body = await request.json()
