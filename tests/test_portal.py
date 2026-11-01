@@ -351,6 +351,21 @@ async def test_the_sticker_shows_the_chats_working_and_the_ones_finished_unseen(
     # Opening the finished chat in front of you clears it from the count.
     await late.send_json({"watch": c, "looking": True})
     await shows(finished=0)
+
+    # Work running out of sight (a spawned review) doesn't count once it ends: there's nothing to click.
+    world.hermes.hold = False
+    d = world.hermes.add_session("20261101_040000_dddddd", "review")
+    assert (await world.post(f"/api/sessions/{d}/archive", {"archived": True})).status == 200
+    for session in (d, b):
+        await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go on"}, headers={"Origin": ORIGIN})
+        await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("session") == session and m["status"] == "done")
+    now = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    joined = await next_message(now, lambda m: m.get("kind") == "sticker")
+    assert (joined["working"], joined["finished"]) == (0, 1)
+    await now.close()
+    # Archiving a finished chat you never opened puts it away too.
+    assert (await world.post(f"/api/sessions/{b}/archive", {"archived": True})).status == 200
+    await shows(finished=0)
     for ws in (sticker, late):
         await ws.close()
 
