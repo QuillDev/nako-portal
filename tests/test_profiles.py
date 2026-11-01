@@ -132,6 +132,35 @@ async def test_chat_selection_never_changes_the_default_or_another_chat(world):
     assert ((await reset.json())["model"], (await reset.json())["overridden"]) == ("small", False)
 
 
+async def test_a_new_chats_first_message_uses_its_selection_without_changing_defaults(world):
+    import json
+
+    await world.sign_up()
+    first_turn_models = []
+    inbound = world.hermes.inbound
+
+    async def receive(chat, text, files):
+        first_turn_models.append(world.hermes.session_model(world.hermes.session_of(chat)))
+        await inbound(chat, text, files)
+
+    world.hermes.inbound = receive
+    chosen = {"provider": "big", "model": "large", "effort": "high", "speed": "fast"}
+    created = await world.http.post(world.url("/api/sessions"), data={"text": "plan my weekend", "model": json.dumps(chosen)}, headers={"Origin": ORIGIN})
+    assert created.status == 200
+    sid = (await created.json())["session"]
+    selected = await (await world.http.get(world.url(f"/api/sessions/{sid}/model"))).json()
+    assert {k: selected[k] for k in chosen} == chosen
+    assert {k: first_turn_models[0][k] for k in chosen} == chosen
+    assert world.hermes.sessions[sid]["rows"][0]["text"] == "plan my weekend"
+    default = await (await world.http.get(world.url("/api/model"))).json()
+    assert (default["provider"], default["model"]) == ("fast", "tiny")
+
+    # Bad picks must never start a turn on a different model.
+    refused = await world.http.post(world.url("/api/sessions"), data={"text": "do not send", "model": json.dumps({"provider": "big", "model": "imaginary"})}, headers={"Origin": ORIGIN})
+    assert refused.status == 400
+    assert len(world.hermes.received) == 1
+
+
 async def test_chat_settings_reject_invalid_busy_foreign_and_unsigned_writes(world):
     await world.sign_up()
     world.hermes.add_session("one", "one")

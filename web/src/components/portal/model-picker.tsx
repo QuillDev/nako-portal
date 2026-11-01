@@ -14,7 +14,21 @@ export const modelChoice = z.object({
   efforts: z.array(z.string()).optional(), speeds: z.array(z.string()).optional(), overridden: z.boolean().optional(),
 })
 export type ModelChoice = z.infer<typeof modelChoice>
-type Pick = { provider?: string; model?: string; effort?: string; speed?: string; reset?: true }
+export type ModelSelection = { provider?: string; model?: string; effort?: string; speed?: string; reset?: true }
+type Pick = ModelSelection
+
+export function NewChatModel({ selection, onPick }: { selection: ModelSelection; onPick: (pick: ModelSelection) => void }) {
+  const [defaults, setDefaults] = useState<ModelChoice | null>(null)
+  useEffect(() => {
+    let active = true
+    void api<unknown>("/api/model").then(raw => { if (active) setDefaults(modelChoice.parse(raw)) }).catch(() => {})
+    return () => { active = false }
+  }, [])
+  if (!defaults) return null
+  return <ModelPicker label="this chat" session value={{ ...defaults, ...selection, overridden: Object.keys(selection).length > 0 }} onPick={async pick => {
+    onPick(pick.reset ? {} : { ...selection, ...pick })
+  }} />
+}
 
 function Option({ label, value, values, onPick }: { label: string; value: string; values: string[]; onPick: (value: string) => void }) {
   const Icon = label === "effort" ? BrainIcon : ZapIcon

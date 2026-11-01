@@ -679,7 +679,11 @@ class Portal:
         text, files = await self._message(request)
         if not text.strip() and not files:
             raise ValueError("Write something first")
-        return web.json_response(await hub.create(text, files))
+        form = await request.post()
+        model = json.loads(str(form["model"])) if "model" in form else None
+        if model is not None and not isinstance(model, dict):
+            raise ValueError("Pick model settings")
+        return web.json_response(await hub.create(text, files, model=model))
 
     async def send(self, request):
         self._require(request)

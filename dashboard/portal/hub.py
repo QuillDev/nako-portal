@@ -285,9 +285,13 @@ class Hub:
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
         }
 
-    async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False, sender=None):
+    async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False, sender=None, model=None):
         chat = uuid.uuid4().hex[:16]
         session = await self.backend.new_thread(chat, title)
+        if model:
+            selected = await self.set_session_model(session, model)
+            if selected.get("confirmation"):
+                return {"session": session, **selected}
         if archived:
             # Work handed off to run out of sight (a review that reports to Reviews when done).
             await asyncio.to_thread(self.backend.set_archived, session, True)
