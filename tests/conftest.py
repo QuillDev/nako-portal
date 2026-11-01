@@ -137,6 +137,8 @@ class FakeGateway:
         # Background processes per thread, as the gateway's process registry lists them.
         self.procs = {}
         self.proc_logs = {}
+        # What the agent-secrets plugin keeps, as the adapter reaches it; None: plugin not installed.
+        self.vault = {}
 
     def add_session(self, sid, title, chat=None, messages=(), profile=None):
         self.sessions[sid] = {
@@ -298,6 +300,25 @@ class FakeGateway:
             return None
         out = self.proc_logs.get(proc_id, [])
         return {"lines": out[-lines:], "total_chars": sum(len(x) + 1 for x in out)}
+
+    def secrets(self):
+        if self.vault is None:
+            return None
+        return [{"name": n, "note": s["note"], "origin": s["origin"], "created_at": 1.0, "updated_at": 1.0} for n, s in sorted(self.vault.items())]
+
+    def secret(self, name):
+        return None if self.vault is None or name not in self.vault else self.vault[name]["value"]
+
+    def set_secret(self, name, value, note=None):
+        if self.vault is None:
+            raise ValueError("The agent-secrets plugin isn't installed")
+        if not value:
+            raise ValueError("The secret is empty")
+        old = self.vault.get(name, {})
+        self.vault[name] = {"value": value, "note": old.get("note", "") if note is None else note, "origin": "you"}
+
+    def remove_secret(self, name):
+        return self.vault.pop(name, None) is not None
 
     def commands(self):
         return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]

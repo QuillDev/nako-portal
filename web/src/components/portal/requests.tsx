@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
 import type { PortalRequest } from "@/lib/types"
+import { SecretRequest } from "./secrets"
 
 const APPROVAL_LABELS: Record<string, string> = { once: "Allow once", session: "Allow this session", always: "Always allow", deny: "Deny" }
 
@@ -71,6 +72,8 @@ export const Requests = memo(function Requests({ requests, answer }: { requests:
       <Approval answer={answer} key={r.id} request={r} />
     ) : r.method === "clarify" ? (
       <Clarify answer={answer} key={r.id} request={r} />
+    ) : r.method === "secret" ? (
+      <SecretRequest answer={answer} key={r.id} request={r} />
     ) : (
       <p className="rounded-lg border p-4 text-muted-foreground text-sm" key={r.id}>
         {r.method}: this one needs the desktop app.

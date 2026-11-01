@@ -28,6 +28,12 @@ backend:
   profiles() -> {profile, profiles}         the Hermes profile shown, and the ones served
   use_profile(name) -> profiles()           show another profile's chats (ValueError if not served)
   models() / model() / set_model(provider, model)   the shown profile's own model (ValueError if refused)
+  secrets() -> [{name, note, origin, created_at, updated_at}] or None   None: no secrets plugin
+  secret(name) -> value or None / set_secret(name, value, note) / remove_secret(name) -> bool
+
+A `secret` request is the agent-secrets plugin asking the person for a value. The answer goes
+to the backend like any other (`resolve`), which hands it to that plugin's vault; nothing here
+keeps it.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ log = logging.getLogger("hermes.portal")
 
 # Kinds of row a person wrote or should read; everything else is host traffic.
 PUBLISHED_KINDS = {None, "steer", "failed_turn"}
-ANSWERABLE = {"approval", "clarify"}
+ANSWERABLE = {"approval", "clarify", "secret"}
 WORKING = "working"
 NEEDS_YOU = "needs you"
 DONE = "done"
@@ -82,6 +88,8 @@ SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
 SIGN_OFF_OPEN = re.compile(r"\s*(?:<signoff>[^<]*|<(?:s(?:i(?:g(?:n(?:o(?:f(?:f)?)?)?)?)?)?)?)$", re.I)
 # A post outside a turn is mirrored into the transcript just after the send returns.
 MIRROR_SETTLE = 1.0
+# A reply line that shows the person a stored secret: `SECRET:NAME` (web/src/lib/secrets.ts).
+SECRET_LINE = re.compile(r"^[^\S\n]*SECRET:([A-Za-z_][A-Za-z0-9_]{0,63})[^\S\n]*$", re.M)
 
 
 class Hub:
@@ -332,7 +340,14 @@ class Hub:
         request = self.requests.get(str(request_id))
         if request is None:
             raise ValueError("That request is no longer open")
-        if request["method"] == "approval":
+        if request["method"] == "secret":
+            if result.get("declined"):
+                result = {"declined": True}
+            elif isinstance(result.get("value"), str) and result["value"]:
+                result = {"value": result["value"]}
+            else:
+                raise ValueError("Type the secret first")
+        elif request["method"] == "approval":
             if result.get("choice") not in request["params"].get("choices", []):
                 raise ValueError("Pick one of the offered options")
             result = {"choice": result["choice"]}
@@ -344,6 +359,26 @@ class Hub:
         await self.backend.resolve(request, result)
         await self.settle(str(request_id))
         return {"ok": True}
+
+    # Secrets, kept by the agent-secrets plugin in the gateway; the app lists and reveals them.
+
+    async def secrets(self):
+        return await asyncio.to_thread(self.backend.secrets)
+
+    async def secret(self, name):
+        return await asyncio.to_thread(self.backend.secret, str(name))
+
+    async def set_secret(self, name, value, note=None):
+        await asyncio.to_thread(self.backend.set_secret, str(name), value, note)
+        await self.secrets_changed()
+
+    async def remove_secret(self, name):
+        removed = await asyncio.to_thread(self.backend.remove_secret, str(name))
+        await self.secrets_changed()
+        return removed
+
+    async def secrets_changed(self):
+        await self.broadcast({"kind": "secrets.changed"})
 
     async def archive(self, session, archived=True):
         chat = await asyncio.to_thread(self.backend.chat_of, session) if archived else None
@@ -485,6 +520,8 @@ class Hub:
         await self._set_status(session, NEEDS_YOU)
         await self._publish(session, {"kind": "request", "request": _request_view(request)})
         what = {"approval": "needs your ok", "clarify": "has a question"}.get(request["method"], "needs you")
+        if request["method"] == "secret":
+            what = f"needs {request['params'].get('name') or 'a secret'}"
         self.notify(session, self.titles.get(session) or "Nako", what)
 
     async def settle(self, request_id):
@@ -566,9 +603,14 @@ def _without_sign_off(message):
 def _preview(text, limit=PREVIEW_CHARS):
     """The start of a reply as one plain line for a notification: no MEDIA tags or markdown marks."""
     text = split_sign_off(text)[0]
+    # A shared secret reads as its name, kept whole past the markdown cleanup below (STRIPE_KEY).
+    shared = SECRET_LINE.findall(str(text or ""))
+    text = SECRET_LINE.sub("\0", MEDIA.sub("", str(text or "")))
     # Heading marks only at the start of a line: a `#` mid-line is a PR or issue number (web#12).
-    lines = (re.sub(r"^\s*#{1,6}\s+", "", line) for line in MEDIA.sub("", str(text or "")).splitlines())
+    lines = (re.sub(r"^\s*#{1,6}\s+", "", line) for line in text.splitlines())
     plain = re.sub(r"[`*_>|]+", "", " ".join(lines))
+    for name in shared:
+        plain = plain.replace("\0", name, 1)
     plain = re.sub(r"\s+([,.;:)])", r"\1", plain)
     plain = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", plain)
     plain = " ".join(plain.split())

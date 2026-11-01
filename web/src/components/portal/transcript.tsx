@@ -8,8 +8,10 @@ import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { fileUrl } from "@/lib/api"
 import { ImageViewer } from "./image-viewer"
+import { SharedSecret } from "./secrets"
 import { markdownComponents } from "./markdown-link"
 import { isImage, splitReply, splitUserTurn } from "@/lib/media"
+import { type ReplyPart, splitSecrets } from "@/lib/secrets"
 import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
 import type { HistoryMessage, Live, Sender } from "@/lib/types"
 
@@ -231,7 +233,9 @@ const Assistant = memo(function Assistant({
   streaming,
 }: { session: string; text: string; reasoning?: string; label?: string; sender?: Sender; steered?: boolean; streaming?: boolean }) {
   const { body: raw, files } = splitReply(text)
-  const body = useMemo(() => linkSessionRefs(raw), [raw])
+  // A shared secret's card sits where its SECRET: line was, between the text around it.
+  const parts = useMemo(() => splitSecrets(raw, streaming).map((p): ReplyPart => (p.text === undefined ? p : { text: linkSessionRefs(p.text) })), [raw, streaming])
+  const body = parts.length === 1 ? (parts[0].text ?? "") : raw
   const stopScroll = useContext(StopScroll)
   return (
     <Message from="assistant">
@@ -246,11 +250,22 @@ const Assistant = memo(function Assistant({
               <ReasoningContent>{reasoning}</ReasoningContent>
             </Reasoning>
           )}
-          {body && (
-            <MessageResponse components={markdownComponents} isAnimating={streaming} linkSafety={{ enabled: false }} mode={streaming ? "streaming" : "static"}>
-              {body}
-            </MessageResponse>
-          )}
+          {body &&
+            parts.map((part, i) =>
+              part.secret !== undefined ? (
+                <SharedSecret key={`${i}:${part.secret}`} name={part.secret} />
+              ) : (
+                <MessageResponse
+                  components={markdownComponents}
+                  isAnimating={streaming && i === parts.length - 1}
+                  key={i}
+                  linkSafety={{ enabled: false }}
+                  mode={streaming ? "streaming" : "static"}
+                >
+                  {part.text}
+                </MessageResponse>
+              ),
+            )}
           <Files urls={files.map(path => ({ url: fileUrl(session, path), name: named(path), path }))} />
         </div>
       </MessageContent>

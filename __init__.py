@@ -560,6 +560,12 @@ class HermesBackend:
 
     async def resolve(self, request, result):
         private = request.get("private") or {}
+        if request["method"] == "secret":
+            # Straight into the vault of the profile that asked; the agent hears only "stored".
+            api = _secrets_api()
+            if api is None or not api.answer(private["secret_request"], result.get("value"), declined=bool(result.get("declined"))):
+                raise ValueError("That request is no longer open")
+            return
         if request["method"] == "approval":
             from tools.approval import resolve_gateway_approval
 
@@ -568,6 +574,23 @@ class HermesBackend:
             from tools.clarify_gateway import resolve_gateway_clarify
 
             resolve_gateway_clarify(private["clarify_id"], next(iter(result["answers"].values()), None) or "")
+
+    # Secrets: the agent-secrets plugin keeps them; Settings and shared cards read them here.
+
+    def secrets(self):
+        api = _secrets_api()
+        return None if api is None else self._scoped(api.names)
+
+    def secret(self, name):
+        api = _secrets_api()
+        return None if api is None else self._scoped(api.get, name)
+
+    def set_secret(self, name, value, note=None):
+        api = _need_secrets()
+        self._scoped(lambda: api.put(name, value, note=note, origin="you"))
+
+    def remove_secret(self, name):
+        return self._scoped(_need_secrets().remove, name)
 
     def set_title(self, session, title):
         self._scoped(lambda: self.db.set_session_title(session, title))
@@ -836,6 +859,59 @@ def _parse_target(ref):
     return (ref, None) if TARGET.match(ref) else None
 
 
+def _secrets_api():
+    """The agent-secrets plugin's API when that plugin is loaded (it publishes it under this name)."""
+    return sys.modules.get("agent_secrets")
+
+
+def _need_secrets():
+    api = _secrets_api()
+    if api is None:
+        raise ValueError("The agent-secrets plugin isn't installed")
+    return api
+
+
+class SecretSurface:
+    """The portal as the place agent-secrets asks for a secret: a card with a masked field in the
+    chat that asked. The answer comes back through `HermesBackend.resolve`."""
+
+    def __init__(self, adapter, loop):
+        self.adapter = adapter
+        self.loop = loop
+        # Requests shown since connecting; their cards go when the gateway does.
+        self.shown = set()
+
+    def ask(self, session_id, request):
+        try:
+            from gateway.session_context import get_session_env
+
+            chat = get_session_env("HERMES_SESSION_CHAT_ID", "")
+        except Exception:
+            chat = ""
+        backend = self.adapter.backend
+        if not chat and backend is not None and session_id:
+            chat = backend.chat_of(session_id) or ""
+        if not chat:
+            return False
+        card = {
+            "id": request["id"],
+            "method": "secret",
+            "params": {"name": request["name"], "note": request.get("note") or "", "replace": bool(request.get("replace"))},
+            "private": {"secret_request": request["id"]},
+        }
+        try:
+            shown = bool(asyncio.run_coroutine_threadsafe(self.adapter._hub("ask", str(chat), card), self.loop).result(timeout=15))
+        except Exception:
+            log.warning("portal: couldn't show a secret request", exc_info=True)
+            return False
+        if shown:
+            self.shown.add(request["id"])
+        return shown
+
+    def show_line(self, name):
+        return f"SECRET:{name}"
+
+
 def _adapter(config):
     from gateway.config import Platform
     from gateway.platforms.base import BasePlatformAdapter, SendResult
@@ -885,6 +961,14 @@ def _adapter(config):
                 self._tasks.append(loop.create_task(self.link.run(self._http)))
                 self._tasks.append(loop.create_task(_forward_inbox(_portal("store").Store(data / "portal.db"), self)))
                 _LIVE_TOOLS.update(link=self.link, loop=loop)
+                # With agent-secrets loaded, the portal is where its requests and shared secrets show.
+                secrets_api = _secrets_api()
+                if secrets_api is not None:
+                    self._secrets = SecretSurface(self, loop)
+                    secrets_api.register_surface("portal", self._secrets)
+                    if not getattr(secrets_api, "_portal_listening", False):
+                        secrets_api._portal_listening = True
+                        secrets_api.on_change(lambda _home: _secrets_changed())
             store = getattr(self, "_session_store", None)
             if store is not None:
                 await asyncio.to_thread(_own_origins, store)
@@ -901,6 +985,12 @@ def _adapter(config):
             if self._http is not None:
                 await self._http.close()
             _LIVE_TOOLS.clear()
+            secrets_api = _secrets_api()
+            if secrets_api is not None and getattr(self, "_secrets", None) is not None:
+                secrets_api.unregister_surface("portal", self._secrets)
+                for request_id in self._secrets.shown:
+                    secrets_api.close(request_id)
+            self._secrets = None
             self._tasks, self._http, self.link, self.backend = [], None, None, None
             self._mark_disconnected()
 
@@ -1070,6 +1160,14 @@ def _forward_tool(state):
         return None
 
     return hook
+
+
+def _secrets_changed():
+    """agent-secrets stored or deleted one in this process (an agent sharing, a request answered):
+    the app's Settings and shared cards reread their list."""
+    link, loop = _LIVE_TOOLS.get("link"), _LIVE_TOOLS.get("loop")
+    if link is not None and loop is not None and link.peer is not None:
+        loop.call_soon_threadsafe(link.tell, "secrets_changed")
 
 
 def _mesh_tools():

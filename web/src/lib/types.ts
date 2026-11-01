@@ -78,6 +78,10 @@ export type PortalRequest = {
     command?: string
     choices?: string[]
     questions?: { qid: string; question: string; choices?: string[] }[]
+    // A secret request: the name it'll be stored under, why it's needed, and whether one exists.
+    name?: string
+    note?: string
+    replace?: boolean
   }
 }
 
@@ -115,4 +119,5 @@ export type Frame =
   | { kind: "alert"; session: string | null; title: string; body: string }
   | { kind: "profile.changed"; profile: string }
   | { kind: "machines.changed" }
+  | { kind: "secrets.changed" }
   | { kind: "event"; session: string; type: string; payload: Record<string, unknown> }

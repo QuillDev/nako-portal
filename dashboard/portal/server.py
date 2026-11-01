@@ -164,6 +164,10 @@ class Portal:
         r.add_post("/api/sessions/{session}/pin", self.pin)
         r.add_post("/api/sessions/{session}/title", self.title)
         r.add_post("/api/requests/{request}", self.answer)
+        r.add_get("/api/secrets", self.secrets)
+        r.add_get("/api/secrets/{name}", self.secret)
+        r.add_post("/api/secrets/{name}", self.set_secret)
+        r.add_post("/api/secrets/{name}/remove", self.remove_secret)
         r.add_get("/api/file", self.file)
         r.add_get("/api/inbox", self.inbox)
         r.add_get("/api/mesh", self.machines)
@@ -724,6 +728,44 @@ class Portal:
             return web.json_response(await self.mesh.answer(request_id, body.get("result") or {}))
         hub = await self._hub()
         return web.json_response(await hub.answer(request_id, body.get("result") or {}))
+
+    # Secrets live in the agent-secrets plugin; without it these answer 404 and the app hides them.
+
+    async def _secrets(self):
+        hub = await self._hub()
+        if await hub.secrets() is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "The agent-secrets plugin isn't installed"}), content_type="application/json")
+        return hub
+
+    async def secrets(self, request):
+        """The stored secrets' names, notes and dates; values only come one at a time."""
+        self._require(request)
+        hub = await self._hub()
+        listed = await hub.secrets()
+        if listed is None:
+            return web.json_response({"error": "The agent-secrets plugin isn't installed"}, status=404)
+        return web.json_response(listed)
+
+    async def secret(self, request):
+        self._require(request)
+        hub = await self._secrets()
+        name = request.match_info["name"]
+        value = await hub.secret(name)
+        if value is None:
+            return web.json_response({"error": f"No secret named {name}"}, status=404)
+        return web.json_response({"name": name, "value": value})
+
+    async def set_secret(self, request):
+        self._require(request)
+        hub = await self._secrets()
+        body = await request.json()
+        await hub.set_secret(request.match_info["name"], body.get("value"), body.get("note"))
+        return web.json_response({"ok": True})
+
+    async def remove_secret(self, request):
+        self._require(request)
+        hub = await self._secrets()
+        return web.json_response({"removed": await hub.remove_secret(request.match_info["name"])})
 
     async def file(self, request):
         """A file shown in that session's transcript (a reply's MEDIA: tag or an image the user attached), and nothing else."""
