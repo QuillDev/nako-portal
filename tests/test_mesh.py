@@ -428,6 +428,26 @@ async def test_the_setup_lines_fetch_a_script_for_each_os_that_joins_the_machine
     assert token not in again and "already joined" in again
 
 
+async def test_machines_join_and_set_up_through_the_portals_own_address(mesh):
+    """No private network needed: the public portal app serves the mesh too."""
+    await mesh.sign_up()
+    lines = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["lines"]
+    path = lines["unix"].split("8799", 1)[1].removesuffix(" | bash")
+    script = await mesh.http.get(mesh.url(path))
+    assert script.status == 200
+    token = re.search(r"mesh join \S+ '([^']+)'", await script.text()).group(1)
+    await mesh.machine.start(mesh.url("/mesh"), token)
+    await until(lambda: MACHINE in mesh.mesh.peers)
+
+
+async def test_a_portal_that_isnt_a_hub_has_no_mesh_door(world):
+    async with aiohttp.ClientSession() as http:
+        with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+            await http.ws_connect(world.url("/mesh"), params={"name": MACHINE}, headers={"Authorization": "Bearer x"})
+    assert refused.value.status == 404
+    assert (await world.http.get(world.url("/mesh/setup/abc/sh"))).status == 404
+
+
 def test_a_setup_script_refuses_values_that_could_break_out_of_its_quotes():
     from portal.mesh_setup import powershell_script, shell_script
 

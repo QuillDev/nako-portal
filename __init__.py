@@ -137,23 +137,29 @@ def _machine_name():
     return (name or "machine")[:32]
 
 
-def _mesh(entry, home):
-    """The mesh part of the server's settings. A hub (`mesh_listen`, host:port other machines
-    reach) shares this home's skills, minus `skill_sync_exclude`; a machine (`mesh_hub`, the hub's
-    URL) dials in with NAKO_MESH_TOKEN and mirrors those skills into `mesh-skills`."""
-    listen = str(entry.get("mesh_listen") or "").strip()
-    if listen:
+def _mesh(entry, home, origin=None):
+    """The mesh part of the server's settings.
+
+    A machine in someone's mesh (`mesh_hub`, the hub portal's URL) dials in with NAKO_MESH_TOKEN
+    and mirrors the hub's skills into `mesh-skills`. Any other portal is a hub, with no machines
+    until one is added: machines reach it on the portal's own address (`origin`, or
+    `mesh_address`), and `mesh_listen` (host:port) adds a listener of its own, e.g. on a private
+    network. It shares this home's skills, minus `skill_sync_exclude`."""
+    hub = str(entry.get("mesh_hub") or "").strip()
+    if not hub:
+        listen = str(entry.get("mesh_listen") or "").strip() or None
         exclude = entry.get("skill_sync_exclude") or []
         if isinstance(exclude, str):
             exclude = [part.strip() for part in exclude.split(",")]
+        address = str(entry.get("mesh_address") or "").strip().rstrip("/") or (f"http://{listen}" if listen and not origin else origin)
         return {
             "name": str(entry.get("mesh_name") or _machine_name()),
+            "address": address,
             "listen": listen,
             "skills_dir": str(home / "skills"),
             "skills_exclude": sorted({str(x) for x in exclude if str(x).strip()}),
             "plugin": _plugin_origin(entry),
         }
-    hub = str(entry.get("mesh_hub") or "").strip()
     if hub:
         token = os.environ.get("NAKO_MESH_TOKEN") or _env_value(home, "NAKO_MESH_TOKEN")
         if not token:
@@ -202,8 +208,8 @@ def _settings():
     entry = _plugin_settings()
     home = get_hermes_home().resolve()
     port = int(entry.get("port") or DEFAULT_PORT)
-    mesh = _mesh(entry, home)
-    origin = str(entry.get("origin") or "").strip()
+    origin = str(entry.get("origin") or "").strip().rstrip("/")
+    mesh = _mesh(entry, home, origin if origin.startswith("https://") else None)
     if not origin and mesh.get("hub"):
         # A machine in a mesh is used through its hub; its own site only answers on loopback.
         origin = f"http://127.0.0.1:{port}"

@@ -86,11 +86,13 @@ async def main(config_path):
         sites = [(portal.app(), "127.0.0.1", port), (portal.local_app(token, link), "127.0.0.1", port + 1)]
         mesh = config.get("mesh") or {}
         tasks = []
-        if mesh.get("listen"):
-            # This portal is the hub: other machines dial in here.
-            portal.mesh = Mesh(data, hub, name=mesh.get("name") or "hub", address=f"http://{mesh['listen']}", plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store)
-            host, _, at = str(mesh["listen"]).rpartition(":")
-            sites.append((portal.mesh.app(), host or "127.0.0.1", int(at)))
+        if mesh.get("address"):
+            # This portal is a hub: machines dial in on its own address (the public app serves
+            # /mesh), and on `listen` too when one is set.
+            portal.mesh = Mesh(data, hub, name=mesh.get("name") or "hub", address=mesh["address"], plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store)
+            if mesh.get("listen"):
+                host, _, at = str(mesh["listen"]).rpartition(":")
+                sites.append((portal.mesh.app(), host or "127.0.0.1", int(at)))
         elif mesh.get("hub"):
             # This portal is a machine in someone's mesh: dial its hub.
             node = Node(mesh["hub"], mesh["name"], mesh["token"], hub, skills_into=mesh.get("skills_into"))

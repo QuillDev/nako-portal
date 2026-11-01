@@ -179,8 +179,22 @@ class Portal:
         r.add_get("/api/desktop/release", self.desktop_release)
         r.add_get("/desktop/{file}", self.desktop_app)
         r.add_get("/ws", self.socket)
+        # Other machines in this portal's mesh dial in and fetch their setup here, by token or
+        # setup code rather than sign-in (`mesh.Mesh`); a portal with no mesh answers 404.
+        r.add_get("/mesh", self._mesh_route("handle"))
+        r.add_get("/mesh/setup/{code}", self._mesh_route("setup"))
+        r.add_get("/mesh/setup/{code}/status", self._mesh_route("setup_status"))
+        r.add_get("/mesh/setup/{code}/{kind:sh|ps1}", self._mesh_route("script"))
         r.add_get("/{path:.*}", self.static)
         return app
+
+    def _mesh_route(self, name):
+        async def route(request):
+            if self.mesh is None:
+                raise web.HTTPNotFound()
+            return await getattr(self.mesh, name)(request)
+
+        return route
 
     def local_app(self, token, link=None):
         """Starts chats for scripts on this machine (an agent handing work to a new thread), and

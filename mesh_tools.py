@@ -234,12 +234,16 @@ TOOLS = [
 
 
 def _in_mesh():
-    """Any machine in a mesh gets these, the hub and the rest alike; calls between machines go through the hub."""
+    """Any machine in a mesh gets these, the hub and the rest alike (calls between machines go
+    through the hub): a machine that joined one, or a hub with at least one machine added."""
     try:
         from hermes_cli.config import load_config
+        from hermes_constants import get_hermes_home
 
         settings = load_config().get("plugins", {}).get("entries", {}).get("nako-portal", {}).get("settings", {}) or {}
-        return any(str(settings.get(key) or "").strip() for key in ("mesh_listen", "mesh_hub"))
+        if str(settings.get("mesh_hub") or "").strip():
+            return True
+        return bool(PORTAL("mesh").load_nodes(get_hermes_home() / "nako-portal")) if PORTAL else False
     except Exception:
         return False
 
@@ -272,7 +276,7 @@ def _setup_cli(parser):
     remove.add_argument("name")
     sub.add_parser("list", help="On the hub: the machines and whether they're online")
     join = sub.add_parser("join", help="On a machine: join a hub's mesh")
-    join.add_argument("hub", help="The hub's mesh address, e.g. http://100.64.0.1:8799")
+    join.add_argument("hub", help="The hub portal's address, e.g. https://portal.example.com")
     join.add_argument("token", help="The token `hermes mesh add` printed on the hub")
     join.add_argument("--name", help="This machine's name (default: its hostname)")
 
@@ -285,7 +289,12 @@ def _cli(args):
     mesh = _mesh_module()
     if args.mesh_action == "add":
         token = mesh.add_node(data, args.name)
-        print(f"{args.name} can join. On that machine run:\n\n  hermes mesh join <this hub's mesh address> {token} --name {args.name}\n")
+        from hermes_cli.config import load_config
+
+        settings = load_config().get("plugins", {}).get("entries", {}).get("nako-portal", {}).get("settings", {}) or {}
+        address = str(settings.get("mesh_address") or settings.get("origin") or "<this portal's address>").rstrip("/")
+        print(f"{args.name} can join. On that machine run:\n\n  hermes mesh join {address} {token} --name {args.name}\n")
+        print("Or add it on the portal's Mesh page for a one-line setup.")
         print("The token is shown only once. Restart nothing here; the hub reads new machines as they connect.")
     elif args.mesh_action == "remove":
         print("removed" if mesh.remove_node(data, args.name) else f"no machine called {args.name}")
