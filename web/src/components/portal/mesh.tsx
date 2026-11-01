@@ -6,7 +6,7 @@ import type { Portal } from "@/hooks/use-portal"
 import { navigate } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { health, type Health, loadMesh, machineKind, machineState, useMesh } from "@/lib/mesh"
-import type { Machine } from "@/lib/types"
+import type { Machine, PluginSource } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { PageHeader } from "./header"
 
@@ -154,7 +154,7 @@ function savedPlatform(): PlatformId {
 }
 
 /** Adding a machine: its name and OS, then the one line to paste in a terminal there. */
-function AddMachine({ close, onError }: { close: () => void; onError: (m: string) => void }) {
+function AddMachine({ close, onError, ready }: { close: () => void; onError: (m: string) => void; ready: boolean }) {
   const [name, setName] = useState("")
   const [platform, setPlatform] = useState<PlatformId>(savedPlatform)
   const [lines, setLines] = useState<Lines | null>(null)
@@ -197,7 +197,9 @@ function AddMachine({ close, onError }: { close: () => void; onError: (m: string
           </button>
         ))}
       </div>
-      {line === undefined ? (
+      {!ready ? (
+        <p className="text-muted-foreground">Machines need somewhere to install the portal plugin from. Set the plugin source below first.</p>
+      ) : line === undefined ? (
         <form
           className="flex items-center gap-2"
           onSubmit={e => {
@@ -233,6 +235,56 @@ function AddMachine({ close, onError }: { close: () => void; onError: (m: string
         </>
       )}
     </div>
+  )
+}
+
+/** Where new machines install the portal plugin from: a git URL they can reach. Found from the
+ * plugin's own checkout when it can be; set here when it can't, or to use another repo. */
+function PluginSourceRow({ plugin, onError }: { plugin: PluginSource; onError: (m: string) => void }) {
+  const [value, setValue] = useState(plugin.source ?? "")
+  useEffect(() => setValue(plugin.source ?? ""), [plugin.source])
+  const save = async (source: string) => {
+    try {
+      await api("/api/mesh/plugin-source", { method: "POST", body: { source } })
+      await loadMesh()
+    } catch (e) {
+      onError((e as Error).message)
+    }
+  }
+  const changed = value.trim() !== (plugin.source ?? "")
+  return (
+    <form
+      className="flex flex-col gap-2 border-t pt-4 text-sm"
+      onSubmit={e => {
+        e.preventDefault()
+        if (changed) void save(value.trim())
+      }}
+    >
+      <label className="text-muted-foreground" htmlFor="plugin-source">
+        New machines install the plugin from
+      </label>
+      <div className="flex items-center gap-2">
+        <Input
+          className={cn("h-9 flex-1 font-mono text-xs", !plugin.source && "border-amber-500/60")}
+          id="plugin-source"
+          onChange={e => setValue(e.target.value)}
+          placeholder="https://github.com/<you>/<repo>.git"
+          value={value}
+        />
+        {changed ? (
+          <Button type="submit" variant="outline">
+            Save
+          </Button>
+        ) : (
+          plugin.saved &&
+          plugin.detected && (
+            <Button onClick={() => void save("")} type="button" variant="ghost">
+              Use detected
+            </Button>
+          )
+        )}
+      </div>
+    </form>
   )
 }
 
@@ -274,8 +326,9 @@ export function MeshPage({ portal }: { portal: Portal }) {
             {machines.length === 0 && !adding && (
               <p className="text-center text-muted-foreground text-sm">No machines yet. Add one to hand it tasks from here.</p>
             )}
-            {adding && <AddMachine close={() => setAdding(false)} onError={setError} />}
+            {adding && <AddMachine close={() => setAdding(false)} onError={setError} ready={Boolean(mesh.plugin?.source)} />}
             {picked && <MachineCard close={() => setSelected(null)} machine={picked} onError={setError} portal={portal} />}
+            {mesh.plugin && <PluginSourceRow onError={setError} plugin={mesh.plugin} />}
           </>
         )}
         {error && <p className="text-destructive text-sm">{error}</p>}

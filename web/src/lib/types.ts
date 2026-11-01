@@ -52,7 +52,10 @@ export type Machine = {
   working: number
 }
 
-export type Mesh = { hub: boolean; name?: string; address?: string | null; machines: Machine[] }
+// Where new machines install the portal plugin from: saved on the Mesh page, else detected.
+export type PluginSource = { source: string | null; detected: string | null; saved: boolean }
+
+export type Mesh = { hub: boolean; name?: string; address?: string | null; plugin?: PluginSource; machines: Machine[] }
 
 export type Sender = { session: string; title: string }
 

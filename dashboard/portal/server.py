@@ -168,6 +168,7 @@ class Portal:
         r.add_get("/api/inbox", self.inbox)
         r.add_get("/api/mesh", self.machines)
         r.add_post("/api/mesh/machines", self.add_machine)
+        r.add_post("/api/mesh/plugin-source", self.set_plugin_source)
         r.add_post("/api/mesh/machines/{machine}/remove", self.remove_machine)
         r.add_get("/api/push/key", self.push_key)
         r.add_post("/api/push/subscribe", self.push_subscribe)
@@ -766,7 +767,14 @@ class Portal:
         self._require(request)
         if self.mesh is None:
             return web.json_response({"hub": False, "machines": []})
-        return web.json_response({"hub": True, "name": self.mesh.name, "address": self.mesh.address, "machines": self.mesh.machines()})
+        return web.json_response(
+            {"hub": True, "name": self.mesh.name, "address": self.mesh.address, "plugin": self.mesh.source_view(), "machines": self.mesh.machines()}
+        )
+
+    async def set_plugin_source(self, request):
+        self._require(request)
+        body = await request.json()
+        return web.json_response(self._mesh().set_source(body.get("source")))
 
     async def add_machine(self, request):
         self._require(request)

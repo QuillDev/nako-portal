@@ -78,7 +78,7 @@ The script first checks it can reach the hub. It installs Hermes if it's missing
 
 Nothing about a particular network or set of machines is built into the plugin. It all lives in each machine's own Hermes home:
 
-- **On the hub:** `plugins.entries.nako-portal.settings` holds `origin` (the portal's address, which is also what machines are told to use), plus optional `mesh_address` (a different address for machines), `mesh_listen` (an extra host:port listener, e.g. on a LAN), `mesh_name` (the hub's name in the mesh; default is its hostname), `mesh_plugin_source` (the git URL machines install the plugin from; default is the plugin checkout's own `origin` remote) and `skill_sync_exclude`. The machine list and their token hashes are in `~/.hermes/nako-portal/mesh-nodes.json`.
+- **On the hub:** `plugins.entries.nako-portal.settings` holds `origin` (the portal's address, which is also what machines are told to use), plus optional `mesh_address` (a different address for machines), `mesh_listen` (an extra host:port listener, e.g. on a LAN), `mesh_name` (the hub's name in the mesh; default is its hostname), `mesh_plugin_source` (the git URL machines install the plugin from; default is the plugin checkout's own `origin` remote) and `skill_sync_exclude`. The plugin source can also be set at the bottom of the Mesh page, which wins over the config setting and is kept in `~/.hermes/nako-portal/portal.db`. The machine list and their token hashes are in `~/.hermes/nako-portal/mesh-nodes.json`.
 - **On a machine:** `mesh_hub` (the hub portal's address) and `mesh_name` in the same settings block, `NAKO_MESH_TOKEN` in `~/.hermes/.env`, and `~/.hermes/mesh-skills` in `skills.external_dirs`.
 
 ## Moving the hub

@@ -354,8 +354,31 @@ async def test_a_hub_without_a_reachable_plugin_source_says_how_to_set_one(mesh)
     mesh.mesh.plugin = {"source": None, "ref": None}
     refused = await mesh.post("/api/mesh/machines", {"name": MACHINE})
     assert refused.status == 400
-    assert "mesh_plugin_source" in (await refused.json())["error"]
+    assert "plugin source on the Mesh page" in (await refused.json())["error"]
     assert MACHINE not in mesh_module.load_nodes(mesh.mesh_data)
+
+
+async def test_the_plugin_source_set_on_the_mesh_page_is_what_new_machines_install(mesh):
+    await mesh.sign_up()
+    mesh.mesh.plugin = {"source": None, "ref": "b" * 40}
+    assert (await (await mesh.http.get(mesh.url("/api/mesh"))).json())["plugin"] == {"source": None, "detected": None, "saved": False}
+    bad = await mesh.post("/api/mesh/plugin-source", {"source": "https://x.test/$(id)"})
+    assert bad.status == 400
+    saved = await mesh.post("/api/mesh/plugin-source", {"source": "https://git.example.test/me/portal.git"})
+    assert (await saved.json()) == {"source": "https://git.example.test/me/portal.git", "detected": None, "saved": True}
+    lines = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["lines"]
+    path = lines["unix"].split("hub.example.test", 1)[1].removesuffix(" | bash")
+    script = await (await mesh.http.get(mesh.url(path))).text()
+    assert f"hermes plugins install https://git.example.test/me/portal.git --ref {'b' * 40}" in script
+    # Clearing it goes back to the detected source.
+    mesh.mesh.plugin = {"source": "https://found.example.test/p.git", "ref": None}
+    cleared = await (await mesh.post("/api/mesh/plugin-source", {"source": ""})).json()
+    assert cleared == {"source": "https://found.example.test/p.git", "detected": "https://found.example.test/p.git", "saved": False}
+
+
+async def test_only_a_signed_in_person_sets_the_plugin_source(mesh):
+    assert (await mesh.post("/api/mesh/plugin-source", {"source": "https://evil.example.test/p.git"})).status == 401
+    assert mesh.mesh.plugin_source() == "https://example.test/portal.git"
 
 
 # Settings → Machines
@@ -488,7 +511,8 @@ async def test_a_bad_machine_name_is_refused(mesh):
     await mesh.sign_up()
     refused = await mesh.post("/api/mesh/machines", {"name": "My Laptop!"})
     assert refused.status == 400
-    assert await (await mesh.http.get(mesh.url("/api/mesh"))).json() == {"hub": True, "name": "hub", "address": "https://hub.example.test", "machines": []}
+    shown = await (await mesh.http.get(mesh.url("/api/mesh"))).json()
+    assert (shown["hub"], shown["machines"]) == (True, [])
 
 
 async def test_removing_a_machine_disconnects_it_and_keeps_it_out(mesh):

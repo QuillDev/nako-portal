@@ -66,10 +66,10 @@ NODE_CALLS = (
 SETUP_TTL = 24 * 3600
 SETUP_PATH = MESH_PATH + "/setup/{code}"
 NO_SOURCE = (
-    "Machines can't install this plugin from where the hub's copy came from. Set "
-    "plugins.entries.nako-portal.settings.mesh_plugin_source to a git URL they can reach "
-    "(the repo this plugin was published to)."
+    "Machines can't install this plugin from where the hub's copy came from. Set the plugin "
+    "source on the Mesh page to a git URL they can reach (the repo this plugin was published to)."
 )
+SOURCE_KEY = "mesh:plugin_source"
 SKILL_POLL = 60
 SKILL_BATCH = 8 * 1024 * 1024
 SKILL_FILE_MAX = 4 * 1024 * 1024
@@ -390,13 +390,40 @@ class Mesh:
         self.status = {}
         self.requests = {}
 
+    # Where machines get the plugin
+
+    def plugin_source(self):
+        """The git URL new machines install the plugin from: the one saved on the Mesh page, else
+        the one found from settings or the plugin's own checkout. None when neither exists."""
+        saved = self.store.meta(SOURCE_KEY, None) if self.store is not None else None
+        return saved or (self.plugin or {}).get("source")
+
+    def install_from(self):
+        return {"source": self.plugin_source(), "ref": (self.plugin or {}).get("ref")}
+
+    def source_view(self):
+        saved = self.store.meta(SOURCE_KEY, None) if self.store is not None else None
+        return {"source": self.plugin_source(), "detected": (self.plugin or {}).get("source"), "saved": bool(saved)}
+
+    def set_source(self, source):
+        """Save the plugin source from the Mesh page; empty goes back to the detected one."""
+        from .mesh_setup import SAFE
+
+        source = str(source or "").strip()
+        if source and not SAFE["source"].match(source):
+            raise ValueError("Use a git URL machines can reach, like https://github.com/<you>/<repo>.git")
+        if self.store is None:
+            raise ValueError("Nowhere to save it")
+        self.store.set_meta(SOURCE_KEY, source or None)
+        return self.source_view()
+
     # Who's there
 
     def add(self, name):
         """Let a machine join: its token, and the command that joins it, shown once."""
         if name == self.name:
             raise ValueError(f"{name} is this hub's own name")
-        if not (self.plugin or {}).get("source"):
+        if not self.plugin_source():
             raise ValueError(NO_SOURCE)
         if not self.address:
             raise ValueError("Machines need an address for this hub: set the portal's origin (or mesh_address)")
@@ -420,7 +447,7 @@ class Mesh:
         if not setup.get("token"):
             text = f"echo '{name} already joined the mesh.'\n" if kind == "sh" else f"Write-Host '{name} already joined the mesh.'\n"
             return web.Response(text=text, content_type="text/plain")
-        plugin = self.plugin or {}
+        plugin = self.install_from()
         values = {
             "hub": self.address,
             "name": name,
@@ -439,7 +466,7 @@ class Mesh:
             return web.Response(status=404, text="This setup link expired or was never made. Add the machine again in Settings.\n")
         if not setup.get("token"):
             return web.Response(text=f'"{name}" already joined the mesh. Nothing to do.\n')
-        page = setup_page(name=name, address=self.address, token=setup["token"], code=request.match_info["code"], plugin=self.plugin)
+        page = setup_page(name=name, address=self.address, token=setup["token"], code=request.match_info["code"], plugin=self.install_from())
         return web.Response(text=page, content_type="text/plain", headers={"Cache-Control": "no-store"})
 
     async def setup_status(self, request):
