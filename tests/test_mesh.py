@@ -408,6 +408,37 @@ async def test_one_line_setup_tells_a_stock_hermes_everything_and_the_machine_jo
     assert join.group(1) not in again and "already joined" in again
 
 
+async def test_the_setup_lines_fetch_a_script_for_each_os_that_joins_the_machine(mesh):
+    await mesh.sign_up()
+    lines = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["lines"]
+    unix, windows = lines["unix"], lines["windows"]
+    assert unix.startswith("curl -fsSL http://100.64.0.1:8799/mesh/setup/") and unix.endswith("/sh | bash")
+    assert windows.startswith("iex (irm http://100.64.0.1:8799/mesh/setup/") and windows.endswith("/ps1)")
+    base = unix.split("8799", 1)[1].removesuffix("/sh | bash")
+    sh = await (await mesh.http.get(str(mesh.mesh_server.make_url(base + "/sh")))).text()
+    ps1 = await (await mesh.http.get(str(mesh.mesh_server.make_url(base + "/ps1")))).text()
+    for script in (sh, ps1):
+        assert f"install https://example.test/portal.git --ref {'a' * 40} --enable --yes-deps --force" in script
+        assert "hermes model" in script and "--if-missing --start-on-login" in script
+    token = re.search(r"mesh join \S+ '([^']+)'", sh).group(1)
+    assert re.search(rf"mesh join \$Hub '{token}'", ps1)
+    await mesh.machine.start(mesh.mesh_url, token)
+    await until(lambda: MACHINE in mesh.mesh.peers)
+    again = await (await mesh.http.get(str(mesh.mesh_server.make_url(base + "/sh")))).text()
+    assert token not in again and "already joined" in again
+
+
+def test_a_setup_script_refuses_values_that_could_break_out_of_its_quotes():
+    from portal.mesh_setup import powershell_script, shell_script
+
+    good = {"hub": "http://100.64.0.1:8799", "name": "laptop", "token": "a" * 30, "status": "http://100.64.0.1:8799/mesh/setup/x/status", "source": "https://example.test/p.git", "ref": ""}
+    for script in (shell_script, powershell_script):
+        script(**good)
+        for key, bad in (("name", "x'; rm -rf ~; '"), ("token", "a" * 25 + "'$(id)'"), ("hub", "http://h/'`whoami`"), ("source", "https://x/$(id)")):
+            with pytest.raises(ValueError):
+                script(**{**good, key: bad})
+
+
 async def test_a_setup_link_stops_working_after_a_day(mesh, monkeypatch):
     await mesh.sign_up()
     prompt = (await (await mesh.post("/api/mesh/machines", {"name": MACHINE})).json())["prompt"]

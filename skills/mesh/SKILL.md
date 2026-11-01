@@ -67,7 +67,12 @@ Nodes get the hub's skills automatically, a read-only copy in `~/.hermes/mesh-sk
 
 ## Setting up a machine
 
-The user adds machines on the portal's **Mesh** page, opened from the row above Settings. *Add machine* gives one line to paste into Hermes on the new machine. That Hermes fetches a setup page from the hub and follows it: it installs this plugin, runs `hermes mesh join`, keeps the gateway running as a service, then checks that it's online. The setup line works for a day. From a terminal, the same thing is `hermes mesh add <name>` on the hub, then `hermes mesh join <hub address> <token> --name <name>` on the machine. `hermes mesh list` shows who's online.
+The user adds machines on the portal's **Mesh** page, opened from the row above Settings. *Add machine* asks for the machine's OS and a name, then gives one line to paste into a terminal there:
+
+- macOS / Linux: `curl -fsSL http://<hub>:8799/mesh/setup/<code>/sh | bash`
+- Windows (PowerShell): `iex (irm http://<hub>:8799/mesh/setup/<code>/ps1)`
+
+The script first checks it can reach the hub (Tailscale must be up). It installs Hermes if it's missing. If no model is set up, it runs `hermes model`, which is the one step the user does by hand. Then it installs this plugin at the hub's own version, runs `hermes mesh join`, and sets the gateway up as a background service. It waits until the hub sees the machine. The line works for a day and is safe to run again; once the machine has joined, it just says so. From a terminal, the same thing is `hermes mesh add <name>` on the hub, then `hermes mesh join <hub address> <token> --name <name>` on the machine. `hermes mesh list` shows who's online.
 
 ## When something's wrong
 

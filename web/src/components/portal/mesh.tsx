@@ -140,23 +140,64 @@ function MachineCard({ machine, portal, close, onError }: { machine: Machine; po
   )
 }
 
-/** Adding a machine: a name, then one line to paste into Hermes on that machine. */
+const PLATFORMS = [
+  { id: "mac", label: "macOS", line: "unix", where: "Terminal" },
+  { id: "linux", label: "Linux", line: "unix", where: "a terminal" },
+  { id: "windows", label: "Windows", line: "windows", where: "PowerShell" },
+] as const
+type PlatformId = (typeof PLATFORMS)[number]["id"]
+type Lines = { unix: string; windows: string }
+
+function savedPlatform(): PlatformId {
+  const saved = localStorage.getItem("mesh:platform")
+  return PLATFORMS.some(p => p.id === saved) ? (saved as PlatformId) : "mac"
+}
+
+/** Adding a machine: its name and OS, then the one line to paste in a terminal there. */
 function AddMachine({ close, onError }: { close: () => void; onError: (m: string) => void }) {
   const [name, setName] = useState("")
-  const [prompt, setPrompt] = useState<string | null>(null)
+  const [platform, setPlatform] = useState<PlatformId>(savedPlatform)
+  const [lines, setLines] = useState<Lines | null>(null)
   const [copied, setCopied] = useState(false)
+  const chosen = PLATFORMS.find(p => p.id === platform) ?? PLATFORMS[0]
+  const pick = (id: PlatformId) => {
+    setPlatform(id)
+    setCopied(false)
+    localStorage.setItem("mesh:platform", id)
+  }
   const add = async () => {
     try {
-      const made = await api<{ prompt: string }>("/api/mesh/machines", { method: "POST", body: { name } })
-      setPrompt(made.prompt)
+      const made = await api<{ lines: Lines }>("/api/mesh/machines", { method: "POST", body: { name } })
+      setLines(made.lines)
       await loadMesh()
     } catch (e) {
       onError((e as Error).message)
     }
   }
+  const line = lines?.[chosen.line]
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-card p-4 text-sm">
-      {prompt === null ? (
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">{lines ? `Set up ${name}` : "Add a machine"}</span>
+        <Button aria-label="Close" className="-my-1" onClick={close} size="icon" variant="ghost">
+          <XIcon />
+        </Button>
+      </div>
+      <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1" role="radiogroup">
+        {PLATFORMS.map(p => (
+          <button
+            aria-checked={platform === p.id}
+            className="rounded-md py-1.5 text-muted-foreground text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-checked:bg-background aria-checked:text-foreground aria-checked:shadow-sm"
+            key={p.id}
+            onClick={() => pick(p.id)}
+            role="radio"
+            type="button"
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+      {line === undefined ? (
         <form
           className="flex items-center gap-2"
           onSubmit={e => {
@@ -165,30 +206,27 @@ function AddMachine({ close, onError }: { close: () => void; onError: (m: string
           }}
         >
           <Input
-            aria-label="New machine name"
+            aria-label="Machine name"
             autoFocus
             className="h-9 flex-1"
             onChange={e => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
-            placeholder="name this machine, e.g. macbook"
+            placeholder="machine name, e.g. macbook"
             value={name}
           />
           <Button disabled={!name} type="submit">
-            Add
-          </Button>
-          <Button aria-label="Cancel" onClick={close} size="icon" type="button" variant="ghost">
-            <XIcon />
+            Get setup line
           </Button>
         </form>
       ) : (
         <>
-          <div className="font-medium">Paste this into Hermes on {name}</div>
-          <p className="rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">{prompt}</p>
+          <p className="text-muted-foreground">Paste this in {chosen.where} on {name}. It installs Hermes if needed, has you sign in to a model once, then joins the mesh.</p>
+          <p className="rounded-lg bg-muted px-3 py-2.5 font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">{line}</p>
           <div className="flex items-center justify-end gap-2">
             <span className="mr-auto text-muted-foreground text-xs">works for a day</span>
             <Button onClick={close} variant="ghost">
               Done
             </Button>
-            <Button onClick={() => navigator.clipboard.writeText(prompt).then(() => setCopied(true), () => onError("couldn't copy"))} variant="outline">
+            <Button onClick={() => navigator.clipboard.writeText(line).then(() => setCopied(true), () => onError("couldn't copy"))} variant="outline">
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>

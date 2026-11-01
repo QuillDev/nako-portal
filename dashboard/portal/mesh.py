@@ -31,6 +31,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+from .mesh_setup import powershell_script, shell_script
 from .link import HEARTBEAT, MAX_FRAME, Peer, decode_files, encode_files
 
 log = logging.getLogger("hermes.portal")
@@ -397,7 +398,32 @@ class Mesh:
         code = start_setup(self.data, name, token, self.clock())
         url = f"{self.address}{SETUP_PATH.format(code=code)}"
         prompt = f'Set this machine up as "{name}" in my Nako mesh: run `curl -fsSL {url}` (curl.exe on Windows) and follow the steps it prints, exactly and in order.'
-        return {"name": name, "token": token, "command": command, "prompt": prompt}
+        # The one line to paste in a terminal on the new machine, by its OS.
+        lines = {"unix": f"curl -fsSL {url}/sh | bash", "windows": f"iex (irm {url}/ps1)"}
+        return {"name": name, "token": token, "command": command, "prompt": prompt, "lines": lines}
+
+    async def script(self, request):
+        """GET /mesh/setup/{code}/sh or /ps1: the script that line runs."""
+        code, kind = request.match_info["code"], request.match_info["kind"]
+        name, setup = setup_for(self.data, code, self.clock())
+        if name is None:
+            message = "This setup line expired or was never made. Add the machine again on the Mesh page."
+            text = f"echo '{message}' >&2; exit 1\n" if kind == "sh" else f"Write-Host '{message}' -ForegroundColor Red\n"
+            return web.Response(status=404 if kind == "sh" else 200, text=text, content_type="text/plain")
+        if not setup.get("token"):
+            text = f"echo '{name} already joined the mesh.'\n" if kind == "sh" else f"Write-Host '{name} already joined the mesh.'\n"
+            return web.Response(text=text, content_type="text/plain")
+        plugin = self.plugin or {}
+        values = {
+            "hub": self.address,
+            "name": name,
+            "token": setup["token"],
+            "status": f"{self.address}{SETUP_PATH.format(code=code)}/status",
+            "source": plugin.get("source") or PLUGIN_SOURCE,
+            "ref": plugin.get("ref") or "",
+        }
+        text = shell_script(**values) if kind == "sh" else powershell_script(**values)
+        return web.Response(text=text, content_type="text/plain", headers={"Cache-Control": "no-store"})
 
     async def setup(self, request):
         """GET /mesh/setup/{code}: the steps a new machine's Hermes follows (plain text)."""
@@ -663,6 +689,7 @@ class Mesh:
         app.router.add_get(MESH_PATH, self.handle)
         app.router.add_get(SETUP_PATH, self.setup)
         app.router.add_get(SETUP_PATH + "/status", self.setup_status)
+        app.router.add_get(SETUP_PATH + "/{kind:sh|ps1}", self.script)
         return app
 
 
