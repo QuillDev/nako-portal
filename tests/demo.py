@@ -39,9 +39,29 @@ class DemoGateway(FakeGateway):
             {"provider": "openrouter", "label": "OpenRouter", "models": ["meta-llama/llama-5-8b-instruct", "google/gemini-3-flash"]},
         ]
 
+    async def resolve(self, request, result):
+        if request["method"] == "secret":
+            self.secret_answer.set_result(result)
+            return
+        await super().resolve(request, result)
+
     async def _turn(self, chat, sid):
         await self.hub.turn_started(chat)
         text = self.sessions[sid]["rows"][-1]["text"]
+        if "secret" in text:
+            # agent-secrets asking through the portal: a card in the chat, then a reply that only names it.
+            self.secret_answer = asyncio.get_running_loop().create_future()
+            note = "the test-mode secret key for the checkout smoke test (dashboard.stripe.com/test/apikeys)"
+            card = {"id": "sec-demo", "method": "secret", "params": {"name": "STRIPE_TEST_KEY", "note": note, "replace": False}, "private": {"secret_request": "sec-demo"}}
+            await self.hub.ask(chat, card)
+            result = await self.secret_answer
+            if result.get("value"):
+                self.vault["STRIPE_TEST_KEY"] = {"value": result["value"], "note": note, "origin": "you"}
+            reply = "got it, the smoke test passed with STRIPE_TEST_KEY." if result.get("value") else "ok, skipping the smoke test."
+            await self.hub.outgoing(chat, "reply", reply)
+            self._row(sid, "assistant", reply)
+            await self.hub.turn_finished(chat, "success")
+            return
         method = "approval" if "delete" in text else "clarify" if "ask" in text else None
         if method:
             params = (
@@ -168,10 +188,25 @@ async def main(port):
         hermes._row(long, "tool", "", name="read_file", context=f"src/importer/stage_{turn}.ts", tool_call_id=f"l{turn}")
         body = " ".join(["The row parser and the batch writer disagree about blank lines, so this pass makes them share one reader."] * (1 + turn % 3))
         hermes._row(long, "assistant", f"**Step {turn}.** {body}")
+    # A password Nako made and shared: the reply names it and the portal shows it behind a button.
+    hermes.add_session(
+        "20261024_083000_5ec7e7",
+        "Rotate the staging db password",
+        messages=[
+            ("user", "rotate the staging database admin password and give me the new one"),
+            ("assistant", "rotated it and restarted the api pods, they're healthy on the new login.\n\nSECRET:STAGING_DB_ADMIN\n\nthe old password stops working at midnight."),
+        ],
+    )
     # Another profile's own chats, shown after switching profiles in Settings.
     hermes.add_session("20261024_100000_p00001", "Draft the onboarding email", messages=[("user", "write a short welcome email for new users")], profile="work")
     hermes.add_session("20261024_093000_p00002", "Notifications", chat="inbox", profile="work")
     hermes.add_session("20261023_100000_p00003", "Compare vector databases", profile="work")
+    # What the agent-secrets plugin would hold.
+    hermes.vault = {
+        "STAGING_DB_ADMIN": {"value": "q7Rz-Lw2v-9KpT-x4Hn", "note": "staging postgres admin", "origin": "agent"},
+        "OPENAI_API_KEY": {"value": "sk-demo-0000000000000000", "note": "personal key for the eval scripts", "origin": "you"},
+        "GITHUB_TOKEN": {"value": "ghp_demo000000000000000000000000", "note": "repo access for release.sh", "origin": "you"},
+    }
     data = Path(tempfile.mkdtemp())
     store = Store(data / "portal.db")
     hub = Hub(Backend(hermes))

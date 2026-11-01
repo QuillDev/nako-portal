@@ -51,11 +51,15 @@ BACKEND_SYNC = (
     "models",
     "model",
     "set_model",
+    "secrets",
+    "secret",
+    "set_secret",
+    "remove_secret",
 )
 # These are awaited.
 BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve")
 # What the gateway tells the hub.
-HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed")
+HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed")
 
 
 def _error(frame):

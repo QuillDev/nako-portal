@@ -2,6 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
+import { reloadSecrets } from "@/lib/secrets"
 import { rememberTitles } from "@/lib/session-refs"
 import type { Command, CommandNote, Frame, HistoryMessage, Live, Me, OpenSession, SessionRow } from "@/lib/types"
 
@@ -191,6 +192,9 @@ export function usePortal() {
           return
         case "machines.changed":
           setMachinesSeen(n => n + 1)
+          return
+        case "secrets.changed":
+          void reloadSecrets()
           return
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.

@@ -14,6 +14,7 @@ import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
+import { SecretsSettings } from "./secrets"
 import { type ModelChoice, ModelPicker, SignOffSettings } from "./sign-off-settings"
 
 const THEMES: Theme[] = ["system", "light", "dark"]
@@ -238,6 +239,7 @@ export function Settings({ portal }: { portal: Portal }) {
             </Row>
           )}
         </Section>
+        <SecretsSettings onError={setError} Section={Section} />
         <Section title="Passkeys">
           {passkeys.map(k => (
             <Row
