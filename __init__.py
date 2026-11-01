@@ -635,37 +635,35 @@ class HermesBackend:
         with self._profile_scope():
             return _model_providers()
 
+    def _model_client(self, profile=None):
+        api = sys.modules.get("model_controls")
+        if api is None:
+            raise ValueError("Install and enable the model-controls plugin")
+        profile = profile or self.profile
+        return api.Client(home=self.home_of(profile), runner=self.adapter.gateway_runner,
+            session_chat=self.chat_of, source=lambda chat: _source(chat, profile),
+            active=getattr(self.adapter, "_active_sessions", {}))
+
     def model(self):
-        from hermes_cli.config import load_config
+        if sys.modules.get("model_controls") is None:
+            return None
+        return self._model_client().model()
 
-        with self._profile_scope():
-            chosen = load_config().get("model") or {}
-        if not isinstance(chosen, dict):
-            return {"provider": "", "model": str(chosen)}
-        return {"provider": str(chosen.get("provider") or ""), "model": str(chosen.get("default") or chosen.get("model") or "")}
+    def set_model_options(self, body):
+        return self._model_client().set_model_options(body)
 
-    def set_model(self, provider, model):
-        """Switch the shown profile's model the way `/model <model> --provider <p> --global` does:
-        Hermes validates the pick and rewrites the endpoint keys that go with it."""
-        from hermes_cli.config import get_compatible_custom_providers, load_config
-        from hermes_cli.model_switch import persist_model_selection, switch_model
+    def restore_model_options(self, source):
+        api = sys.modules.get("model_controls")
+        if api is not None:
+            self._model_client(source.profile).restore_model_options(source)
 
-        with self._profile_scope():
-            config = load_config()
-            current = config.get("model") if isinstance(config.get("model"), dict) else {}
-            result = switch_model(
-                raw_input=model,
-                explicit_provider=provider,
-                is_global=True,
-                current_provider=str(current.get("provider") or ""),
-                current_model=str(current.get("default") or ""),
-                current_base_url=str(current.get("base_url") or ""),
-                user_providers=config.get("providers") if isinstance(config.get("providers"), dict) else {},
-                custom_providers=get_compatible_custom_providers(config),
-            )
-            if not result.success:
-                raise ValueError(result.error_message or "That model can't be used")
-            persist_model_selection(result)
+    def session_model(self, session):
+        if sys.modules.get("model_controls") is None:
+            return None
+        return self._model_client().session_model(session)
+
+    async def set_session_model(self, session, body):
+        return await self._model_client().set_session_model(session, body)
 
     def sign_off_model(self):
         from hermes_cli.config import load_config
@@ -782,14 +780,8 @@ def _fallback_toolsets(home=None):
 
 def _model_providers():
     """Models Hermes can run on with the credentials in scope, grouped by provider."""
-    from hermes_cli.inventory import build_models_payload, load_picker_context
-
-    payload = build_models_payload(load_picker_context(), non_blocking_catalogs=True)
-    return [
-        {"provider": str(row["slug"]), "label": str(row.get("name") or row["slug"]), "models": [str(m) for m in row.get("models") or []]}
-        for row in payload.get("providers", [])
-        if row.get("slug")
-    ]
+    api = sys.modules.get("model_controls")
+    return api.providers() if api is not None else []
 
 
 async def _forward_inbox(store, adapter):
@@ -1071,6 +1063,8 @@ def _adapter(config):
             return {"name": "Nako", "type": "dm"}
 
         async def on_processing_start(self, event):
+            if self.backend is not None:
+                await asyncio.to_thread(self.backend.restore_model_options, event.source)
             await self._hub("turn_started", event.source.chat_id)
 
         async def on_processing_complete(self, event, outcome):

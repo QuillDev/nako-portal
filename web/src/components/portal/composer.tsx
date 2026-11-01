@@ -16,6 +16,7 @@ import { InputGroupAddon } from "@/components/ui/input-group"
 import type { Portal } from "@/hooks/use-portal"
 import { burstHearts, saysThanks } from "@/lib/hearts"
 import { isCommand, SlashMenu, useSlashMenu } from "./slash-menu"
+import { SessionModel } from "./model-picker"
 
 const MAX_FILE = 25 * 1024 * 1024
 
@@ -96,6 +97,7 @@ const TALL = {
 // every function keeps its identity, so a streaming reply doesn't redraw the composer.
 type ComposerProps = Pick<Portal, "send" | "command" | "stop" | "setError" | "commands"> & {
   draftKey: string
+  session?: string
   placeholder?: string
   tall?: boolean
   running: boolean
@@ -112,11 +114,12 @@ export const Composer = memo(function Composer(props: ComposerProps) {
 
 const NO_COMMANDS: ComposerProps["commands"] = []
 
-function ComposerBody({ draftKey, placeholder, tall, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
+function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
   const [sending, setSending] = useState(false)
   const box = useRef<HTMLDivElement>(null)
   const { textInput } = usePromptInputController()
   const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
+  const expanded = tall
 
   return (
     <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" ref={box}>
@@ -126,7 +129,7 @@ function ComposerBody({ draftKey, placeholder, tall, running, inChat, commands, 
         {file => <PromptInputAttachment data={file} />}
       </PromptInputAttachments>
       <PromptInput
-        className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${tall ? TALL.group : ""}`}
+        className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${expanded ? TALL.group : ""}`}
         globalDrop
         maxFileSize={MAX_FILE}
         multiple
@@ -153,11 +156,12 @@ function ComposerBody({ draftKey, placeholder, tall, running, inChat, commands, 
           }
         }}
       >
-        <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${tall ? TALL.start : ""}`}>
+        <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${expanded ? TALL.start : ""}`}>
           <AttachButton />
+          {session && expanded && <SessionModel key={session} session={session} running={running} />}
         </InputGroupAddon>
         <PromptInputTextarea
-          className={tall ? TALL.text : "min-h-0 px-1 py-3"}
+          className={expanded ? TALL.text : "min-h-0 px-1 py-3"}
           enterKeyHint="send"
           onKeyDownCapture={slash.onKeyDownCapture}
           onChange={e => {
@@ -166,7 +170,8 @@ function ComposerBody({ draftKey, placeholder, tall, running, inChat, commands, 
           placeholder={running ? "Steer or queue a message" : placeholder || "Message"}
           rows={1}
         />
-        <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${tall ? TALL.end : ""}`}>
+        <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${expanded ? TALL.end : ""}`}>
+          {session && !expanded && <SessionModel key={session} session={session} running={running} />}
           {running && (
             <PromptInputButton
               aria-label="Stop"

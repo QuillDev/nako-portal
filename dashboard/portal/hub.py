@@ -409,6 +409,24 @@ class Hub:
         rows = sorted(rows, key=lambda p: (not p["running"], -p["started_at"]))
         return [{**p, "label": process_label(p["command"])} for p in rows]
 
+    async def session_model(self, session):
+        if not await asyncio.to_thread(self.backend.chat_of, session):
+            raise ValueError("No chat with that id")
+        current, providers = await asyncio.gather(
+            asyncio.to_thread(self.backend.session_model, session), asyncio.to_thread(self.backend.models))
+        if current is None:
+            raise ValueError("model-controls is not enabled")
+        return {**current, "providers": providers}
+
+    async def set_session_model(self, session, body):
+        if session in self.running:
+            raise ValueError("Wait for this turn to finish")
+        result = await self.backend.set_session_model(session, body)
+        if result.get("confirmation"):
+            return result
+        await self.broadcast({"kind": "model.changed", "session": session})
+        return await self.session_model(session)
+
     async def process_log(self, session, proc_id, lines=200):
         return await asyncio.to_thread(self.backend.process_log, session, proc_id, lines)
 

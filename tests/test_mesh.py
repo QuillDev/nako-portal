@@ -183,6 +183,18 @@ async def test_the_machines_chats_show_in_the_hubs_sidebar_under_its_name(mesh):
     assert [r for r in rows if r.get("machine") and r["title"] == "Notifications"] == []
     opened = await (await mesh.http.get(mesh.url(f"/api/sessions/mesh.{MACHINE}.20261101_100001_cccccc"))).json()
     assert opened["title"] == "Fix the printer"
+    path = f"/api/sessions/mesh.{MACHINE}.20261101_100001_cccccc/model"
+    selected = await mesh.post(path, {"provider": "big", "model": "large", "effort": "high"})
+    assert selected.status == 200
+    assert (await selected.json())["model"] == "large"
+    assert mesh.machine.hermes.session_model("20261101_100001_cccccc")["effort"] == "high"
+    assert mesh.machine.hermes.model()["model"] == "tiny"
+    assert mesh.hermes.model()["model"] == "tiny"
+    mesh.machine.hub.running.add("20261101_100001_cccccc")
+    refused = await mesh.post(path, {"effort": "low"})
+    assert refused.status == 400
+    assert "finish" in (await refused.json())["error"]
+    assert mesh.machine.hermes.session_model("20261101_100001_cccccc")["effort"] == "high"
 
 
 async def test_a_machines_chat_streams_live_to_the_hubs_app(mesh):

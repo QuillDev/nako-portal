@@ -60,6 +60,8 @@ NODE_CALLS = (
     "commands",
     "processes",
     "process_log",
+    "session_model",
+    "set_session_model",
     "command",
 )
 # How long a new machine's one-line setup works.
