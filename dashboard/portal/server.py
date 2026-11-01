@@ -1051,8 +1051,9 @@ class Portal:
             # Where every chat stands now; a socket that joins mid-turn would otherwise wait for the next change.
             for frame in self.hub.status_frames() + (self.mesh.status_frames() if self.mesh is not None else []):
                 await ws.send_json(frame)
-            # That's all of them: anything a reconnecting app still holds beyond these is gone.
+            # That's all of them: apps from before the sticker frame drop anything else they hold.
             await ws.send_json({"kind": "status.synced"})
+            await ws.send_json(self.hub.sticker())
             async for message in ws:
                 if message.type != WSMsgType.TEXT:
                     continue

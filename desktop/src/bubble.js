@@ -3,7 +3,7 @@
 // you're doing. Like the Android app's, she shows only while the app's own window is out of sight.
 import { BrowserWindow, Menu, screen } from "electron"
 
-import { STICKER, Statuses, inside, nearest, panelSpot, rest } from "./floating.js"
+import { STICKER, inside, nearest, panelSpot, rest, sticker } from "./floating.js"
 import { toSystemBrowser } from "./links.js"
 
 const MAC = process.platform === "darwin"
@@ -30,7 +30,6 @@ export class FloatingNako {
     this.options = options
     this.sticker = null
     this.panel = null
-    this.statuses = new Statuses()
     this.mood = "idle"
     this.counts = { working: 0, finished: 0 }
     this.dot = false
@@ -79,16 +78,11 @@ export class FloatingNako {
     this.#send()
   }
 
-  /** The alert socket (re)opened: its opening statuses replace the ones held from before. */
-  reconnected() {
-    this.statuses.reconnected()
-  }
-
-  /** Every socket frame; status frames change what she shows. */
+  /** Every socket frame; the portal's sticker frames change what she shows. */
   frame(text) {
-    if (!this.statuses.apply(text)) return
-    const mood = this.statuses.mood
-    const counts = this.statuses.counts
+    const shown = sticker(text)
+    if (!shown) return
+    const { mood, ...counts } = shown
     if (mood === this.mood && counts.working === this.counts.working && counts.finished === this.counts.finished) return
     if (mood === "needs-you" && this.mood !== mood) this.dot = true
     this.mood = mood

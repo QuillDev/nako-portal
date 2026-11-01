@@ -54,54 +54,24 @@ export function panelSpot(x, y, area, size = STICKER, panel = PANEL, gap = GAP) 
   }
 }
 
-/** Turn statuses per chat, from the portal's `{"kind":"status"}` frames: her mood and the counts under her. */
-export class Statuses {
-  #byChat = new Map()
-  #unread = new Set()
-  // Chats the new socket's opening statuses have named, until its `status.synced`; null otherwise.
-  #named = null
+const MOODS = new Set(["idle", "working", "needs-you"])
+const count = value => (Number.isInteger(value) && value >= 0 ? value : null)
 
-  /** A new socket opened: what it reports up to `status.synced` replaces what's held now. */
-  reconnected() {
-    this.#named = new Set()
+/**
+ * What she shows, from the portal's `{"kind":"sticker"}` frame: her mood and the counts under her
+ * (chats working, and chats finished that you haven't opened since). The portal does the counting;
+ * null for any other frame.
+ */
+export function sticker(frame) {
+  let value
+  try {
+    value = JSON.parse(frame)
+  } catch {
+    return null
   }
-
-  /** Applies a socket frame; true when it was a status frame. */
-  apply(frame) {
-    let value
-    try {
-      value = JSON.parse(frame)
-    } catch {
-      return false
-    }
-    if (value?.kind === "status.synced") {
-      const named = this.#named ?? new Set(this.#byChat.keys())
-      this.#named = null
-      for (const chat of [...this.#byChat.keys()]) if (!named.has(chat)) this.#byChat.delete(chat)
-      for (const chat of [...this.#unread]) if (!named.has(chat)) this.#unread.delete(chat)
-      return true
-    }
-    if (value?.kind !== "status" || typeof value.session !== "string") return false
-    if (typeof value.status !== "string" && value.status !== null) return false
-    this.#named?.add(value.session)
-    if (value.status === null) this.#byChat.delete(value.session)
-    else this.#byChat.set(value.session, value.status)
-    if (value.unread === true) this.#unread.add(value.session)
-    else this.#unread.delete(value.session)
-    return true
-  }
-
-  /** How many chats are running a turn, and how many finished one you haven't opened since. */
-  get counts() {
-    const all = [...this.#byChat.values()]
-    return { working: all.filter(status => status === "working").length, finished: this.#unread.size }
-  }
-
-  /** "needs-you" when any chat waits on you, "working" while any turn runs, else "idle". */
-  get mood() {
-    const all = [...this.#byChat.values()]
-    if (all.includes("needs you")) return "needs-you"
-    if (all.includes("working")) return "working"
-    return "idle"
-  }
+  if (value?.kind !== "sticker" || !MOODS.has(value.mood)) return null
+  const working = count(value.working)
+  const finished = count(value.finished)
+  if (working === null || finished === null) return null
+  return { mood: value.mood, working, finished }
 }

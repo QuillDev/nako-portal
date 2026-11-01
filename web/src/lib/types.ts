@@ -114,6 +114,7 @@ export type Passkey = { id: string; label: string; current?: boolean }
 export type Frame =
   | { kind: "hub.connected" | "hub.disconnected" | "sessions.changed" | "status.synced" }
   | { kind: "status"; session: string; status: Status | null }
+  | { kind: "sticker"; mood: "idle" | "working" | "needs-you"; working: number; finished: number }
   | { kind: "request"; session: string; request: PortalRequest }
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }

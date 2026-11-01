@@ -701,11 +701,14 @@ async def test_a_machines_running_task_stops_counting_once_its_gateway_drops(mes
     await until(lambda: [r["working"] for r in mesh.mesh.machines()] == [1])
     async with mesh.http.ws_connect(mesh.url("/ws"), headers={"Origin": ORIGIN}) as sticker:
         working = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("status") == "working")
+        # The hub's sticker counts the machine's task with its own chats.
+        await next_message(sticker, lambda m: m.get("kind") == "sticker" and m["working"] == 1)
         await mesh.machine.gateway.stop(mesh.machine.hub)
         await until(lambda: mesh.mesh.info[MACHINE]["gateway"] is False)
         # The hub's apps hear the task is gone, so a sticker stops counting it.
         cleared = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("session") == working["session"])
         assert cleared["status"] is None
+        await next_message(sticker, lambda m: m.get("kind") == "sticker" and (m["mood"], m["working"]) == ("idle", 0))
     laptop = next(r for r in await _machines(mesh) if r["name"] == MACHINE)
     assert (laptop["gateway"], laptop["working"]) == (False, 0)
 

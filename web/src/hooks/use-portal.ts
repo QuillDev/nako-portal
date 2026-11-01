@@ -192,6 +192,7 @@ export function usePortal() {
           return
         case "alert":
         case "status.synced":
+        case "sticker":
           return
         case "machines.changed":
           setMachinesSeen(n => n + 1)

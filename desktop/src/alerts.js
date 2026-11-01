@@ -29,10 +29,9 @@ export const backoff = attempt => Math.min(300, 2 << Math.min(attempt, 8))
 /**
  * Keeps a socket to the portal open until `stop()`. Without a cookie, or once the portal refuses it
  * (signed out), it waits for `wake()`, which the app calls whenever a portal page finishes loading.
- * `onFrame` sees every frame (the floating Nako reads turn statuses from them); `onOpen` runs as each
- * socket opens, before its first frame.
+ * `onFrame` sees every frame (the floating Nako reads what to show from them).
  */
-export function listen({ origin, cookie, onAlert, onFrame = () => {}, onOpen = () => {}, log = () => {} }) {
+export function listen({ origin, cookie, onAlert, onFrame = () => {}, log = () => {} }) {
   let stopped = false
   let attempt = 0
   let socket = null
@@ -57,7 +56,6 @@ export function listen({ origin, cookie, onAlert, onFrame = () => {}, onOpen = (
         socket.on("open", () => {
           log("listening for alerts")
           attempt = 0
-          onOpen()
         })
         socket.on("message", data => {
           onFrame(String(data))

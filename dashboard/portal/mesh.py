@@ -396,6 +396,7 @@ class Mesh:
         self.info = {}
         self.status = {}
         self.requests = {}
+        hub.elsewhere = lambda: [(entry.get("status"), bool(entry.get("unread"))) for entry in self.status.values()]
 
     # Where machines get the plugin
 

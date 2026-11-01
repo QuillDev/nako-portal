@@ -121,6 +121,10 @@ class Hub:
         # Callables that see every frame this hub sends its app, chat events included; a machine
         # in a mesh passes them up to its hub this way (`mesh.Node`).
         self.taps = set()
+        # (status, unread) for chats on other machines, which a mesh hub reports too (`mesh.Mesh`).
+        self.elsewhere = lambda: ()
+        # The last sticker frame sent, so one goes out only when what she shows changes.
+        self.shown_sticker = None
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -187,6 +191,20 @@ class Hub:
     async def broadcast(self, message):
         self._tap(message)
         await self._send(self.clients, message)
+        if message.get("kind") == "status":
+            sticker = self.sticker()
+            if sticker != self.shown_sticker:
+                self.shown_sticker = sticker
+                await self.broadcast(sticker)
+
+    def sticker(self):
+        """What the floating Nako shows on every app: her mood and the counts under her (chats
+        working, and chats that finished a turn you haven't opened since)."""
+        chats = [(status, session in self.unread) for session, status in self.status.items()]
+        chats += list(self.elsewhere())
+        statuses = [status for status, _ in chats]
+        mood = "needs-you" if NEEDS_YOU in statuses else "working" if WORKING in statuses else "idle"
+        return {"kind": "sticker", "mood": mood, "working": statuses.count(WORKING), "finished": sum(1 for _, unread in chats if unread)}
 
     async def _publish(self, session, message):
         frame = {"session": session, **message}
