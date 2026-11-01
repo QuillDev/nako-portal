@@ -230,7 +230,8 @@ class Hub:
             asyncio.get_running_loop().create_task(self.broadcast(self._status_frame(session)))
 
     async def _set_status(self, session, status):
-        unread = status in (DONE, FAILED) and not self.seen(session)
+        # An archived chat is out of sight on purpose, so a turn ending there isn't waiting on you.
+        unread = status in (DONE, FAILED) and not self.seen(session) and not await asyncio.to_thread(self.backend.is_archived, session)
         if self.status.get(session) == status and (session in self.unread) == unread:
             return
         self.status[session] = status
@@ -419,6 +420,11 @@ class Hub:
         if chat == REVIEWS:
             raise ValueError("The Reviews chat can't be archived")
         await asyncio.to_thread(self.backend.set_archived, session, archived)
+        if archived and session in self.unread:
+            # Archiving a finished chat you never opened puts it away: it stops counting as unread.
+            self.unread.discard(session)
+            if session in self.status:
+                await self.broadcast(self._status_frame(session))
         await self.broadcast({"kind": "sessions.changed"})
         return {"ok": True}
 
