@@ -46,7 +46,7 @@ say() {{ printf '\\n\\033[1m==> %s\\033[0m\\n' "$*"; }}
 fail() {{ printf '\\n\\033[31mx %s\\033[0m\\n' "$*" >&2; exit 1; }}
 
 say "Checking that this machine can reach the hub at $HUB"
-curl -fsS --max-time 10 "$STATUS" >/dev/null 2>&1 || fail "Can't reach $HUB. Is Tailscale (or your network to the hub) up on this machine?"
+curl -fsS --max-time 10 "$STATUS" >/dev/null 2>&1 || fail "Can't reach $HUB from this machine. Is it online, and is that address right?"
 
 export PATH="$HOME/.local/bin:$PATH"
 if ! command -v hermes >/dev/null 2>&1; then
@@ -100,7 +100,7 @@ function Fail($m) {{ Write-Host "`nx $m" -ForegroundColor Red; throw $m }}
 function Refresh-Path {{ if ($env:OS -ne 'Windows_NT') {{ return }}; $env:Path = [Environment]::GetEnvironmentVariable('Path','User') + ';' + [Environment]::GetEnvironmentVariable('Path','Machine') }}
 
 Say "Checking that this machine can reach the hub at $Hub"
-try {{ Invoke-RestMethod -Uri $Status -TimeoutSec 10 | Out-Null }} catch {{ Fail "Can't reach $Hub. Is Tailscale (or your network to the hub) up on this machine?" }}
+try {{ Invoke-RestMethod -Uri $Status -TimeoutSec 10 | Out-Null }} catch {{ Fail "Can't reach $Hub from this machine. Is it online, and is that address right?" }}
 
 Refresh-Path
 if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {{

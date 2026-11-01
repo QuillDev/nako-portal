@@ -195,7 +195,7 @@ async def _laptop(portal, hub, data, port):
 
     from portal.mesh import Mesh, Node, add_node
 
-    portal.mesh = Mesh(data, hub, name="hub", address="http://100.64.0.1:8799", store=portal.store)
+    portal.mesh = Mesh(data, hub, name="hub", address="https://portal.example.com", store=portal.store)
     add_node(data, "homelab")
     portal.store.set_meta("mesh:seen:homelab", time.time() - 3 * 3600)
     runner = web.AppRunner(portal.mesh.app())
