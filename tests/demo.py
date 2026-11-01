@@ -189,28 +189,45 @@ async def main(port):
 
 
 async def _laptop(portal, hub, data, port):
-    """Another machine in this portal's mesh, with chats of its own, dialing in like a real one."""
+    """Other machines in this portal's mesh, with chats of their own, dialing in like real ones:
+    a laptop, a desktop busy on a task, and a homelab box that has been away a while."""
     import aiohttp
 
     from portal.mesh import Mesh, Node, add_node
 
-    portal.mesh = Mesh(data, hub, address="http://100.64.0.1:8799", store=portal.store)
-    # A second machine that has been away a while.
-    add_node(data, "desktop")
-    portal.store.set_meta("mesh:seen:desktop", time.time() - 3 * 3600)
+    portal.mesh = Mesh(data, hub, name="hub", address="http://100.64.0.1:8799", store=portal.store)
+    add_node(data, "homelab")
+    portal.store.set_meta("mesh:seen:homelab", time.time() - 3 * 3600)
     runner = web.AppRunner(portal.mesh.app())
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()
-    laptop = DemoGateway()
-    laptop.pause = 1
-    laptop.reply = "Printer queue is clear and the driver is updated."
-    laptop.add_session("20261024_095500_m00001", "Fix the printer driver", messages=[("user", "the printer stopped working"), ("assistant", "on it")])
-    laptop.add_session("20261024_083000_m00002", "Clean up Downloads", messages=[("user", "sort my downloads folder")])
-    laptop_hub = Hub(Backend(laptop))
-    laptop.hub = laptop_hub
     http = aiohttp.ClientSession()
-    node = Node(f"http://127.0.0.1:{port}/mesh", "laptop", add_node(data, "laptop"), laptop_hub)
-    asyncio.get_running_loop().create_task(node.run(http))
+
+    async def machine(name, os_name, chats, pause=1):
+        gateway = DemoGateway()
+        gateway.pause = pause
+        gateway.reply = "Printer queue is clear and the driver is updated."
+        for sid, title, messages in chats:
+            gateway.add_session(sid, title, messages=messages)
+        machine_hub = Hub(Backend(gateway))
+        gateway.hub = machine_hub
+        node = Node(f"http://127.0.0.1:{port}/mesh", name, add_node(data, name), machine_hub)
+        hello = node._hello
+        node._hello = lambda: {**hello(), "os": os_name}
+        asyncio.get_running_loop().create_task(node.run(http))
+        return machine_hub
+
+    await machine(
+        "laptop",
+        "Darwin 25.1.0",
+        [
+            ("20261024_095500_m00001", "Fix the printer driver", [("user", "the printer stopped working"), ("assistant", "on it")]),
+            ("20261024_083000_m00002", "Clean up Downloads", [("user", "sort my downloads folder")]),
+        ],
+    )
+    desktop = await machine("desktop", "Windows 11", [("20261024_100500_w00001", "Render the trailer", [("user", "render the trailer at 4k")])], pause=3600)
+    await asyncio.sleep(1)
+    await desktop.send("20261024_100500_w00001", "use the new color grade")
 
 
 asyncio.run(main(int(sys.argv[1])))

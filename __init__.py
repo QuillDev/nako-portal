@@ -147,6 +147,7 @@ def _mesh(entry, home):
         if isinstance(exclude, str):
             exclude = [part.strip() for part in exclude.split(",")]
         return {
+            "name": str(entry.get("mesh_name") or _machine_name()),
             "listen": listen,
             "skills_dir": str(home / "skills"),
             "skills_exclude": sorted({str(x) for x in exclude if str(x).strip()}),

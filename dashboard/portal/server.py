@@ -107,6 +107,8 @@ class Portal:
         self.shown = {}
         # Other machines' Hermes when this portal is a mesh hub (`mesh.Mesh`), else None.
         self.mesh = None
+        # This portal's link to its hub when it's a machine in someone's mesh (`mesh.Node`), else None.
+        self.node = None
 
     async def gateway_changed(self, connected):
         """A gateway connected (show the saved profile, then say so) or went away. Turns and
@@ -251,17 +253,21 @@ class Portal:
             return web.json_response(await hub.interrupt(session))
 
         async def machines(request):
+            if self.node is not None:
+                return web.json_response(await self.node.call("machines"))
             return web.json_response(self.mesh.machines() if self.mesh is not None else [])
 
         async def start_on(request):
             """A new chat on another machine, running a brief from a thread here."""
-            if self.mesh is None:
-                raise ValueError("This portal isn't a mesh hub")
             body, text = await brief(request)
-            hub = self.mesh.machine_hub(request.match_info["machine"])
-            cwd = body.get("cwd") or None
-            started = await hub.create(await self._signed(text, body.get("from")), [], body.get("title") or None, cwd, body.get("yolo", True) is not False)
-            return web.json_response(started)
+            machine = request.match_info["machine"]
+            signed = await self._signed(text, body.get("from"))
+            cwd, title, yolo = body.get("cwd") or None, body.get("title") or None, body.get("yolo", True) is not False
+            if self.node is not None:
+                return web.json_response(await self.node.call("start", machine, signed, title, cwd, yolo))
+            if self.mesh is None:
+                raise ValueError("This machine isn't in a mesh")
+            return web.json_response(await self.mesh.machine_hub(machine).create(signed, [], title, cwd, yolo))
 
         app = web.Application(client_max_size=MAX_BODY, middlewares=[guard])
         app.router.add_post("/sessions", start)
@@ -286,6 +292,10 @@ class Portal:
             title = await asyncio.to_thread(self.hub.backend.title_of, str(sender))
         except Exception:
             title = None
+        # Named the way the other machine reaches it, so its agent can answer that thread.
+        here = self.mesh_name
+        if here:
+            sender, title = f"mesh.{here}.{sender}", f"{title or 'untitled'} on {here}"
         return from_thread_line(str(sender), title) + text
 
     @web.middleware
@@ -361,7 +371,13 @@ class Portal:
         """The hub holding a chat (this one, or a mesh machine's) and the chat's id there."""
         if self.mesh is not None and remote(session):
             return self.mesh.target(session)
+        if self.node is not None and remote(session):
+            return self.node.remote(), session
         return await self._hub(), session
+
+    @property
+    def mesh_name(self):
+        return self.mesh.name if self.mesh is not None else self.node.name if self.node is not None else None
 
     # Sign-in
 
@@ -714,7 +730,7 @@ class Portal:
         self._require(request)
         if self.mesh is None:
             return web.json_response({"hub": False, "machines": []})
-        return web.json_response({"hub": True, "address": self.mesh.address, "machines": self.mesh.machines()})
+        return web.json_response({"hub": True, "name": self.mesh.name, "address": self.mesh.address, "machines": self.mesh.machines()})
 
     async def add_machine(self, request):
         self._require(request)

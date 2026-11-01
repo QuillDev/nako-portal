@@ -8,7 +8,7 @@ import type { Command, CommandNote, Frame, HistoryMessage, Live, Me, OpenSession
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "mesh" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -17,6 +17,7 @@ function parseRoute(hash: string): Route {
   if (chat) return { view: "chat", session: chat[1] }
   if (hash === "#/new") return { view: "new" }
   if (hash === "#/settings") return { view: "settings" }
+  if (hash === "#/mesh") return { view: "mesh" }
   if (hash.startsWith("#/desktop?")) return { view: "desktop", query: hash.slice("#/desktop?".length) }
   return { view: "list" }
 }

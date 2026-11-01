@@ -43,6 +43,8 @@ NODES_FILE = "mesh-nodes.json"
 # A node's chat list is skipped (not waited on) past this, so one slow machine can't stall the sidebar.
 LIST_TIMEOUT = 5
 # What the hub may call on a node: its hub's own methods, by name.
+# What a machine may ask the hub to do on another machine (or on the hub) for its agent.
+RELAYED = ("open", "send", "interrupt")
 NODE_CALLS = (
     "sessions",
     "archived",
@@ -330,13 +332,31 @@ class RemoteHub:
         return call
 
 
+class LocalHub:
+    """The hub's own hub, as another machine sees it: chat ids carry the hub's name."""
+
+    def __init__(self, hub, name):
+        self.hub = hub
+        self.name = name
+
+    def __getattr__(self, name):
+        method = getattr(self.hub, name)
+
+        async def call(*args):
+            return _rewrite(await method(*args), self.name)
+
+        return call
+
+
 class Mesh:
     """The hub's machines: who is connected, what they're doing, and calls into them.
 
     `hub` is this server's own hub; a node's live frames reach the app through it."""
 
-    def __init__(self, data, hub, *, address=None, plugin=None, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
+    def __init__(self, data, hub, *, name="hub", address=None, plugin=None, skills_dir=None, skills_exclude=(), store=None, clock=time.time):
         self.data = Path(data)
+        # The hub's own name in the mesh: other machines reach its chats as `mesh.<name>.<id>`.
+        self.name = name
         # Where machines dial in (`mesh_listen`), for the join command a new machine runs.
         self.address = address
         # {source, ref}: the plugin a new machine installs, so it runs the hub's own version.
@@ -355,6 +375,8 @@ class Mesh:
 
     def add(self, name):
         """Let a machine join: its token, and the command that joins it, shown once."""
+        if name == self.name:
+            raise ValueError(f"{name} is this hub's own name")
         token = add_node(self.data, name)
         command = f"hermes mesh join {self.address or '<this hub>'} {token} --name {name}"
         code = start_setup(self.data, name, token, self.clock())
@@ -418,11 +440,15 @@ class Mesh:
         if found is None:
             return self.hub, session
         machine, inner = found
+        if machine == self.name:
+            return self.hub, inner
         if machine not in self.peers:
             raise ConnectionError(f"{machine} is offline")
         return RemoteHub(self, machine), inner
 
     def machine_hub(self, machine):
+        if machine == self.name:
+            return LocalHub(self.hub, self.name)
         if machine not in self.peers:
             if machine in load_nodes(self.data):
                 raise ConnectionError(f"{machine} is offline")
@@ -528,7 +554,42 @@ class Mesh:
                 return {}
             return await asyncio.to_thread(read_skill_files, self.skills_dir, [str(p) for p in paths or []], self.skills_exclude)
 
-        return {"hello": hello, "frame": frame, "skills_manifest": skills_manifest, "skill_files": skill_files}
+        async def machines():
+            """The mesh as this machine's agent sees it: the hub and every other machine."""
+            me = {"name": self.name, "hub": True, "online": True, "gateway": bool(self.hub.connected), "os": None, "hostname": socket.gethostname(), "last_seen": self.clock(), "working": sum(1 for v in self.hub.status.values() if v == "working")}  # noqa: E501
+            return [me] + [row for row in self.machines() if row["name"] != machine]
+
+        async def start(target, text, title=None, cwd=None, yolo=True):
+            """A new chat on another machine (or the hub), for this machine's agent."""
+            if target == machine:
+                raise ValueError("That's this machine; do it here")
+            return await self.machine_hub(target).create(str(text), [], title, cwd, bool(yolo))
+
+        async def relay(session, method, args):
+            """A call into a chat on another machine (or the hub), for this machine's agent."""
+            if method not in RELAYED:
+                raise ValueError(f"can't relay {method}")
+            found = parse(session)
+            if found is None:
+                raise ValueError("give a mesh chat id (mesh.<machine>.<id>)")
+            if found[0] == machine:
+                raise ValueError("That chat is on this machine")
+            hub, inner = self.target(session)
+            args = list(args or [])
+            if method == "send":
+                args = [args[0] if args else "", []]
+            result = await getattr(hub, method)(inner, *args)
+            return _rewrite(result, self.name) if hub is self.hub else result
+
+        return {
+            "hello": hello,
+            "frame": frame,
+            "skills_manifest": skills_manifest,
+            "skill_files": skill_files,
+            "machines": machines,
+            "start": start,
+            "relay": relay,
+        }
 
     async def handle(self, request):
         """GET /mesh: a node dialing in with `?name=` and its bearer token."""
@@ -600,6 +661,28 @@ class Node:
             return
         task = asyncio.get_running_loop().create_task(peer.call("frame", frame))
         task.add_done_callback(_quiet)
+
+    async def call(self, method, *args):
+        peer = self.peer
+        if peer is None:
+            raise ConnectionError("not connected to the mesh hub")
+        return await peer.call(method, *args)
+
+    def remote(self):
+        """Chats on other machines, through the hub, called like a local hub."""
+        node = self
+
+        class Relay:
+            def __getattr__(self, name):
+                if name not in RELAYED:
+                    raise AttributeError(name)
+
+                async def call(session, *args):
+                    return await node.call("relay", session, name, list(args[:1]) if name == "send" else list(args))
+
+                return call
+
+        return Relay()
 
     def _methods(self):
         methods = {name: getattr(self.hub, name) for name in NODE_CALLS}

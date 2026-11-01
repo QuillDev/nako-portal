@@ -52,7 +52,7 @@ export type Machine = {
   working: number
 }
 
-export type Mesh = { hub: boolean; address?: string | null; machines: Machine[] }
+export type Mesh = { hub: boolean; name?: string; address?: string | null; machines: Machine[] }
 
 export type Sender = { session: string; title: string }
 

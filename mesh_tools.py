@@ -146,7 +146,7 @@ TOOLS = [
     (
         "mesh_machines",
         machines,
-        "List the user's other machines running Hermes (laptops, desktops), whether each is online now, "
+        "List the user's other machines running Hermes (laptops, desktops, the hub), whether each is online now, "
         "its OS, and how many tasks it is running. " + ONLY_WHEN_NEEDED,
         {},
         [],
@@ -156,7 +156,9 @@ TOOLS = [
         run,
         "Start a task on one of the user's other machines. That machine's own agent does it with its local tools "
         "(terminal, files, apps, computer use) in a new chat the user can watch in the portal. Write the prompt as a "
-        "self-contained brief. Returns the task's session id (mesh.<machine>.<id>); follow it with mesh_read. " + ONLY_WHEN_NEEDED,
+        "self-contained brief. Returns the task's session id (mesh.<machine>.<id>); follow it with mesh_read. "
+        "A message that opens with a from-thread line naming a mesh.<machine>.<id> session came from that machine's thread; "
+        "answer it with mesh_send to that id when it asks for something back. " + ONLY_WHEN_NEEDED,
         {
             "machine": {"type": "string", "description": "Machine name from mesh_machines, e.g. macbook."},
             "prompt": {"type": "string", "description": "What that machine's agent should do, with all the context it needs."},
@@ -184,13 +186,13 @@ TOOLS = [
 ]
 
 
-def _is_hub():
-    """Only a hub's agent gets these: a machine in someone's mesh doesn't drive the others."""
+def _in_mesh():
+    """Any machine in a mesh gets these, the hub and the rest alike; calls between machines go through the hub."""
     try:
         from hermes_cli.config import load_config
 
         settings = load_config().get("plugins", {}).get("entries", {}).get("nako-portal", {}).get("settings", {}) or {}
-        return bool(str(settings.get("mesh_listen") or "").strip())
+        return any(str(settings.get(key) or "").strip() for key in ("mesh_listen", "mesh_hub"))
     except Exception:
         return False
 
@@ -206,7 +208,7 @@ def register(ctx):
                 "parameters": {"type": "object", "properties": properties, "required": required},
             },
             handler=_wrap(fn),
-            check_fn=_is_hub,
+            check_fn=_in_mesh,
             description=description,
             emoji="🖥️",
         )

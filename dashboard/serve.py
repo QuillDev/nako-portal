@@ -88,12 +88,13 @@ async def main(config_path):
         tasks = []
         if mesh.get("listen"):
             # This portal is the hub: other machines dial in here.
-            portal.mesh = Mesh(data, hub, address=f"http://{mesh['listen']}", plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store)
+            portal.mesh = Mesh(data, hub, name=mesh.get("name") or "hub", address=f"http://{mesh['listen']}", plugin=mesh.get("plugin"), skills_dir=mesh.get("skills_dir"), skills_exclude=mesh.get("skills_exclude") or (), store=store)
             host, _, at = str(mesh["listen"]).rpartition(":")
             sites.append((portal.mesh.app(), host or "127.0.0.1", int(at)))
         elif mesh.get("hub"):
             # This portal is a machine in someone's mesh: dial its hub.
             node = Node(mesh["hub"], mesh["name"], mesh["token"], hub, skills_into=mesh.get("skills_into"))
+            portal.node = node
             tasks.append(loop.create_task(node.run(http)))
         runners = []
         for app, host, at in sites:

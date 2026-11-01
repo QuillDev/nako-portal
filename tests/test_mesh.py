@@ -46,6 +46,7 @@ class Machine:
         await self.gateway.start(self.hub)
         self.node = Node(url, name, token, self.hub, skills_into=skills_into)
         self.node.RETRY = 0.05
+        self.portal.node = self.node
         self.task = asyncio.get_running_loop().create_task(self.node.run(self.http))
 
     async def stop(self):
@@ -145,7 +146,9 @@ async def test_the_hubs_agent_runs_a_task_on_a_machine_and_reads_the_reply(mesh)
     # Tasks from the hub run without approval prompts, and say which thread sent them.
     assert on_machine["chat"] in mesh.machine.hermes.yolo
     first = on_machine["rows"][0]["text"]
-    assert first.startswith('[From another thread, not typed by the user: "Main thread"') and first.endswith("run the build")
+    # Named the way the machine reaches it, so its agent can answer back.
+    assert first.startswith(f'[From another thread, not typed by the user: "Main thread on hub" (session mesh.hub.{sender})]')
+    assert first.endswith("run the build")
 
     async def done():
         state = await (await mesh.http.get(_local(mesh, f"/sessions/{session}"), headers=AUTH)).json()
@@ -235,6 +238,79 @@ async def test_an_unknown_machine_is_a_clear_error(mesh):
     assert "toaster" in (await response.json())["error"]
 
 
+# Machines driving each other (through the hub)
+
+
+@pytest_asyncio.fixture
+async def two(mesh, tmp_path):
+    """The hub with two machines: laptop and desktop."""
+    await _join(mesh)
+    async with aiohttp.ClientSession() as http:
+        desktop = Machine(tmp_path / "desktop", http)
+        token = add_node(mesh.mesh_data, "desktop")
+        await desktop.start(mesh.mesh_url, token, name="desktop")
+        await until(lambda: "desktop" in mesh.mesh.peers and "desktop" in mesh.mesh.info)
+        mesh.desktop = desktop
+        yield mesh
+        await desktop.stop()
+
+
+def _on(machine, path):
+    return str(machine.local.make_url(path))
+
+
+async def test_a_machine_sees_the_hub_and_the_others_but_not_itself(two):
+    rows = await (await two.http.get(_on(two.machine, "/mesh/machines"), headers=AUTH)).json()
+    assert [(r["name"], r["online"], bool(r.get("hub"))) for r in rows] == [("hub", True, True), ("desktop", True, False)]
+
+
+async def test_a_machine_hands_another_a_task_and_reads_the_reply(two):
+    two.desktop.hermes.reply = "desktop did it"
+    sender = two.machine.hermes.add_session("20261101_130000_aaaaaa", "Laptop thread")
+    started = await two.http.post(_on(two.machine, "/mesh/machines/desktop/sessions"), json={"text": "render the video", "from": sender}, headers=AUTH)
+    assert started.status == 200, await started.text()
+    session = (await started.json())["session"]
+    inner = session.removeprefix("mesh.desktop.")
+    first = two.desktop.hermes.sessions[inner]["rows"][0]["text"]
+    assert first.startswith(f'[From another thread, not typed by the user: "Laptop thread on laptop" (session mesh.laptop.{sender})]')
+    await until(lambda: two.desktop.hermes.sessions[inner]["rows"][-1]["role"] == "assistant")
+    state = await (await two.http.get(_on(two.machine, f"/sessions/{session}"), headers=AUTH)).json()
+    assert state["messages"][-1] == {"role": "assistant", "text": "desktop did it"}
+
+
+async def test_the_other_machine_answers_back_into_the_senders_thread(two):
+    sender = two.machine.hermes.add_session("20261101_131000_bbbbbb", "Laptop thread")
+    worker = two.desktop.hermes.add_session("20261101_131001_cccccc", "Desktop thread")
+    sent = await two.http.post(
+        _on(two.desktop, f"/sessions/mesh.laptop.{sender}/messages"), json={"text": "the render is at D:/out.mp4", "from": worker}, headers=AUTH
+    )
+    assert sent.status == 200, await sent.text()
+    got = [r["text"] for r in two.machine.hermes.sessions[sender]["rows"] if r["role"] == "user"]
+    assert got == [f'[From another thread, not typed by the user: "Desktop thread on desktop" (session mesh.desktop.{worker})]\n\nthe render is at D:/out.mp4']
+
+
+async def test_a_machine_can_hand_the_hub_a_task(two):
+    started = await two.http.post(_on(two.machine, "/mesh/machines/hub/sessions"), json={"text": "check the server disk"}, headers=AUTH)
+    assert started.status == 200, await started.text()
+    session = (await started.json())["session"]
+    assert session.startswith("mesh.hub.")
+    assert two.hermes.sessions[session.removeprefix("mesh.hub.")]["rows"][0]["text"] == "check the server disk"
+    state = await (await two.http.get(_on(two.machine, f"/sessions/{session}"), headers=AUTH)).json()
+    assert state["messages"][0]["text"] == "check the server disk"
+
+
+async def test_a_machine_cant_route_to_itself_through_the_hub(two):
+    refused = await two.http.post(_on(two.machine, f"/mesh/machines/{MACHINE}/sessions"), json={"text": "hi"}, headers=AUTH)
+    assert refused.status == 400
+    assert two.machine.hermes.sessions == {}
+
+
+async def test_the_hub_cant_take_its_own_name_for_a_machine(mesh):
+    await mesh.sign_up()
+    refused = await mesh.post("/api/mesh/machines", {"name": "hub"})
+    assert refused.status == 400
+
+
 # Settings → Machines
 
 
@@ -314,7 +390,7 @@ async def test_a_bad_machine_name_is_refused(mesh):
     await mesh.sign_up()
     refused = await mesh.post("/api/mesh/machines", {"name": "My Laptop!"})
     assert refused.status == 400
-    assert await (await mesh.http.get(mesh.url("/api/mesh"))).json() == {"hub": True, "address": "http://100.64.0.1:8799", "machines": []}
+    assert await (await mesh.http.get(mesh.url("/api/mesh"))).json() == {"hub": True, "name": "hub", "address": "http://100.64.0.1:8799", "machines": []}
 
 
 async def test_removing_a_machine_disconnects_it_and_keeps_it_out(mesh):
