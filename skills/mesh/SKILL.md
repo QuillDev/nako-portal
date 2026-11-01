@@ -40,22 +40,35 @@ Use another machine **only when the work has to happen there**: its files, its a
 
 | Tool | What it does |
 |---|---|
-| `mesh_machines` | Who's in the mesh: online or not, OS, whether its Hermes is up, how many tasks it's running |
+| `mesh_machines` | Who's in the mesh, the hub first: online or not, OS, whether its gateway is up, its Hermes version and commit, how many tasks it's running |
 | `mesh_run(machine, prompt, title?, cwd?, wait_seconds?)` | Start a new chat on that machine with your prompt as its first message |
 | `mesh_send(session, text, wait_seconds?)` | Send into an existing chat (a follow-up, or a steer if it's busy) |
-| `mesh_read(session, wait_seconds?)` | Where a chat stands: running or done, its latest reply, and anything it's `waiting_on` |
+| `mesh_read(session, wait_seconds?)` | Where a chat stands: running or done, its latest reply, its latest tool calls with the start of each result, and anything it's `waiting_on`. Works while that machine's gateway is down: it says so, and when the chat last moved |
 | `mesh_threads(machine, limit?)` | The chats on that machine, newest first, so you can pick one up |
 | `mesh_answer(session, request, choice / answers)` | Answer an approval (`choice`) or a question (`answers` by question id) a chat is waiting on |
 | `mesh_stop(session)` | Stop the chat's running turn |
+| `mesh_restart_gateway(machine, wait_seconds?)` | Restart a machine's gateway through its portal server (works when the gateway is down). Waits until it's back |
+| `mesh_update(machine, channel?, wait_seconds?)` | Update a machine's Hermes: its portal server runs `hermes update --yes` apart from the gateway, then restarts the gateway. Returns the version before and after, whether it matches the hub, and the end of the log |
 
 `wait_seconds` (max 600) makes the call wait for the reply instead of returning right away. It returns early if the chat stops to ask something.
 
 ## How a task usually goes
 
-1. `mesh_machines`. Is the machine online, and is its Hermes up (`gateway: true`)? If not, tell the user. Don't queue work for an offline machine.
+1. `mesh_machines`. Is the machine online, and is its Hermes up (`gateway: true`)? If it's online with the gateway down, `mesh_restart_gateway` it. If it's offline, tell the user. Don't queue work for an offline machine.
 2. `mesh_run` with a **self-contained brief**. The other machine knows nothing about your conversation. Give it the goal, paths on *that* machine, what done looks like, and what to send back. Give it a short title.
 3. Follow it with `mesh_read`, using `wait_seconds` for short jobs or checking back for long ones. Report what it actually did, from its reply. Don't guess.
 4. If it's `waiting_on` something, answer with `mesh_answer` only when you're sure the user would agree. Otherwise tell the user it's waiting, and they can answer in the portal.
+
+## Keeping a machine's Hermes up and current
+
+Each machine's portal server outlives its gateway, so it can still act when the gateway is down:
+
+- **Reading.** A chat on a machine whose gateway is down still reads, from that machine's session store. `mesh_read` says `gateway: false` and when the chat last moved, so you can tell what it did before it stopped.
+- **Restarting.** `mesh_restart_gateway` has the machine's portal server restart the gateway in a process of its own. On Windows that goes through the `Hermes_Gateway` scheduled task (registered first if it's missing), never a gateway started in a terminal.
+- **Updating.** Use `mesh_update`, never a chat on that machine running `hermes update`: the update stops the gateway the chat runs in. `mesh_update` runs it outside the gateway and brings the gateway back afterwards. Compare the result's `hermes_now` with the hub's line in `mesh_machines`.
+- **Watchdog.** If a machine's gateway goes away and stays away for 90 seconds (and no update is running there), its portal server starts it again, at most once every 10 minutes. To keep a machine's gateway stopped on purpose, set `mesh_gateway_watchdog: false` in its settings first.
+
+A machine running a plugin from before these tools can't do any of this. Its gateway has to be started there by hand (`hermes gateway start`), and then the plugin updated to the hub's version.
 
 ## Messages from other machines
 
@@ -72,14 +85,14 @@ The user adds machines on the portal's **Mesh** page, opened from the row above 
 - macOS / Linux: `curl -fsSL https://<portal>/mesh/setup/<code>/sh | bash`
 - Windows (PowerShell): `iex (irm https://<portal>/mesh/setup/<code>/ps1)`
 
-The script first checks it can reach the hub. It installs Hermes if it's missing. If no model is set up, it runs `hermes model`, which is the one step the user does by hand. Then it installs this plugin at the hub's own version, runs `hermes mesh join`, and sets the gateway up as a background service. It waits until the hub sees the machine. The line works for a day and is safe to run again; once the machine has joined, it just says so. From a terminal, the same thing is `hermes mesh add <name>` on the hub, then `hermes mesh join https://<portal> <token> --name <name>` on the machine. `hermes mesh list` shows who's online.
+The script first checks it can reach the hub. It installs Hermes if it's missing. If no model is set up, it runs `hermes model`, which is the one step the user does by hand. Then it installs this plugin at the hub's own version, runs `hermes mesh join`, and sets the gateway up as a background service. On Windows it starts the gateway only through its scheduled task (`schtasks /Run /TN Hermes_Gateway`), so closing the window or Ctrl+C can't stop it. It waits until the hub sees the machine and its gateway. The line works for a day and is safe to run again; once the machine has joined, it just says so. From a terminal, the same thing is `hermes mesh add <name>` on the hub, then `hermes mesh join https://<portal> <token> --name <name>` on the machine. `hermes mesh list` shows who's online.
 
 ## Where the settings live
 
 Nothing about a particular network or set of machines is built into the plugin. It all lives in each machine's own Hermes home:
 
 - **On the hub:** `plugins.entries.nako-portal.settings` holds `origin` (the portal's address, which is also what machines are told to use), plus optional `mesh_address` (a different address for machines), `mesh_listen` (an extra host:port listener, e.g. on a LAN), `mesh_name` (the hub's name in the mesh; default is its hostname), `mesh_plugin_source` (the git URL machines install the plugin from; default is the plugin checkout's own `origin` remote) and `skill_sync_exclude`. The plugin source can also be set at the bottom of the Mesh page, which wins over the config setting and is kept in `~/.hermes/nako-portal/portal.db`. The machine list and their token hashes are in `~/.hermes/nako-portal/mesh-nodes.json`.
-- **On a machine:** `mesh_hub` (the hub portal's address) and `mesh_name` in the same settings block, `NAKO_MESH_TOKEN` in `~/.hermes/.env`, and `~/.hermes/mesh-skills` in `skills.external_dirs`.
+- **On a machine:** `mesh_hub` (the hub portal's address), `mesh_name` and optional `mesh_gateway_watchdog` (default on) in the same settings block, `NAKO_MESH_TOKEN` in `~/.hermes/.env`, and `~/.hermes/mesh-skills` in `skills.external_dirs`.
 
 ## Moving the hub
 
@@ -94,6 +107,7 @@ That's it. A machine that can't be reached that way can also just be removed on 
 ## When something's wrong
 
 - **Machine offline.** Its gateway isn't running or it can't reach the hub. On that machine, check `hermes gateway status`, `~/.hermes/logs/gateway.log` and `~/.hermes/nako-portal/server.log` (look for `joined the mesh` or `can't reach the mesh hub`).
-- **Online, but "hermes offline".** The portal server is up but its gateway isn't, so it can't run turns. Restart the gateway there.
+- **Online, but its gateway is down.** The portal server is up but its gateway isn't, so it can't run turns. `mesh_restart_gateway` it from the hub. If that machine's plugin is too old for it, start the gateway there by hand.
+- **Windows: the gateway runs in a terminal window.** It stops when the window closes. Stop it with Ctrl+C, then start it as a service with `schtasks /Run /TN Hermes_Gateway`.
 - **401 on join.** The token is wrong or was revoked. Add the machine again for a fresh setup line.
 - **Images in a remote chat don't load.** Expected for now. Files stay on the machine that made them.

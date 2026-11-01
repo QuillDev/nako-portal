@@ -262,12 +262,20 @@ class Hub:
             for row in rows
         ]
 
-    async def open(self, session):
+    async def open(self, session, results=False):
+        """A chat's transcript and where it stands. `results`: keep the start of each tool call's
+        result on its row (an agent following the chat reads them; the app doesn't).
+
+        It reads with no gateway connected too (the server reads the session store itself), so
+        `gateway` says whether one is, and `last_active` when the chat last moved."""
         thread = await asyncio.to_thread(self.backend.thread, session)
         if thread is None:
             raise ValueError("No such chat")
         title = thread.get("title") or ""
         messages = thread["messages"]
+        stamps = [m["timestamp"] for m in messages if isinstance(m.get("timestamp"), (int, float))]
+        if not results:
+            messages = [{k: v for k, v in m.items() if k != "result"} if "result" in m else m for m in messages]
         if (session in self.inboxes) if self.inboxes is not None else (await asyncio.to_thread(self.backend.chat_of, session)) in CHANNELS:
             messages = _mark_posts(messages)
         # Hermes names a chat after its first exchange; a list fetched before that still says untitled.
@@ -283,6 +291,8 @@ class Hub:
             **({"live": _progress_view(self.progress[session])} if session in self.running and session in self.progress else {}),
             "status": self.status.get(session),
             "requests": [_request_view(r) for r in self.requests.values() if r["session"] == session],
+            "gateway": bool(self.connected),
+            "last_active": max(stamps) if stamps else None,
         }
 
     async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False, sender=None, model=None):

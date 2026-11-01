@@ -18,6 +18,9 @@ from pathlib import Path
 TOOLSET = "mesh"
 POLL = 3
 MAX_WAIT = 600
+# Tool calls mesh_read shows, and how much of a restart or update's log comes back.
+TOOL_CALLS = 10
+LOG_CHARS = 1500
 
 ONLY_WHEN_NEEDED = (
     "Only use this when the work has to happen on that machine: its files, apps, screen, hardware "
@@ -73,16 +76,29 @@ def _quoted(session):
     return urllib.parse.quote(str(session), safe="")
 
 
+def _when(stamp):
+    """A unix time as UTC and how long ago, for an agent to read."""
+    if not isinstance(stamp, (int, float)):
+        return None
+    ago = max(0, int(time.time() - stamp))
+    spoken = f"{ago}s" if ago < 120 else f"{ago // 60}m" if ago < 7200 else f"{ago // 3600}h{ago % 3600 // 60:02d}m"
+    return f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(stamp))} UTC ({spoken} ago)"
+
+
+def _machine_of(session):
+    return str(session).split(".")[1] if str(session).count(".") >= 2 else None
+
+
 def _read(session, wait):
     """Where a task stands; with `wait`, keep checking until it stops running or asks something."""
     deadline = time.monotonic() + max(0, min(int(wait or 0), MAX_WAIT))
     while True:
-        state = _call("GET", f"/sessions/{_quoted(session)}?last=4")
+        state = _call("GET", f"/sessions/{_quoted(session)}?last=4&tools={TOOL_CALLS}")
         if not state.get("running") or state.get("requests") or time.monotonic() >= deadline:
             break
         time.sleep(POLL)
     reply = next((m["text"] for m in reversed(state.get("messages") or []) if m["role"] == "assistant"), None)
-    return {
+    out = {
         "session": session,
         "title": state.get("title"),
         "running": state.get("running"),
@@ -90,12 +106,95 @@ def _read(session, wait):
         # Open approvals/questions: answer with mesh_answer, or leave them for the person.
         "waiting_on": state.get("requests") or None,
         "latest_reply": reply,
+        "last_active": _when(state.get("last_active")),
+        # Its latest tool calls (since the last few messages), each with the start of its result.
+        "tool_calls": state.get("tools") or [],
     }
+    if state.get("gateway") is False:
+        machine = _machine_of(session) or "that machine"
+        out["gateway"] = False
+        out["note"] = (
+            f"{machine}'s Hermes gateway is down, so nothing is running there now. This is the chat as saved; "
+            f"it last moved {out['last_active'] or 'at an unknown time'}. mesh_restart_gateway brings the gateway back."
+        )
+    return out
 
 
 def machines(args, _session):
     rows = _call("GET", "/mesh/machines")
-    return {"machines": rows} if rows else {"machines": [], "note": "No machines are set up. Add one with `hermes mesh add <name>`."}
+    others = [row for row in rows if not row.get("hub")]
+    if not others and not any(row.get("hub") for row in rows):
+        return {"machines": rows, "note": "No machines are in the mesh yet. The user can add one on the portal's Mesh page."}
+    if not others:
+        return {"machines": rows, "note": "Only the hub so far: no other machines have been added yet. The user can add one on the portal's Mesh page."}
+    return {"machines": rows}
+
+
+def _job(machine):
+    return _call("GET", f"/mesh/machines/{_quoted(machine)}/job")
+
+
+def _follow(machine, wait):
+    """Wait for a machine's restart or update to finish and its gateway to be back, then sum it up.
+    The machine's link may drop meanwhile (its portal server replaced by an update); that's waited out."""
+    deadline = time.monotonic() + max(0, min(int(wait or 0), MAX_WAIT))
+    state, lost = None, None
+    while True:
+        try:
+            state, lost = _job(machine), None
+        except RuntimeError as error:
+            lost = str(error)
+        job = (state or {}).get("job") or {}
+        if not lost and job.get("status") not in ("starting", "running") and state.get("gateway"):
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(POLL)
+    job = (state or {}).get("job") or {}
+    now = (state or {}).get("hermes") or job.get("new")
+    out = {
+        "machine": machine,
+        "job": job.get("kind"),
+        "status": job.get("status"),
+        "step": job.get("step"),
+        "gateway": bool((state or {}).get("gateway")),
+        "hermes_before": (job.get("old") or {}).get("line"),
+        "hermes_now": (now or {}).get("line"),
+        "log_tail": (job.get("log_tail") or "")[-LOG_CHARS:],
+    }
+    if job.get("kind") == "update":
+        out["update_exit"] = job.get("update_exit")
+        try:
+            hub = next((row for row in _call("GET", "/mesh/machines") if row.get("hub")), None)
+        except RuntimeError:
+            hub = None
+        if hub and (hub.get("hermes") or {}).get("commit") and now:
+            out["hub_hermes"] = hub["hermes"].get("line")
+            out["matches_hub"] = (now.get("commit") or "")[:10] == hub["hermes"]["commit"][:10]
+    if lost:
+        out["note"] = f"Couldn't reach {machine} at the end ({lost}). Check again with mesh_machines in a minute."
+    elif job.get("status") in ("starting", "running"):
+        out["note"] = "Still going. Call this again with wait_seconds, or check mesh_machines later."
+    elif not out["gateway"]:
+        out["note"] = f"The job finished but {machine}'s gateway isn't connected yet. Its portal server starts it again on its own after a while; the user can also run `hermes gateway start` there."
+    return out
+
+
+def restart_gateway(args, _session):
+    machine = str(args.get("machine") or "").strip().lower()
+    if not machine:
+        raise ValueError("give a machine")
+    _call("POST", f"/mesh/machines/{_quoted(machine)}/gateway/restart", {})
+    return _follow(machine, args.get("wait_seconds", 120))
+
+
+def update(args, _session):
+    machine = str(args.get("machine") or "").strip().lower()
+    if not machine:
+        raise ValueError("give a machine")
+    body = {"channel": str(args["channel"])} if args.get("channel") else {}
+    _call("POST", f"/mesh/machines/{_quoted(machine)}/update", body)
+    return _follow(machine, args.get("wait_seconds", MAX_WAIT))
 
 
 def run(args, session):
@@ -172,7 +271,7 @@ TOOLS = [
         "mesh_machines",
         machines,
         "List the user's other machines running Hermes (laptops, desktops, the hub), whether each is online now, "
-        "its OS, and how many tasks it is running. " + ONLY_WHEN_NEEDED,
+        "whether its Hermes gateway is up, its OS, its Hermes version and commit, and how many tasks it is running. " + ONLY_WHEN_NEEDED,
         {},
         [],
     ),
@@ -203,7 +302,9 @@ TOOLS = [
     (
         "mesh_read",
         read,
-        "Read where a task on another machine stands: running or done, any question it is waiting on, and its latest reply.",
+        "Read where a task on another machine stands: running or done, any question it is waiting on, its latest reply, "
+        "and its latest tool calls with the start of each result. Works while that machine's gateway is down: it then "
+        "says so and when the chat last moved.",
         {"session": {"type": "string"}, "wait_seconds": WAIT},
         ["session"],
     ),
@@ -214,6 +315,29 @@ TOOLS = [
         "List the chats on another machine (or the hub), newest first, with their mesh session ids and status, "
         "so you can pick one up with mesh_read or mesh_send. " + ONLY_WHEN_NEEDED,
         {"machine": {"type": "string"}, "limit": {"type": "integer", "description": "How many (default 20)."}},
+        ["machine"],
+    ),
+    (
+        "mesh_restart_gateway",
+        restart_gateway,
+        "Restart the Hermes gateway on another machine (its portal server does it, so this works when the gateway "
+        "is down or stuck). Waits until it's back and returns its Hermes version and the restart log. Use it when "
+        "mesh_machines shows the machine online but its gateway down.",
+        {"machine": {"type": "string"}, "wait_seconds": {**WAIT, "description": f"Seconds to wait for the gateway to come back (default 120, max {MAX_WAIT})."}},
+        ["machine"],
+    ),
+    (
+        "mesh_update",
+        update,
+        "Update Hermes on another machine: its portal server runs `hermes update --yes` in a process of its own, "
+        "then restarts the gateway, so the machine comes back even though the gateway stops on the way. Returns "
+        "the version before and after (and whether it now matches the hub's) and the end of the update log. "
+        "Never run `hermes update` inside a chat on that machine instead.",
+        {
+            "machine": {"type": "string"},
+            "channel": {"type": "string", "description": "Update channel for this run (stable, main, ...). Default: the machine's own."},
+            "wait_seconds": {**WAIT, "description": f"Seconds to wait for the update and restart (default and max {MAX_WAIT})."},
+        },
         ["machine"],
     ),
     (
@@ -233,22 +357,13 @@ TOOLS = [
 ]
 
 
-def _in_mesh():
-    """Any machine in a mesh gets these, the hub and the rest alike (calls between machines go
-    through the hub): a machine that joined one, or a hub with at least one machine added."""
-    try:
-        from hermes_cli.config import load_config
-        from hermes_constants import get_hermes_home
-
-        settings = load_config().get("plugins", {}).get("entries", {}).get("nako-portal", {}).get("settings", {}) or {}
-        if str(settings.get("mesh_hub") or "").strip():
-            return True
-        return bool(PORTAL("mesh").load_nodes(get_hermes_home() / "nako-portal")) if PORTAL else False
-    except Exception:
-        return False
+# Each tool's handler as Hermes calls it (JSON in, JSON out), by name.
+TOOL_HANDLERS = {name: _wrap(fn) for name, fn, *_ in TOOLS}
 
 
 def register(ctx):
+    # No availability check: a chat's tools are fixed when it starts, and a machine can join the
+    # mesh while it runs. With no machines yet, mesh_machines says so.
     for name, fn, description, properties, required in TOOLS:
         ctx.register_tool(
             name=name,
@@ -258,8 +373,7 @@ def register(ctx):
                 "description": description,
                 "parameters": {"type": "object", "properties": properties, "required": required},
             },
-            handler=_wrap(fn),
-            check_fn=_in_mesh,
+            handler=TOOL_HANDLERS[name],
             description=description,
             emoji="🖥️",
         )
