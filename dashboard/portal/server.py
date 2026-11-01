@@ -257,6 +257,26 @@ class Portal:
                 return web.json_response(await self.node.call("machines"))
             return web.json_response(self.mesh.machines() if self.mesh is not None else [])
 
+        async def threads(request):
+            """Another machine's chats, so an agent can pick one up."""
+            machine = request.match_info["machine"]
+            if self.node is not None:
+                return web.json_response(await self.node.call("threads", machine))
+            if self.mesh is None:
+                raise ValueError("This machine isn't in a mesh")
+            return web.json_response(await self.mesh.threads(machine))
+
+        async def answer(request):
+            """Answer a question or approval a chat on another machine is waiting on."""
+            body = await request.json()
+            request_id = str(body.get("request") or "")
+            if not request_id:
+                raise ValueError("Say which request")
+            hub, session = await self._target(self._session(request))
+            if hub is self.hub:
+                raise ValueError("Answer this machine's own questions in its chat")
+            return web.json_response(await hub.answer(request_id, body.get("result") or {}))
+
         async def start_on(request):
             """A new chat on another machine, running a brief from a thread here."""
             body, text = await brief(request)
@@ -276,6 +296,8 @@ class Portal:
         app.router.add_post("/sessions/{session}/stop", stop)
         app.router.add_post("/sessions/{session}/handoff", handoff)
         app.router.add_get("/mesh/machines", machines)
+        app.router.add_get("/mesh/machines/{machine}/sessions", threads)
+        app.router.add_post("/sessions/{session}/answer", answer)
         app.router.add_post("/mesh/machines/{machine}/sessions", start_on)
         if link is not None:
             app.router.add_get(GATEWAY_PATH, link.handle)
@@ -372,7 +394,7 @@ class Portal:
         if self.mesh is not None and remote(session):
             return self.mesh.target(session)
         if self.node is not None and remote(session):
-            return self.node.remote(), session
+            return self.node.remote(session), session
         return await self._hub(), session
 
     @property

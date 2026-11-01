@@ -1057,6 +1057,9 @@ def register(ctx):
         tools.register(ctx)
     if hasattr(ctx, "register_cli_command"):
         tools.register_cli(ctx)
+    # How the mesh works, for any agent on any machine in it (`nako-portal:mesh`).
+    if hasattr(ctx, "register_skill"):
+        ctx.register_skill("mesh", ROOT / "skills" / "mesh" / "SKILL.md")
     # Live tool calls for the chat's activity view (the gateway's own text breadcrumbs are off).
     ctx.register_hook("pre_tool_call", _forward_tool("running"))
     ctx.register_hook("post_tool_call", _forward_tool(None))

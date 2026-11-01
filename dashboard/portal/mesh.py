@@ -44,7 +44,7 @@ NODES_FILE = "mesh-nodes.json"
 LIST_TIMEOUT = 5
 # What the hub may call on a node: its hub's own methods, by name.
 # What a machine may ask the hub to do on another machine (or on the hub) for its agent.
-RELAYED = ("open", "send", "interrupt")
+RELAYED = ("open", "send", "interrupt", "answer")
 NODE_CALLS = (
     "sessions",
     "archived",
@@ -81,6 +81,21 @@ def parse(session):
     """(machine, node session) for a node's chat, else None."""
     found = REMOTE.match(str(session or ""))
     return (found.group(1), found.group(2)) if found else None
+
+
+def thread_rows(machine, rows):
+    """A machine's chats as an agent lists them: ids it can use, the person's inboxes left out."""
+    return [
+        {
+            "session": remote_id(machine, row["id"]),
+            "title": row.get("title"),
+            "status": row.get("status"),
+            "started_at": row.get("started_at"),
+            "messages": row.get("message_count"),
+        }
+        for row in rows or []
+        if not row.get("notifications") and not row.get("reviews")
+    ]
 
 
 def _rewrite(value, machine):
@@ -455,6 +470,13 @@ class Mesh:
             raise ValueError(f"No machine called {machine}")
         return RemoteHub(self, machine)
 
+    async def threads(self, machine):
+        """Another machine's chats (or the hub's own), newest first."""
+        hub = self.hub if machine == self.name else self.machine_hub(machine)
+        # Listing rows carry the machine's own ids under `id`; thread_rows names them for the mesh.
+        listed = thread_rows(machine, await hub.sessions())
+        return sorted(listed, key=lambda r: r.get("started_at") or 0, reverse=True)
+
     async def call(self, machine, method, *args):
         peer = self.peers.get(machine)
         if peer is None:
@@ -565,6 +587,11 @@ class Mesh:
                 raise ValueError("That's this machine; do it here")
             return await self.machine_hub(target).create(str(text), [], title, cwd, bool(yolo))
 
+        async def threads(target):
+            if target == machine:
+                raise ValueError("Those are this machine's own chats")
+            return await self.threads(target)
+
         async def relay(session, method, args):
             """A call into a chat on another machine (or the hub), for this machine's agent."""
             if method not in RELAYED:
@@ -578,7 +605,9 @@ class Mesh:
             args = list(args or [])
             if method == "send":
                 args = [args[0] if args else "", []]
-            result = await getattr(hub, method)(inner, *args)
+            # answer(request id, result) names the request, not the chat.
+            call = getattr(hub, method)
+            result = await (call(*args) if method == "answer" else call(inner, *args))
             return _rewrite(result, self.name) if hub is self.hub else result
 
         return {
@@ -589,6 +618,7 @@ class Mesh:
             "machines": machines,
             "start": start,
             "relay": relay,
+            "threads": threads,
         }
 
     async def handle(self, request):
@@ -668,8 +698,9 @@ class Node:
             raise ConnectionError("not connected to the mesh hub")
         return await peer.call(method, *args)
 
-    def remote(self):
-        """Chats on other machines, through the hub, called like a local hub."""
+    def remote(self, session):
+        """A chat on another machine, through the hub, called like a local hub holding it.
+        `answer(request, result)` names no chat, like the hub's own, so the relay is bound to one."""
         node = self
 
         class Relay:
@@ -677,7 +708,9 @@ class Node:
                 if name not in RELAYED:
                     raise AttributeError(name)
 
-                async def call(session, *args):
+                async def call(*args):
+                    if name != "answer":
+                        args = args[1:]  # the chat, which this relay already holds
                     return await node.call("relay", session, name, list(args[:1]) if name == "send" else list(args))
 
                 return call

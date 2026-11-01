@@ -21,7 +21,8 @@ MAX_WAIT = 600
 
 ONLY_WHEN_NEEDED = (
     "Only use this when the work has to happen on that machine: its files, apps, screen, hardware "
-    "or local network. Do everything else here, and don't call a machine just to check on it."
+    "or local network. Do everything else here, and don't call a machine just to check on it. "
+    "How the mesh works: skill_view('nako-portal:mesh')."
 )
 
 
@@ -86,7 +87,8 @@ def _read(session, wait):
         "title": state.get("title"),
         "running": state.get("running"),
         "status": state.get("status"),
-        "waiting_on_person": state.get("requests") or None,
+        # Open approvals/questions: answer with mesh_answer, or leave them for the person.
+        "waiting_on": state.get("requests") or None,
         "latest_reply": reply,
     }
 
@@ -128,6 +130,29 @@ def read(args, _session):
     if not task.startswith("mesh."):
         raise ValueError("give a mesh session id (mesh.<machine>.<id>)")
     return _read(task, args.get("wait_seconds") or 0)
+
+
+def threads(args, _session):
+    machine = str(args.get("machine") or "").strip().lower()
+    if not machine:
+        raise ValueError("give a machine")
+    rows = _call("GET", f"/mesh/machines/{_quoted(machine)}/sessions")
+    limit = max(1, min(int(args.get("limit") or 20), 100))
+    return {"machine": machine, "threads": rows[:limit], "more": max(0, len(rows) - limit)}
+
+
+def answer(args, _session):
+    task = str(args.get("session") or "")
+    request = str(args.get("request") or "")
+    if not task.startswith("mesh.") or not request:
+        raise ValueError("give the mesh session id and the request id from mesh_read's waiting_on")
+    if args.get("answers") is not None:
+        result = {"answers": {str(k): v for k, v in dict(args["answers"]).items()}}
+    elif args.get("choice"):
+        result = {"choice": str(args["choice"])}
+    else:
+        raise ValueError("give a choice (approvals) or answers (questions)")
+    return _call("POST", f"/sessions/{_quoted(task)}/answer", {"request": request, "result": result})
 
 
 def stop(args, _session):
@@ -183,6 +208,28 @@ TOOLS = [
         ["session"],
     ),
     ("mesh_stop", stop, "Stop the running turn of a task on another machine.", {"session": {"type": "string"}}, ["session"]),
+    (
+        "mesh_threads",
+        threads,
+        "List the chats on another machine (or the hub), newest first, with their mesh session ids and status, "
+        "so you can pick one up with mesh_read or mesh_send. " + ONLY_WHEN_NEEDED,
+        {"machine": {"type": "string"}, "limit": {"type": "integer", "description": "How many (default 20)."}},
+        ["machine"],
+    ),
+    (
+        "mesh_answer",
+        answer,
+        "Answer an approval or question a chat on another machine is waiting on (from mesh_read's waiting_on). "
+        "Approvals take a choice from the request's choices; questions take answers keyed by question id. "
+        "Only answer what you're sure the user would; otherwise leave it for them in the portal.",
+        {
+            "session": {"type": "string"},
+            "request": {"type": "string", "description": "The request id from waiting_on."},
+            "choice": {"type": "string", "description": "For an approval: one of its choices, e.g. once or deny."},
+            "answers": {"type": "object", "description": "For a question: {question id: answer}."},
+        },
+        ["session", "request"],
+    ),
 ]
 
 

@@ -305,6 +305,44 @@ async def test_a_machine_cant_route_to_itself_through_the_hub(two):
     assert two.machine.hermes.sessions == {}
 
 
+async def test_a_machine_lists_another_machines_threads(two):
+    two.desktop.hermes.add_session("20261101_140000_dddddd", "Render the trailer")
+    two.desktop.hermes.add_session("20261101_140001_eeeeee", "Notifications", chat="inbox")
+    two.hermes.add_session("20261101_140002_ffffff", "Hub work")
+    on_desktop = await (await two.http.get(_on(two.machine, "/mesh/machines/desktop/sessions"), headers=AUTH)).json()
+    assert [(r["session"], r["title"]) for r in on_desktop] == [("mesh.desktop.20261101_140000_dddddd", "Render the trailer")]
+    on_hub = await (await two.http.get(_on(two.machine, "/mesh/machines/hub/sessions"), headers=AUTH)).json()
+    assert [r["session"] for r in on_hub] == ["mesh.hub.20261101_140002_ffffff"]
+    # And from the hub's own agent.
+    from_hub = await (await two.http.get(_local(two, "/mesh/machines/desktop/sessions"), headers=AUTH)).json()
+    assert [r["session"] for r in from_hub] == ["mesh.desktop.20261101_140000_dddddd"]
+
+
+async def test_a_machine_answers_a_question_another_machine_is_waiting_on(two):
+    two.desktop.hermes.ask_approval = True
+    started = await two.http.post(_on(two.machine, "/mesh/machines/desktop/sessions"), json={"text": "clean the build"}, headers=AUTH)
+    session = (await started.json())["session"]
+
+    async def waiting():
+        return (await (await two.http.get(_on(two.machine, f"/sessions/{session}"), headers=AUTH)).json())["requests"]
+
+    await until(lambda: any(r["id"] == "req-1" for r in two.desktop.hub.requests.values()))
+    assert [r["id"] for r in await waiting()] == ["req-1"]
+    answered = await two.http.post(_on(two.machine, f"/sessions/{session}/answer"), json={"request": "req-1", "result": {"choice": "deny"}}, headers=AUTH)
+    assert answered.status == 200, await answered.text()
+    assert two.desktop.hermes.answers[0]["result"] == {"choice": "deny"}
+    assert await waiting() == []
+
+
+async def test_the_hubs_agent_answers_a_machines_question(two):
+    two.machine.hermes.ask_approval = True
+    session = (await (await _run(two, "clean up")).json())["session"]
+    await until(lambda: two.machine.hub.requests)
+    answered = await two.http.post(_local(two, f"/sessions/{session}/answer"), json={"request": "req-1", "result": {"choice": "once"}}, headers=AUTH)
+    assert answered.status == 200, await answered.text()
+    assert two.machine.hermes.answers[0]["result"] == {"choice": "once"}
+
+
 async def test_the_hub_cant_take_its_own_name_for_a_machine(mesh):
     await mesh.sign_up()
     refused = await mesh.post("/api/mesh/machines", {"name": "hub"})
