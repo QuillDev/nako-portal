@@ -1,9 +1,10 @@
-import { memo, useState } from "react"
+import { memo, useEffect, useState } from "react"
 import { Confirmation, ConfirmationAction, ConfirmationActions, ConfirmationRequest, ConfirmationTitle } from "@/components/ai-elements/confirmation"
 import { Suggestion, Suggestions } from "@/components/ai-elements/suggestion"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
+import { checkBuild } from "@/lib/fresh-build"
 import type { PortalRequest } from "@/lib/types"
 import { SecretRequest } from "./secrets"
 
@@ -66,6 +67,12 @@ function Clarify({ request, answer }: { request: PortalRequest; answer: Portal["
   )
 }
 
+// A kind of request this page predates: the server already has a newer page that can answer it.
+function UnknownRequest({ method }: { method: string }) {
+  useEffect(() => void checkBuild(true), [])
+  return <p className="rounded-lg border p-4 text-muted-foreground text-sm">{method}: reload the page to answer this one.</p>
+}
+
 export const Requests = memo(function Requests({ requests, answer }: { requests: PortalRequest[]; answer: Portal["answer"] }) {
   return requests.map(r =>
     r.method === "approval" ? (
@@ -75,9 +82,7 @@ export const Requests = memo(function Requests({ requests, answer }: { requests:
     ) : r.method === "secret" ? (
       <SecretRequest answer={answer} key={r.id} request={r} />
     ) : (
-      <p className="rounded-lg border p-4 text-muted-foreground text-sm" key={r.id}>
-        {r.method}: this one needs the desktop app.
-      </p>
+      <UnknownRequest key={r.id} method={r.method} />
     ),
   )
 })

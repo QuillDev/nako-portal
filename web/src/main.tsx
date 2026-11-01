@@ -7,6 +7,7 @@ import "@fontsource/instrument-serif/latin-400-italic.css"
 import "./index.css"
 import "./lib/bubble"
 import "./lib/desktop-browser"
+import "./lib/fresh-build"
 import "./lib/table-copy"
 import "./lib/theme"
 
