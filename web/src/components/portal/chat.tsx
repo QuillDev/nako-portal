@@ -214,7 +214,6 @@ function NewChat({ portal }: { portal: Portal }) {
         send={portal.send}
         setError={portal.setError}
         stop={portal.stop}
-        tall
       />
     </div>
   )
