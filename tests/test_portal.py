@@ -427,7 +427,7 @@ async def test_a_chat_page_carries_only_what_the_app_draws(world):
     assert [{k: v for k, v in m.items() if k != "row_id"} for m in opened["messages"]] == [
         {"role": "user", "text": "write the report"},
         {"role": "tool", "text": "", "name": "write_file", "context": "report.md", "tool_call_id": "w1"},
-        {"role": "assistant", "text": "written", "reasoning": "it needed a summary"},
+        {"role": "assistant", "text": "written", "reasoning": "it needed a summary", "ended": True},
     ]
     assert all(isinstance(m["row_id"], int) for m in opened["messages"])
 
@@ -518,6 +518,37 @@ async def test_a_message_steered_into_a_running_turn_says_so(world):
         ("check the logs too", True),
         ("on it", False),
     ]
+
+
+async def test_a_reply_followed_by_a_background_notice_and_its_answer_still_reads_as_a_reply(world):
+    # The notice is Hermes's own row and never reaches the app, so only the hub can tell that the
+    # long report ended its turn rather than being a message along the way.
+    sid = world.hermes.add_session("20261024_090910_cccccc", "Ship", messages=[("user", "finish up")])
+    world.hermes._row(sid, "assistant", "")
+    world.hermes._row(sid, "tool", "{}", name="terminal")
+    world.hermes._row(sid, "assistant", "checking ci")
+    world.hermes._row(sid, "tool", "{}", name="terminal")
+    world.hermes._row(sid, "assistant", "done: all checks pass, want it out of draft?")
+    world.hermes._row(sid, "user", "[IMPORTANT: Background process proc_1 completed]", display_kind="internal_notification")
+    world.hermes._row(sid, "assistant", "that red run was the old head")
+    await world.sign_up()
+
+    opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    assert [(m["text"], m.get("ended", False)) for m in opened["messages"] if m["role"] != "tool" and m["text"]] == [
+        ("finish up", False),
+        ("checking ci", False),
+        ("done: all checks pass, want it out of draft?", True),
+        ("that red run was the old head", True),
+    ]
+
+
+async def test_a_reply_that_mentions_the_sign_off_tag_keeps_its_text(world):
+    reply = "the `<signoff>` handling isn't involved.\n\nthe fix is in the hub.\n\n<signoff>found the real tag</signoff>"
+    sid = world.hermes.add_session("20261024_090911_cccccc", "Tags", messages=[("user", "why?"), ("assistant", reply)])
+    await world.sign_up()
+
+    opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    assert opened["messages"][-1]["text"] == "the `<signoff>` handling isn't involved.\n\nthe fix is in the hub."
 
 
 async def test_cron_posts_read_as_nakos_messages_in_the_notifications_thread(world):
