@@ -151,6 +151,7 @@ class Portal:
         r.add_post("/api/profile", self.set_profile)
         r.add_get("/api/model", self.model)
         r.add_post("/api/model", self.set_model)
+        r.add_get("/api/usage", self.usage)
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -530,6 +531,14 @@ class Portal:
         if current is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "model-controls is not enabled"}), content_type="application/json")
         return web.json_response({**current, "providers": providers})
+
+    async def usage(self, request):
+        """How much of each signed-in account's plan the shown profile has used."""
+        self._require(request)
+        providers = await asyncio.to_thread(self.hub.backend.usage)
+        if providers is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "model-controls is not enabled"}), content_type="application/json")
+        return web.json_response({"providers": providers})
 
     async def set_model(self, request):
         self._require(request)

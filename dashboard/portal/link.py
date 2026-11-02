@@ -51,6 +51,7 @@ BACKEND_SYNC = (
     "use_profile",
     "models",
     "model",
+    "usage",
     "secrets",
     "secret",
     "set_secret",

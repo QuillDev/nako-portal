@@ -33,6 +33,25 @@ class DemoGateway(FakeGateway):
         time.sleep(1.5)
         return "tamed the flaky timer, fifty clean runs"
 
+    def usage(self):
+        time.sleep(0.8)
+        resets = "2026-11-05T16:00:00+00:00"
+        return [
+            {"provider": "claude", "label": "Claude", "accounts": [
+                {"label": "work", "windows": [
+                    {"label": "Current session", "used_percent": 38.0, "resets_at": "2026-11-02T22:00:00+00:00"},
+                    {"label": "Current week", "used_percent": 100.0, "resets_at": resets},
+                ], "note": None},
+                {"label": "personal", "windows": [
+                    {"label": "Current session", "used_percent": 4.0, "resets_at": None},
+                    {"label": "Current week", "used_percent": 61.0, "resets_at": resets},
+                ], "note": None},
+            ]},
+            {"provider": "codex", "label": "OpenAI Codex", "accounts": [
+                {"label": "", "windows": [{"label": "Weekly", "used_percent": 6.0, "resets_at": resets}], "note": None},
+            ]},
+        ]
+
     def sign_off_models(self):
         return [
             {"provider": "anthropic", "label": "Anthropic", "models": ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]},

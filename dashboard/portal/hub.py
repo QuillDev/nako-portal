@@ -28,6 +28,8 @@ backend:
   profiles() -> {profile, profiles}         the Hermes profile shown, and the ones served
   use_profile(name) -> profiles()           show another profile's chats (ValueError if not served)
   models() / model() / set_model(provider, model)   the shown profile's own model (ValueError if refused)
+  usage() -> [{provider, label, accounts: [{label, windows: [{label, used_percent, resets_at}], note}]}] or None
+                                            plan limits per account; None: model-controls can't report them
   secrets() -> [{name, note, origin, created_at, updated_at}] or None   None: no secrets plugin
   secret(name) -> value or None / set_secret(name, value, note) / remove_secret(name) -> bool
 
