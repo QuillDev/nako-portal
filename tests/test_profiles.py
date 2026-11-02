@@ -258,8 +258,10 @@ async def test_real_gateway_keeps_chat_model_and_tuning_after_reload(tmp_path, m
         assert backend.session_model(sid)["model"] == "gpt-5"
         confirmed = await backend.set_session_model(sid, {**request, "confirm": warning["confirmation"]})
         assert confirmed["model"] == "gpt-5-mini"
+        assert isinstance(backend.usage(), list)
         monkeypatch.delitem(sys.modules, "model_controls")
         assert backend.model() is None
+        assert backend.usage() is None
         assert backend.session_model(sid) is None
         assert backend.models() == []
         await adapter.on_processing_start(SimpleNamespace(source=plugin._source("one")))
@@ -272,6 +274,7 @@ async def test_portal_keeps_working_without_model_controls(world):
     await world.sign_up()
     world.hermes.add_session("one", "one")
     world.hermes.model_controls = False
+    assert (await world.http.get(world.url("/api/usage"))).status == 404
     for path in ("/api/model", "/api/sessions/one/model"):
         assert (await world.http.get(world.url(path))).status == 404
         assert (await world.post(path, {"provider": "big", "model": "large"})).status == 404
@@ -281,3 +284,16 @@ async def test_portal_keeps_working_without_model_controls(world):
     response = await world.http.post(world.url("/api/sessions/one/messages"), data={"text": "hello"}, headers={"Origin": ORIGIN})
     assert response.status == 200
     assert world.hermes.received[-1][1] == "hello"
+
+
+async def test_usage_lists_each_account_of_each_provider(world):
+    await world.sign_up()
+    usage = await (await world.http.get(world.url("/api/usage"))).json()
+    assert usage == {"providers": [{"provider": "big", "label": "Big Co", "accounts": [
+        {"label": "home", "windows": [{"label": "Week", "used_percent": 100.0, "resets_at": "2026-11-05T16:00:00+00:00"}], "note": None},
+        {"label": "spare", "windows": [], "note": "Signed out"}]}]}
+
+
+async def test_usage_needs_a_signed_in_person(world):
+    async with aiohttp.ClientSession() as stranger:
+        assert (await stranger.get(world.url("/api/usage"))).status == 401

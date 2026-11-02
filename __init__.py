@@ -665,6 +665,13 @@ class HermesBackend:
             return None
         return self._model_client().model()
 
+    def usage(self):
+        """Plan limits by provider and account; None when model-controls can't report them."""
+        api = sys.modules.get("model_controls")
+        if api is None or not hasattr(api.Client, "usage"):
+            return None
+        return self._model_client().usage()
+
     def set_model_options(self, body):
         return self._model_client().set_model_options(body)
 

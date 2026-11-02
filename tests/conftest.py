@@ -231,6 +231,13 @@ class FakeGateway:
             return []
         return [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}, {"provider": "big", "label": "Big Co", "models": ["large"]}]
 
+    def usage(self):
+        if not self.model_controls:
+            return None
+        return [{"provider": "big", "label": "Big Co", "accounts": [
+            {"label": "home", "windows": [{"label": "Week", "used_percent": 100.0, "resets_at": "2026-11-05T16:00:00+00:00"}], "note": None},
+            {"label": "spare", "windows": [], "note": "Signed out"}]}]
+
     def model(self):
         if not self.model_controls:
             return None

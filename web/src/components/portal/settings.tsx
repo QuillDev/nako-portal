@@ -16,6 +16,7 @@ import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
 import { SecretsSettings } from "./secrets"
 import { SignOffSettings } from "./sign-off-settings"
+import { UsageSettings } from "./usage-settings"
 import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
 
 const THEMES: Theme[] = ["system", "light", "dark"]
@@ -199,6 +200,7 @@ export function Settings({ portal }: { portal: Portal }) {
           </Row>
           <SignOffSettings onError={setError} />
         </Section>
+        <UsageSettings onError={setError} Section={Section} />
         <BrowserSection />
         <Section title="Notifications">
           {app ? (
