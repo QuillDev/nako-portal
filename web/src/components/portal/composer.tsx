@@ -84,7 +84,7 @@ function DropZone({ anchor }: { anchor: React.RefObject<HTMLDivElement | null> }
 }
 
 // Drafts live in this browser per chat, so switching chats or reloading keeps them.
-// `tall` gives the new-chat composer room to write: the text on top, the buttons on a row below.
+// Room to write everywhere: the text on top, the buttons on a row below.
 const TALL = {
   group: "[&>[data-slot=input-group]]:grid [&>[data-slot=input-group]]:grid-cols-[auto_1fr_auto] [&>[data-slot=input-group]]:rounded-[22px] [&>[data-slot=input-group]]:p-1.5",
   text: "col-span-3 row-start-1 min-h-14 px-2.5 pt-3 pb-1",
@@ -99,7 +99,6 @@ type ComposerProps = Pick<Portal, "send" | "command" | "stop" | "setError" | "co
   draftKey: string
   session?: string
   placeholder?: string
-  tall?: boolean
   running: boolean
   inChat: boolean
 }
@@ -114,13 +113,12 @@ export const Composer = memo(function Composer(props: ComposerProps) {
 
 const NO_COMMANDS: ComposerProps["commands"] = []
 
-function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
+function ComposerBody({ draftKey, session, placeholder, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
   const [sending, setSending] = useState(false)
   const [model, setModel] = useState<ModelSelection>({})
   const box = useRef<HTMLDivElement>(null)
   const { textInput } = usePromptInputController()
   const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
-  const expanded = tall
 
   return (
     <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" ref={box}>
@@ -130,7 +128,7 @@ function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, c
         {file => <PromptInputAttachment data={file} />}
       </PromptInputAttachments>
       <PromptInput
-        className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${expanded ? TALL.group : ""}`}
+        className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${TALL.group}`}
         globalDrop
         maxFileSize={MAX_FILE}
         multiple
@@ -158,13 +156,13 @@ function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, c
           }
         }}
       >
-        <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${expanded ? TALL.start : ""}`}>
+        <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${TALL.start}`}>
           <AttachButton />
           {!inChat && <NewChatModel selection={model} onPick={setModel} />}
-          {session && expanded && <SessionModel key={session} session={session} running={running} />}
+          {session && <SessionModel key={session} session={session} running={running} />}
         </InputGroupAddon>
         <PromptInputTextarea
-          className={expanded ? TALL.text : "min-h-0 px-1 py-3"}
+          className={TALL.text}
           enterKeyHint="send"
           onKeyDownCapture={slash.onKeyDownCapture}
           onChange={e => {
@@ -173,8 +171,7 @@ function ComposerBody({ draftKey, session, placeholder, tall, running, inChat, c
           placeholder={running ? "Steer or queue a message" : placeholder || "Message"}
           rows={1}
         />
-        <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${expanded ? TALL.end : ""}`}>
-          {session && !expanded && <SessionModel key={session} session={session} running={running} />}
+        <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${TALL.end}`}>
           {running && (
             <PromptInputButton
               aria-label="Stop"
