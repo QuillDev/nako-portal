@@ -32,6 +32,9 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .mesh_setup import powershell_script, shell_script
+from .attachments import Attachments, MAX_FILE, MAX_FILES, decode_attachment, read_attachment
+from .hub import FROM_THREAD
+from .media import media_paths, shown_files
 from .link import HEARTBEAT, MAX_FRAME, Peer, decode_files, encode_files
 
 log = logging.getLogger("hermes.portal")
@@ -351,7 +354,15 @@ class RemoteHub:
             at = {"send": 2, "create": 1}.get(name)
             if at is not None and len(args) > at:
                 args[at] = encode_files(list(args[at] or []))
-            return _rewrite(await self.mesh.call(self.machine, name, *args), self.machine)
+            result = _rewrite(await self.mesh.call(self.machine, name, *args), self.machine)
+            if name == "open":
+                self.mesh.attachments.save(remote_id(self.machine, args[0]), opened=result)
+            elif name == "archive":
+                sid = remote_id(self.machine, args[0])
+                cached = self.mesh.attachments.view(sid).get("opened")
+                if cached:
+                    self.mesh.attachments.save(sid, opened={**cached, "archived": bool(args[1]) if len(args) > 1 else True})
+            return result
 
         return call
 
@@ -379,6 +390,7 @@ class Mesh:
 
     def __init__(self, data, hub, *, name="hub", address=None, plugin=None, skills_dir=None, skills_exclude=(), store=None, ops=None, clock=time.time):
         self.data = Path(data)
+        self.attachments = Attachments(self.data / "attachments")
         # The hub's own name in the mesh: other machines reach its chats as `mesh.<name>.<id>`.
         self.name = name
         # Where machines dial in (`mesh_listen`), for the join command a new machine runs.
@@ -562,6 +574,17 @@ class Mesh:
         if machine == self.name:
             return self.hub, inner
         if machine not in self.peers:
+            cached = self.attachments.view(session).get("opened")
+            if cached:
+                class Saved:
+                    async def open(self, *args):
+                        return {**cached, "running": False, "gateway": False, "requests": [], "status": None, "live": None}
+
+                    def __getattr__(self, name):
+                        async def offline(*args):
+                            raise ConnectionError(f"{machine} is offline")
+                        return offline
+                return Saved(), inner
             raise ConnectionError(f"{machine} is offline")
         return RemoteHub(self, machine), inner
 
@@ -606,7 +629,15 @@ class Mesh:
             return shown
 
         lists = await asyncio.gather(*(one(m) for m in list(self.peers)))
-        return [row for rows in lists for row in rows]
+        rows = [row for group in lists for row in group]
+        known = {row["id"] for row in rows}
+        nodes = load_nodes(self.data)
+        for opened in self.attachments.sessions():
+            sid = opened["session"]
+            machine, _ = parse(sid) or (None, None)
+            if machine in nodes and machine not in self.peers and sid not in known and not opened.get("archived"):
+                rows.append({"id": sid, "title": opened.get("title") or "untitled", "machine": machine, "source": "portal", "message_count": len(opened.get("messages") or []), "started_at": opened.get("last_active") or 0, "status": None})
+        return rows
 
     def status_frames(self):
         return [{"kind": "status", "session": s, **v} for s, v in self.status.items()]
@@ -675,7 +706,7 @@ class Mesh:
             for frame in info.get("statuses") or []:
                 await self._frame(machine, frame)
             await self.hub.broadcast({"kind": "machines.changed"})
-            return {"hub": socket.gethostname()}
+            return {"hub": socket.gethostname(), "attachments": 1}
 
         async def frame(value):
             await self._frame(machine, value)
@@ -711,6 +742,18 @@ class Mesh:
                 raise ValueError("Those are this machine's own chats")
             return await self.threads(target)
 
+        async def attachment(session, opened=None, item=None):
+            # This socket's identity owns only this machine's namespace.
+            if not isinstance(session, str) or not re.fullmatch(r"[\w-][\w.-]{0,100}", session):
+                raise ValueError("Invalid attachment session")
+            sid = remote_id(machine, session)
+            if opened is not None:
+                if not isinstance(opened, dict) or opened.get("session") != session:
+                    raise ValueError("Invalid attachment transcript")
+                opened = _rewrite(opened, machine)
+            self.attachments.save(sid, opened=opened, item=item)
+            return {"ok": True}
+
         async def relay(session, method, args):
             """A call into a chat on another machine (or the hub), for this machine's agent."""
             if method not in RELAYED:
@@ -723,7 +766,29 @@ class Mesh:
             hub, inner = self.target(session)
             args = list(args or [])
             if method == "send":
-                args = [args[0] if args else "", []]
+                text = str(args[0] if args else "")
+                deliveries = args[1] if len(args) > 1 else []
+                if not isinstance(deliveries, list) or len(deliveries) > MAX_FILES:
+                    raise ValueError("Too many attachments")
+                offered = set(media_paths(FROM_THREAD.sub("", text, count=1)))
+                total = 0
+                for item in deliveries:
+                    if not isinstance(item, dict) or item.get("path") not in offered:
+                        raise ValueError("That file wasn't attached in this message")
+                    _, data = decode_attachment(item)
+                    total += len(data)
+                if total > MAX_FILE:
+                    raise ValueError("Attachments must total under 25 MiB")
+                if deliveries and hub is not self.hub:
+                    raise ValueError("Send file attachments to a hub chat")
+                if deliveries:
+                    self.attachments.save(inner, opened={"messages": [{"role": "assistant", "text": text}]})
+                    for item in deliveries:
+                        self.attachments.save(inner, item=item)
+                        raw = item["path"]
+                        saved = self.attachments.file(inner, raw)
+                        text = text.replace(raw, str(saved))
+                args = [text, []]
             # answer(request id, result) names the request, not the chat.
             call = getattr(hub, method)
             result = await (call(*args) if method == "answer" else call(inner, *args))
@@ -739,6 +804,7 @@ class Mesh:
             "relay": relay,
             "threads": threads,
             "machine_op": machine_op,
+            "attachment": attachment,
         }
 
     async def handle(self, request):
@@ -801,6 +867,9 @@ class Node:
         # This machine's Hermes (`machine_ops.MachineOps`): its version, restarts and updates.
         self.ops = ops
         self.peer = None
+        self.uploaded = {}
+        self.attachments_supported = False
+        self.upload_lock = asyncio.Lock()
         self.connected_event = asyncio.Event()
         hub.taps.add(self._tap)
         if ops is not None:
@@ -810,8 +879,52 @@ class Node:
         peer = self.peer
         if peer is None:
             return
-        task = asyncio.get_running_loop().create_task(peer.call("frame", frame))
+        task = asyncio.get_running_loop().create_task(self._forward(peer, frame))
         task.add_done_callback(_quiet)
+
+    async def _upload(self, peer, opened):
+        if not self.attachments_supported:
+            return
+        async with self.upload_lock:
+            await self._upload_files(peer, opened)
+
+    async def _opened(self, session, results=False):
+        opened = await self.hub.open(session, results)
+        try:
+            opened["archived"] = await asyncio.to_thread(self.hub.backend.is_archived, session)
+        except ConnectionError:
+            pass  # The gateway is down; keep the hub's last known archive flag.
+        return opened
+
+    async def _upload_files(self, peer, opened):
+        await peer.call("attachment", opened["session"], opened)
+        for raw in sorted(shown_files(opened.get("messages") or [])):
+            try:
+                info = Path(raw).expanduser().stat()
+                stamp = (info.st_mtime_ns, info.st_size, info.st_ino)
+                key = (opened["session"], raw)
+                if self.uploaded.get(key) == stamp:
+                    continue
+                item = await asyncio.to_thread(read_attachment, raw)
+                await peer.call("attachment", opened["session"], None, item)
+                self.uploaded[key] = stamp
+            except (OSError, ValueError) as error:
+                log.info("portal: attachment unavailable (%s)", error)
+
+    async def _forward(self, peer, frame):
+        session = frame.get("session")
+        try:
+            if session and frame.get("kind") == "event" and frame.get("type") == "gateway.message":
+                text = (frame.get("payload") or {}).get("text") or ""
+                if media_paths(text):
+                    opened = await self._opened(session)
+                    opened["messages"] = [*opened["messages"], {"role": "assistant", "text": text}]
+                    await self._upload(peer, opened)
+            if session and frame.get("kind") == "event" and frame.get("type") == "message.complete":
+                await self._upload(peer, await self._opened(session))
+        except Exception:
+            log.warning("portal: attachment upload failed; backfill will retry", exc_info=True)
+        await peer.call("frame", frame)
 
     async def call(self, method, *args):
         peer = self.peer
@@ -832,7 +945,25 @@ class Node:
                 async def call(*args):
                     if name != "answer":
                         args = args[1:]  # the chat, which this relay already holds
-                    return await node.call("relay", session, name, list(args[:1]) if name == "send" else list(args))
+                    if name == "send":
+                        text = str(args[0])
+                        paths = list(dict.fromkeys(media_paths(FROM_THREAD.sub("", text, count=1))))
+                        if len(paths) > MAX_FILES:
+                            raise ValueError("Too many attachments")
+                        if paths and not node.attachments_supported:
+                            raise ValueError("The hub needs an attachment-capable plugin before files can be sent")
+                        files, size = [], 0
+                        for raw in paths:
+                            try:
+                                item = await asyncio.to_thread(read_attachment, raw)
+                            except OSError as error:
+                                raise ValueError("An attached file is missing or unreadable") from error
+                            size += len(item["data"])
+                            if size > ((MAX_FILE + 2) // 3) * 4:
+                                raise ValueError("Attachments must total under 25 MiB")
+                            files.append(item)
+                        return await node.call("relay", session, name, [text, files])
+                    return await node.call("relay", session, name, list(args))
 
                 return call
 
@@ -847,7 +978,13 @@ class Node:
         async def create(text, files=(), *rest):
             return await self.hub.create(text, decode_files(files or []), *rest)
 
-        methods.update(send=send, create=create)
+        async def opened(session, results=False):
+            result = await self._opened(session, results)
+            if self.peer is not None:
+                await self._upload(self.peer, result)
+            return result
+
+        methods.update(send=send, create=create, open=opened)
         ops = self.ops
         if ops is not None:
 
@@ -888,12 +1025,17 @@ class Node:
                 continue
             peer = Peer(ws, self._methods())
             self.peer = peer
+            self.uploaded.clear()
             running = asyncio.get_running_loop().create_task(peer.run())
             syncing = None
+            uploading = None
             try:
-                await peer.call("hello", self._hello())
+                hello = await peer.call("hello", self._hello())
+                self.attachments_supported = bool((hello or {}).get("attachments"))
                 self.connected_event.set()
                 log.info("portal: joined the mesh at %s as %s", self.url, self.name)
+                if self.attachments_supported:
+                    uploading = asyncio.get_running_loop().create_task(self._sync_attachments(peer))
                 if self.skills_into is not None:
                     syncing = asyncio.get_running_loop().create_task(self._sync_skills(peer))
                 await running
@@ -902,11 +1044,28 @@ class Node:
             finally:
                 self.peer = None
                 self.connected_event.clear()
-                for task in (running, syncing):
+                for task in (running, syncing, uploading):
                     if task is not None:
                         task.cancel()
                 await ws.close()
             await asyncio.sleep(self.RETRY)
+
+    async def _sync_attachments(self, peer):
+        # Backfill existing chats and retry after a lost link. One file per RPC.
+        while True:
+            try:
+                for row in [*await self.hub.sessions(), *await self.hub.archived()]:
+                    try:
+                        opened = await self._opened(row["id"])
+                        if shown_files(opened.get("messages") or []):
+                            await self._upload(peer, opened)
+                    except (ValueError, OSError):
+                        log.info("portal: attachment backfill skipped an unavailable chat")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("portal: attachment sync will retry", exc_info=True)
+            await asyncio.sleep(60)
 
     async def _sync_skills(self, peer):
         while True:

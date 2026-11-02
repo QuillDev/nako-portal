@@ -295,7 +295,9 @@ TOOLS = [
     (
         "mesh_send",
         send,
-        "Send a follow-up or steer to a task running on another machine (queues or steers if it is busy).",
+        "Send a follow-up or steer to a task running on another machine (queues or steers if it is busy). "
+        "From a node to a hub chat, include MEDIA:<absolute local path> tags to upload files and deliver them "
+        "into that chat (up to 32 files totaling 25 MiB; quote paths with spaces).",
         {"session": {"type": "string"}, "text": {"type": "string"}, "wait_seconds": WAIT},
         ["session", "text"],
     ),

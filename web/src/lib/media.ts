@@ -12,8 +12,8 @@ const EXTS = (
 
 const QUOTED = "`[^`\\n]+`|\"[^\"\\n]+\"|'[^'\\n]+'"
 const MEDIA = new RegExp(
-  `MEDIA:[^\\S\\n]*(?<path>${QUOTED}|(?:~/|/)[^\\n]*?\\.(?:${EXTS}))(?=[\\s\`"'*_,;:)\\]}\\[]|MEDIA:|\\.(?:\\s|$)|$)` +
-    `|^MEDIA:(?<line>/[^\\n]+?)[^\\S\\n]*$`,
+  `MEDIA:[^\\S\\n]*(?<path>${QUOTED}|(?:~/|/|[A-Za-z]:[\\\\/])[^\\n]*?\\.(?:${EXTS}))(?=[\\s\`"'*_,;:)\\]}\\[]|MEDIA:|\\.(?:\\s|$)|$)` +
+    `|^MEDIA:(?<line>(?:~/|/|[A-Za-z]:[\\\\/])[^\\n]+?)[^\\S\\n]*$`,
   "gim",
 )
 const USER_IMAGE = new RegExp(`\\[Image attached at: (?<hint>[^\\n\\]]+)\\]|^@image:(?<ref>${QUOTED}|\\S+)[^\\S\\n]*$`, "gm")

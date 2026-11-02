@@ -19,7 +19,7 @@ from aiohttp import WSMsgType, web
 from . import webauthn
 from .hub import NEEDS_YOU, WORKING, for_app, from_thread_line, page
 from .link import GATEWAY_PATH
-from .media import shown_files
+from .media import media_paths, shown_files
 from .mesh import parse as remote
 
 log = logging.getLogger("hermes.portal")
@@ -838,20 +838,33 @@ class Portal:
     async def file(self, request):
         """A file shown in that session's transcript (a reply's MEDIA: tag or an image the user attached), and nothing else."""
         self._require(request)
-        hub = await self._hub()
         session = request.query.get("session", "")
         raw = request.query.get("path", "")
-        # Another machine's files stay on that machine.
-        if not SESSION_ID.match(session) or not raw.startswith(("/", "~/")) or remote(session):
+        if not SESSION_ID.fullmatch(session):
+            raise web.HTTPNotFound()
+        if remote(session):
+            path = self.mesh.attachments.file(session, raw) if self.mesh is not None else None
+            if path is None:
+                raise web.HTTPNotFound()
+            return self._file_response(path, raw)
+        hub = await self._hub()
+        if not raw.startswith(("/", "~/")):
             raise web.HTTPNotFound()
         path = Path(raw).expanduser()
         if raw not in await self._shown_files(hub, session, raw) or not path.is_file() or path.stat().st_size > MAX_FILE:
             raise web.HTTPNotFound()
-        kind = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return self._file_response(path, raw)
+
+    def _file_response(self, path, raw):
+        from pathlib import PureWindowsPath
+        from urllib.parse import quote
+
+        name = PureWindowsPath(raw).name
+        kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
         inline = kind.startswith("image/") or kind.startswith("audio/") or kind.startswith("video/") or kind == "application/pdf"
         disposition = "inline" if inline else "attachment"
         return web.FileResponse(
-            path, headers={"Content-Type": kind, "Content-Disposition": f'{disposition}; filename="{path.name}"', "Cache-Control": SHOWN_FILE_CACHE}
+            path, headers={"Content-Type": kind, "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(name, safe='')}", "Cache-Control": SHOWN_FILE_CACHE, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
         )
 
     async def _shown_files(self, hub, session, wanted):
@@ -860,7 +873,14 @@ class Portal:
         now = self.clock()
         expires, files = self.shown.get(session, (0, frozenset()))
         if expires < now or wanted not in files:
-            files = frozenset(shown_files((await hub.open(session))["messages"]))
+            messages = (await hub.open(session))["messages"]
+            files = shown_files(messages)
+            if self.mesh is not None:
+                received = self.mesh.attachments.delivered(session)
+                for message in messages:
+                    if message.get("sender"):
+                        files.update(path for path in media_paths(message.get("text") or "") if path in received)
+            files = frozenset(files)
             for stale in [key for key, (until, _) in self.shown.items() if until < now]:
                 del self.shown[stale]
             self.shown[session] = (now + SHOWN_FILES_TTL, files)
