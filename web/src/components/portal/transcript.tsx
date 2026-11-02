@@ -27,7 +27,8 @@ type Block =
 export type Note = { at: number; text: string; key: string }
 
 // For each row, whether it ended its turn: nothing she did follows it before the next prompt.
-// Rows a tool call or another message came after were her working along the way.
+// Rows a tool call or another message came after were her working along the way. The hub marks
+// `ended` too, from rows the app never gets (a background job's notice also starts a turn).
 function turnEnds(messages: HistoryMessage[]) {
   const ends: boolean[] = new Array(messages.length)
   let clear = true
@@ -64,7 +65,7 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
       return
     }
     if (m.role === "assistant" && !m.text.trim() && !m.reasoning) return
-    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !m.post && !ends[i]))) return
+    if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !m.post && !m.ended && !ends[i]))) return
     flush()
     const key = String(m.row_id ?? i)
     // Another thread's message is Nako's own words, so it reads as hers, under that thread's name.

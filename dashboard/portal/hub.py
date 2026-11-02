@@ -81,11 +81,13 @@ SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 PAGE_MESSAGES = 30
 # What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
 # tool arguments and display metadata, which made a page of a long chat ~170 KB instead of ~10 KB.
-SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "post", "steered", "sender", "name", "context", "tool_call_id")
+SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "post", "ended", "steered", "sender", "name", "context", "tool_call_id")
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
-SIGN_OFF_TAG = re.compile(r"\s*<signoff>(.*?)</signoff>\s*", re.S | re.I)
-SIGN_OFF_OPEN = re.compile(r"\s*(?:<signoff>[^<]*|<(?:s(?:i(?:g(?:n(?:o(?:f(?:f)?)?)?)?)?)?)?)$", re.I)
+# A reply that mentions the tag in prose (`<signoff>`) isn't one: a tag holds no other tag.
+SIGN_OFF_TAG = re.compile(r"\s*<signoff>((?:(?!</?signoff>).)*?)</signoff>\s*", re.S | re.I)
+# Only on a line of its own, where the sign-off goes, so a `<signoff>` in prose isn't a tag.
+SIGN_OFF_OPEN = re.compile(r"(?:\A|\n)\s*(?:<signoff>[^<\n]*|<(?:s(?:i(?:g(?:n(?:o(?:f(?:f)?)?)?)?)?)?)?)$", re.I)
 # A post outside a turn is mirrored into the transcript just after the send returns.
 MIRROR_SETTLE = 1.0
 # A reply line that shows the person a stored secret: `SECRET:NAME` (web/src/lib/secrets.ts).
@@ -297,6 +299,7 @@ class Hub:
             messages = [{k: v for k, v in m.items() if k != "result"} if "result" in m else m for m in messages]
         if (session in self.inboxes) if self.inboxes is not None else (await asyncio.to_thread(self.backend.chat_of, session)) in CHANNELS:
             messages = _mark_posts(messages)
+        messages = _mark_turn_ends(messages)
         # Hermes names a chat after its first exchange; a list fetched before that still says untitled.
         renamed = session in self.titles and self.titles[session] != title
         self.titles[session] = title
@@ -697,6 +700,25 @@ def _without_restated(messages):
                 continue
         out.append(message)
     return out
+
+
+def _mark_turn_ends(messages):
+    """Mark each reply that ended its turn: no tool call or other message of hers follows it before
+    the next user row. The app keeps only these in a quiet chat, but it never sees the rows Hermes
+    adds for itself (a background job's completion notice), so without the mark a reply followed by
+    such a notice and her answer to it reads as a message along the way and disappears."""
+    out, clear = [], True
+    for message in reversed(messages):
+        role = message.get("role")
+        text = (message.get("text") or "").strip()
+        if role == "assistant" and text and clear:
+            message = {**message, "ended": True}
+        if role == "user":
+            clear = True
+        elif role == "tool" or text:
+            clear = False
+        out.append(message)
+    return out[::-1]
 
 
 def _mark_posts(messages):
