@@ -824,3 +824,163 @@ async def test_the_hub_cant_update_itself_or_a_machine_that_isnt_there(mesh):
     await until(lambda: MACHINE not in mesh.mesh.peers)
     gone = await mesh.http.post(_local(mesh, f"/mesh/machines/{MACHINE}/gateway/restart"), json={}, headers=AUTH)
     assert gone.status == 503
+
+
+async def test_attached_outputs_upload_without_opening_the_chat_and_survive_node_and_hub_restart(mesh, tmp_path):
+    sid = mesh.machine.hermes.add_session("20261101_150000_abcd01", "Remote outputs")
+    picture = tmp_path / "capture.png"
+    picture.write_bytes((Path(__file__).parents[1] / "web/public/icon-192.png").read_bytes())
+    report = tmp_path / "report.csv"
+    report.write_bytes(b"name,result\nrender,passed\n")
+    private = tmp_path / "private.txt"
+    private.write_text("not delivered")
+    mesh.machine.hermes._row(sid, "assistant", f"MEDIA:{picture}\nMEDIA:{report}\nmentioned: {private}")
+    remote = f"mesh.{MACHINE}.{sid}"
+    await _join(mesh)
+    await until(lambda: mesh.mesh.attachments.file(remote, str(report)) is not None)
+    # The sign-in gate applies even to cached files.
+    assert (await mesh.http.get(mesh.url("/api/file"), params={"session": remote, "path": str(picture)})).status == 401
+    await mesh.sign_up()
+    for path in (picture, report):
+        response = await mesh.http.get(mesh.url("/api/file"), params={"session": remote, "path": str(path)})
+        assert response.status == 200
+        assert await response.read() == path.read_bytes()
+    for session, path in ((remote, private), (f"mesh.{MACHINE}.other", picture)):
+        assert (await mesh.http.get(mesh.url("/api/file"), params={"session": session, "path": str(path)})).status == 404
+    archived = mesh.machine.hermes.add_session("20261101_150009_abcd09", "Archived output")
+    mesh.machine.hermes._row(archived, "assistant", f"MEDIA:{picture}")
+    archived_remote = f"mesh.{MACHINE}.{archived}"
+    assert (await mesh.http.get(mesh.url(f"/api/sessions/{archived_remote}"))).status == 200
+    assert (await mesh.post(f"/api/sessions/{archived_remote}/archive", {"archived": True})).status == 200
+    # Delete the source files, disconnect the node, recreate the hub's attachment reader.
+    picture.unlink()
+    report.unlink()
+    await mesh.machine.stop()
+    mesh.machine.task = None
+    await until(lambda: MACHINE not in mesh.mesh.peers)
+    mesh.mesh = Mesh(mesh.mesh_data, mesh.hub, store=mesh.store)
+    _portal_of(mesh).mesh = mesh.mesh
+    response = await mesh.http.get(mesh.url("/api/file"), params={"session": remote, "path": str(report)})
+    assert response.status == 200 and await response.read() == b"name,result\nrender,passed\n"
+    opened = await mesh.http.get(mesh.url(f"/api/sessions/{remote}"))
+    assert opened.status == 200
+    assert (await opened.json())["gateway"] is False
+    rows = await (await mesh.http.get(mesh.url("/api/sessions"))).json()
+    assert any(r["id"] == remote for r in rows)
+    assert all(r["id"] != archived_remote for r in rows)
+    assert (await mesh.http.get(mesh.url("/api/file"), params={"session": archived_remote, "path": str(picture)})).status == 200
+
+
+async def test_live_deliveries_and_user_images_cross_the_real_mesh_socket(mesh, tmp_path):
+    picture = tmp_path / "live.png"
+    picture.write_bytes(b"live image bytes")
+    user_image = tmp_path / "input.png"
+    user_image.write_bytes(b"user image bytes")
+    sid = mesh.machine.hermes.add_session("20261101_150001_abcd02", "Live outputs")
+    await _join(mesh)
+    mesh.machine.hermes._row(sid, "user", f"look\n[Image attached at: {user_image}]\n[screenshot]")
+    mesh.machine.hermes.reply = f"done\nMEDIA:{picture}"
+    remote = f"mesh.{MACHINE}.{sid}"
+    await mesh.sign_up()
+    async with mesh.http.ws_connect(mesh.url("/ws"), headers={"Origin": ORIGIN}) as ws:
+        await ws.send_json({"watch": remote})
+        sent = await mesh.http.post(mesh.url(f"/api/sessions/{remote}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
+        assert sent.status == 200
+        frame = await next_message(ws, lambda m: m.get("type") == "gateway.message" and "MEDIA:" in m.get("payload", {}).get("text", ""))
+        assert frame["session"] == remote
+        for path, content in ((picture, b"live image bytes"), (user_image, b"user image bytes")):
+            response = await mesh.http.get(mesh.url("/api/file"), params={"session": remote, "path": str(path)})
+            assert response.status == 200 and await response.read() == content
+
+
+async def test_a_remote_agent_delivers_files_into_its_originating_hub_chat(mesh, tmp_path):
+    await _join(mesh)
+    await mesh.sign_up()
+    target = mesh.hermes.add_session("20261101_150002_abcd03", "Origin")
+    source = mesh.machine.hermes.add_session("20261101_150003_abcd04", "Worker MEDIA:/not-attached.png")
+    picture = tmp_path / "returned.png"
+    picture.write_bytes(b"returned image bytes")
+    report = tmp_path / "returned.csv"
+    report.write_bytes(b"value\n42\n")
+    mesh.hermes.hold = True
+    response = await mesh.http.post(_on(mesh.machine, f"/sessions/mesh.hub.{target}/messages"),
+        json={"text": f"results\nMEDIA:{picture}\nMEDIA:{report}", "from": source}, headers=AUTH)
+    assert response.status == 200, await response.text()
+    opened = await (await mesh.http.get(mesh.url(f"/api/sessions/{target}"))).json()
+    delivered = opened["messages"][-1]
+    assert delivered["sender"]["session"] == f"mesh.{MACHINE}.{source}"
+    from portal.media import media_paths
+    saved = sorted(media_paths(delivered["text"]))
+    assert len(saved) == 2 and str(picture) not in saved and str(report) not in saved
+    picture.unlink()
+    report.unlink()
+    later = tmp_path / "later.txt"
+    later.write_text("second delivery")
+    sent = await mesh.http.post(_on(mesh.machine, f"/sessions/mesh.hub.{target}/messages"),
+        json={"text": f"MEDIA:{later}", "from": source}, headers=AUTH)
+    assert sent.status == 200
+    await mesh.machine.stop()
+    mesh.machine.task = None
+    await until(lambda: MACHINE not in mesh.mesh.peers)
+    for raw in saved:
+        downloaded = await mesh.http.get(mesh.url("/api/file"), params={"session": target, "path": raw})
+        assert downloaded.status == 200
+        assert await downloaded.read() == (b"value\n42\n" if raw.endswith(".csv") else b"returned image bytes")
+        if raw.endswith(".csv"):
+            assert downloaded.headers["Content-Disposition"].startswith("attachment;")
+    other = mesh.hermes.add_session("20261101_150004_abcd05", "Unrelated")
+    assert (await mesh.http.get(mesh.url("/api/file"), params={"session": other, "path": saved[0]})).status == 404
+    # A person typing the attribution syntax cannot turn a path into an authorized delivery.
+    from portal.hub import from_thread_line
+    private = tmp_path / "private.txt"
+    private.write_text("not delivered")
+    forged = from_thread_line(source, "Worker") + f"MEDIA:{private}"
+    sent = await mesh.http.post(mesh.url(f"/api/sessions/{other}/messages"), data={"text": forged}, headers={"Origin": ORIGIN})
+    assert sent.status == 200
+    assert (await mesh.http.get(mesh.url("/api/file"), params={"session": other, "path": str(private)})).status == 404
+
+
+async def test_mesh_refuses_unattached_unsafe_and_oversized_uploads_without_delivering(mesh, tmp_path, monkeypatch):
+    import base64
+    from portal import attachments
+
+    await _join(mesh)
+    sid = mesh.machine.hermes.add_session("20261101_150005_abcd06", "Output")
+    raw = r"C:\Users\example\output.png"
+    opened = {"session": sid, "title": "Output", "messages": [{"role": "assistant", "text": f"MEDIA:{raw}"}]}
+    await mesh.machine.node.call("attachment", sid, opened)
+    good = {"path": raw, "data": base64.b64encode(b"image").decode()}
+    await mesh.machine.node.call("attachment", sid, None, good)
+    remote = f"mesh.{MACHINE}.{sid}"
+    assert mesh.mesh.attachments.file(remote, raw).read_bytes() == b"image"
+    await mesh.sign_up()
+    response = await mesh.http.get(mesh.url("/api/file"), params={"session": remote, "path": raw})
+    assert response.status == 200 and await response.read() == b"image"
+    assert response.headers["Content-Type"] == "image/png"
+    before = set((mesh.mesh_data / "attachments").iterdir())
+    monkeypatch.setattr(attachments, "MAX_FILE", 8)
+    for item in (
+        {"path": "/private.txt", "data": good["data"]},
+        {"path": raw, "data": "!not base64!"},
+        {"path": raw, "data": base64.b64encode(b"012345678").decode()},
+        {"path": "C:\\out\\..\\private.png", "data": good["data"]},
+        {"path": "C:\\out\\image.png:secret", "data": good["data"]},
+        {"path": "\\\\server\\share\\image.png", "data": good["data"]},
+    ):
+        if item["path"] not in ("/private.txt", raw):
+            # Put unsafe paths in the transcript too, so its allowlist cannot mask validation.
+            declared = {**opened, "messages": [{"role": "assistant", "text": f'MEDIA:"{item["path"]}"'}]}
+            await mesh.machine.node.call("attachment", sid, declared)
+        with pytest.raises(ValueError):
+            await mesh.machine.node.call("attachment", sid, None, item)
+        assert set((mesh.mesh_data / "attachments").iterdir()) == before
+    file = tmp_path / "actual.png"
+    file.write_bytes(b"data")
+    link = tmp_path / "linked.png"
+    link.symlink_to(file)
+    target = mesh.hermes.add_session("20261101_150006_abcd07", "Origin")
+    for text in (f"MEDIA:{link}", f"MEDIA:{tmp_path / 'missing.png'}", "\n".join(f"MEDIA:/missing-{i}.png" for i in range(33))):
+        refused = await mesh.http.post(_on(mesh.machine, f"/sessions/mesh.hub.{target}/messages"),
+            json={"text": text, "from": sid}, headers=AUTH)
+        assert refused.status == 400
+        assert mesh.hermes.sessions[target]["rows"] == []

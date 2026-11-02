@@ -20,9 +20,9 @@ IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"}
 _QUOTED = r"`[^`\n]+`|\"[^\"\n]+\"|'[^'\n]+'"
 # A tag anywhere in a line, ending at a known extension; or a whole line holding just the tag.
 MEDIA = re.compile(
-    rf"MEDIA:[^\S\n]*(?P<path>{_QUOTED}|(?:~/|/)[^\n]*?\.(?:{'|'.join(EXTS)}))"
+    rf"MEDIA:[^\S\n]*(?P<path>{_QUOTED}|(?:~/|/|[A-Za-z]:[\\/])[^\n]*?\.(?:{'|'.join(EXTS)}))"
     rf"(?=[\s`\"'*_,;:)\]}}\[]|MEDIA:|\.(?:\s|$)|$)"
-    rf"|^MEDIA:(?P<line>/[^\n]+?)[^\S\n]*$",
+    rf"|^MEDIA:(?P<line>(?:~/|/|[A-Za-z]:[\\/])[^\n]+?)[^\S\n]*$",
     re.IGNORECASE | re.MULTILINE,
 )
 # What Hermes writes into a user turn for an attached image.

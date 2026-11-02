@@ -186,7 +186,7 @@ function Files({ urls }: { urls: Item[] }) {
   )
 }
 
-const named = (path: string) => path.split("/").pop() || path
+const named = (path: string) => path.split(/[\\/]/).pop() || path
 
 const User = memo(function User({ session, text, images, steered }: { session: string; text: string; images?: string[]; steered?: boolean }) {
   const turn = splitUserTurn(text)

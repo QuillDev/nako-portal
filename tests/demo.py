@@ -260,6 +260,19 @@ async def _laptop(portal, hub, data, port):
             ("20261024_083000_m00002", "Clean up Downloads", [("user", "sort my downloads folder")]),
         ],
     )
+    # Real files cross the node's mesh socket, not a browser-only image fixture.
+    outputs = data / "node-output"
+    outputs.mkdir()
+    picture = outputs / "capture.png"
+    picture.write_bytes((ROOT / "web/public/icon-512.png").read_bytes())
+    report = outputs / "results.csv"
+    report.write_text("check,result\nimage upload,passed\nfile download,passed\n")
+    await machine("studio", "Windows 11", [
+        ("20261024_110000_f00001", "Mesh attachments", [
+            ("user", "send the capture and the results file"),
+            ("assistant", f"saved both on the hub. they stay here when this machine disconnects.\n\nMEDIA:{picture}\nMEDIA:{report}"),
+        ]),
+    ])
     desktop = await machine("desktop", "Windows 11", [("20261024_100500_w00001", "Render the trailer", [("user", "render the trailer at 4k")])], pause=3600)
     await asyncio.sleep(1)
     await desktop.send("20261024_100500_w00001", "use the new color grade")
