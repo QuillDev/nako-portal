@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
 import { checkBuild } from "@/lib/fresh-build"
 import type { PortalRequest } from "@/lib/types"
-import { SecretRequest } from "./secrets"
 
 const APPROVAL_LABELS: Record<string, string> = { once: "Allow once", session: "Allow this session", always: "Always allow", deny: "Deny" }
 
@@ -73,15 +72,14 @@ function UnknownRequest({ method }: { method: string }) {
   return <p className="rounded-lg border p-4 text-muted-foreground text-sm">{method}: reload the page to answer this one.</p>
 }
 
+// A secret request isn't drawn here: it takes over the composer (SecretComposer).
 export const Requests = memo(function Requests({ requests, answer }: { requests: PortalRequest[]; answer: Portal["answer"] }) {
   return requests.map(r =>
     r.method === "approval" ? (
       <Approval answer={answer} key={r.id} request={r} />
     ) : r.method === "clarify" ? (
       <Clarify answer={answer} key={r.id} request={r} />
-    ) : r.method === "secret" ? (
-      <SecretRequest answer={answer} key={r.id} request={r} />
-    ) : (
+    ) : r.method === "secret" ? null : (
       <UnknownRequest key={r.id} method={r.method} />
     ),
   )

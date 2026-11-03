@@ -15,6 +15,7 @@ import { PageHeader } from "./header"
 import { Presence } from "./presence"
 import { Processes } from "./processes"
 import { Requests } from "./requests"
+import { SecretComposer } from "./secrets"
 import { useGroupPicker } from "./groups"
 import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
@@ -235,6 +236,8 @@ export function Chat({ portal }: { portal: Portal }) {
   const start = c?.start ?? 0
   const notes = useMemo(() => portal.notes.filter(n => n.session === session && n.at >= start).map(n => ({ ...n, at: n.at - start })), [portal.notes, session, start])
   const [dock, setDock] = useState(0)
+  // Nako waits on a secret until it's answered, so the composer becomes its field until then.
+  const secret = c?.requests.find(r => r.method === "secret")
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
   if (!c)
     return (
@@ -286,17 +289,21 @@ export function Chat({ portal }: { portal: Portal }) {
           </Dock>
         )}
       </Conversation>
-      <Composer
-        command={portal.command}
-        commands={portal.commands}
-        draftKey={draftKey}
-        session={c.session}
-        inChat
-        running={c.running}
-        send={portal.send}
-        setError={portal.setError}
-        stop={portal.stop}
-      />
+      {secret ? (
+        <SecretComposer answer={portal.answer} key={secret.id} request={secret} />
+      ) : (
+        <Composer
+          command={portal.command}
+          commands={portal.commands}
+          draftKey={draftKey}
+          session={c.session}
+          inChat
+          running={c.running}
+          send={portal.send}
+          setError={portal.setError}
+          stop={portal.stop}
+        />
+      )}
     </>
   )
 }

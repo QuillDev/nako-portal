@@ -1,4 +1,4 @@
-import { CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, Trash2Icon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, Trash2Icon } from "lucide-react"
 import { memo, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -36,10 +36,11 @@ function SecretField({ value, onChange, onEnter, label, autoFocus }: { value: st
   )
 }
 
-/** Nako asking for a secret in the chat: you type it here and she only ever gets its name. */
-export const SecretRequest = memo(function SecretRequest({ request, answer }: { request: PortalRequest; answer: Portal["answer"] }) {
+/** Nako asking for a secret: the composer turns into a masked field for it, and she only ever gets its name. */
+export const SecretComposer = memo(function SecretComposer({ request, answer }: { request: PortalRequest; answer: Portal["answer"] }) {
   const { name = "", note, replace } = request.params
   const [value, setValue] = useState("")
+  const [shown, setShown] = useState(false)
   const [busy, setBusy] = useState(false)
   const send = async (result: Record<string, unknown>) => {
     setBusy(true)
@@ -51,22 +52,47 @@ export const SecretRequest = memo(function SecretRequest({ request, answer }: { 
   }
   const save = () => value && !busy && send({ value })
   return (
-    <div className="flex flex-col gap-3 rounded-lg border p-4" data-secret-request={name}>
-      <div className="flex items-start gap-3">
-        <KeyRoundIcon className="mt-0.5 size-4 shrink-0 text-primary" />
-        <p className="min-w-0 text-sm">
-          <span className="font-medium">{replace ? `New value for ${name}.` : `Needs ${name}.`}</span> {note}
-        </p>
-      </div>
-      <SecretField autoFocus label={name} onChange={setValue} onEnter={save} value={value} />
-      <div className="flex gap-2">
-        <Button disabled={!value || busy} onClick={save} size="sm">
-          Save
-        </Button>
-        <Button disabled={busy} onClick={() => send({ declined: true })} size="sm" variant="outline">
-          Not now
-        </Button>
-      </div>
+    <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <form
+        className="flex flex-col gap-1 rounded-[22px] border border-primary/35 bg-card py-2.5 pr-2.5 pl-4 has-[input:focus-visible]:border-primary/60"
+        data-secret-request={name}
+        onSubmit={e => {
+          e.preventDefault()
+          void save()
+        }}
+      >
+        <div className="flex flex-wrap items-start gap-x-2 text-[13px] leading-7">
+          <KeyRoundIcon className="mt-1.5 size-4 shrink-0 text-primary" />
+          <span className="font-medium font-mono">{name}</span>
+          {replace && <span className="text-muted-foreground">new value</span>}
+          {note && <span className="order-last min-w-0 basis-full py-1 pl-6 leading-5 text-muted-foreground sm:order-none sm:basis-0 sm:flex-1 sm:pl-0">{note}</span>}
+          <Button className="ml-auto h-7 px-2 text-[13px] text-muted-foreground sm:ml-0" disabled={busy} onClick={() => send({ declined: true })} size="sm" type="button" variant="ghost">
+            Not now
+          </Button>
+        </div>
+        <div className="flex items-center gap-1">
+          <input
+            aria-label={name}
+            autoCapitalize="off"
+            autoComplete="off"
+            autoCorrect="off"
+            autoFocus
+            className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+            data-1p-ignore
+            onChange={e => setValue(e.target.value)}
+            placeholder="Paste the secret"
+            spellCheck={false}
+            type={shown ? "text" : "password"}
+            value={value}
+          />
+          <Button aria-label={shown ? "Hide" : "Show"} className="rounded-full text-muted-foreground" onClick={() => setShown(s => !s)} size="icon-sm" type="button" variant="ghost">
+            {shown ? <EyeOffIcon /> : <EyeIcon />}
+          </Button>
+          <Button aria-label="Save" className="rounded-full" disabled={!value || busy} size="icon-sm" type="submit">
+            <ArrowUpIcon />
+          </Button>
+        </div>
+      </form>
     </div>
   )
 })
