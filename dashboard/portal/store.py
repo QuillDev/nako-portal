@@ -16,6 +16,9 @@ import time
 from pathlib import Path
 
 LOGIN_TTL = 30 * 24 * 3600
+# The colors a chat group can have, in the order new groups take them.
+GROUP_COLORS = ("blue", "green", "yellow", "orange", "red", "teal", "purple", "grey")
+GROUP_NAME_MAX = 60
 SETUP_TTL = 3600
 
 SCHEMA = """
@@ -45,6 +48,16 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     endpoint TEXT PRIMARY KEY,
     keys_json TEXT NOT NULL,
     created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_group_members (
+    chat TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,6 +178,87 @@ class Store:
 
     def set_meta(self, key, value):
         self._run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, json.dumps(value)))
+
+    # Chat groups: named, colored sets of chats, kept by each chat's thread id (it outlives a
+    # session rotating under it). A chat is in at most one group.
+
+    def groups(self):
+        rows = self._run("SELECT id, name, color FROM chat_groups ORDER BY created_at")
+        return [{"id": r[0], "name": r[1], "color": r[2]} for r in rows]
+
+    def group(self, ref):
+        """A group by id, or by name ignoring case."""
+        ref = str(ref or "").strip()
+        rows = self._run(
+            "SELECT id, name, color FROM chat_groups WHERE id=? OR name=? COLLATE NOCASE ORDER BY id=? DESC LIMIT 1", (ref, ref, ref)
+        )
+        if not rows:
+            raise ValueError(f"No group called {ref!r}")
+        return {"id": rows[0][0], "name": rows[0][1], "color": rows[0][2]}
+
+    @staticmethod
+    def _group_name(name):
+        name = " ".join(str(name or "").split())[:GROUP_NAME_MAX]
+        if not name:
+            raise ValueError("Give the group a name")
+        return name
+
+    @staticmethod
+    def _group_color(color):
+        if color not in GROUP_COLORS:
+            raise ValueError(f"Pick a color from {', '.join(GROUP_COLORS)}")
+        return color
+
+    def create_group(self, name, color=None):
+        name = self._group_name(name)
+        with self.lock:
+            if self.db.execute("SELECT 1 FROM chat_groups WHERE name=? COLLATE NOCASE", (name,)).fetchone():
+                raise ValueError(f"There's already a group called {name!r}")
+            if color is None:
+                used = [r[0] for r in self.db.execute("SELECT color FROM chat_groups")]
+                color = min(GROUP_COLORS, key=lambda c: (used.count(c), GROUP_COLORS.index(c)))
+            group = {"id": secrets.token_hex(6), "name": name, "color": self._group_color(color)}
+            self.db.execute(
+                "INSERT INTO chat_groups (id, name, color, created_at) VALUES (?, ?, ?, ?)",
+                (group["id"], name, group["color"], self.clock()),
+            )
+        return group
+
+    def update_group(self, ref, name=None, color=None):
+        group = self.group(ref)
+        if name is not None:
+            name = self._group_name(name)
+            clash = self._run("SELECT 1 FROM chat_groups WHERE name=? COLLATE NOCASE AND id<>?", (name, group["id"]))
+            if clash:
+                raise ValueError(f"There's already a group called {name!r}")
+            group["name"] = name
+        if color is not None:
+            group["color"] = self._group_color(color)
+        self._run("UPDATE chat_groups SET name=?, color=? WHERE id=?", (group["name"], group["color"], group["id"]))
+        return group
+
+    def delete_group(self, ref):
+        """Remove a group. Its chats stay; they're just no longer grouped."""
+        group = self.group(ref)
+        with self.lock:
+            self.db.execute("DELETE FROM chat_group_members WHERE group_id=?", (group["id"],))
+            self.db.execute("DELETE FROM chat_groups WHERE id=?", (group["id"],))
+        return group
+
+    def set_chat_group(self, chat, ref):
+        """Put a chat in a group (moving it out of any other), or take it out with ref None."""
+        if ref is None:
+            self._run("DELETE FROM chat_group_members WHERE chat=?", (chat,))
+            return None
+        group = self.group(ref)
+        self._run("INSERT OR REPLACE INTO chat_group_members (chat, group_id) VALUES (?, ?)", (chat, group["id"]))
+        return group
+
+    def chat_groups(self):
+        """chat -> its group."""
+        groups = {g["id"]: g for g in self.groups()}
+        rows = self._run("SELECT chat, group_id FROM chat_group_members")
+        return {chat: groups[gid] for chat, gid in rows if gid in groups}
 
     # Push subscriptions
 

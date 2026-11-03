@@ -173,6 +173,11 @@ class Portal:
         r.add_post("/api/sessions/{session}/archive", self.archive)
         r.add_post("/api/sessions/{session}/pin", self.pin)
         r.add_post("/api/sessions/{session}/title", self.title)
+        r.add_post("/api/sessions/{session}/group", self._auth(self.set_group))
+        r.add_get("/api/groups", self._auth(self.groups))
+        r.add_post("/api/groups", self._auth(self.create_group))
+        r.add_post("/api/groups/{group}", self._auth(self.update_group))
+        r.add_post("/api/groups/{group}/remove", self._auth(self.delete_group))
         r.add_post("/api/requests/{request}", self.answer)
         r.add_get("/api/secrets", self.secrets)
         r.add_get("/api/secrets/{name}", self.secret)
@@ -364,6 +369,11 @@ class Portal:
         app.router.add_post("/mesh/machines/{machine}/gateway/restart", restart_gateway)
         app.router.add_post("/mesh/machines/{machine}/update", update)
         app.router.add_get("/mesh/machines/{machine}/job", job)
+        app.router.add_post("/sessions/{session}/group", self.set_group)
+        app.router.add_get("/groups", self.groups)
+        app.router.add_post("/groups", self.create_group)
+        app.router.add_post("/groups/{group}", self.update_group)
+        app.router.add_post("/groups/{group}/remove", self.delete_group)
         if link is not None:
             app.router.add_get(GATEWAY_PATH, link.handle)
         return app
@@ -688,7 +698,9 @@ class Portal:
         if request.query.get("archived") == "only":
             return web.json_response(await hub.archived())
         rows = await hub.sessions()
+        member = self.store.chat_groups()
         for row in rows:
+            row["group"] = member.get(row.pop("chat", None))
             # A post nobody has opened the chat for since: the sidebar marks it.
             row["unread"] = (row["notifications"] or row["reviews"]) and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
         if self.mesh is not None:
@@ -796,6 +808,71 @@ class Portal:
         if not title:
             raise ValueError("Give it a title")
         return web.json_response(await hub.rename(session, title))
+
+    # Chat groups. The same handlers serve the app (signed in) and the loopback API, which is how
+    # the agent's group tools reach them.
+
+    def _auth(self, handler):
+        async def signed(request):
+            self._require(request)
+            return await handler(request)
+
+        return signed
+
+    async def _grouped(self):
+        """This machine's chats with their group, and the groups."""
+        hub = await self._hub()
+        rows = await hub.sessions()
+        member = self.store.chat_groups()
+        return rows, member
+
+    async def groups(self, request):
+        """Every group, each with its chats (newest first). A group can be empty."""
+        try:
+            rows, member = await self._grouped()
+        except ConnectionError:
+            rows, member = [], {}
+        out = [{**group, "chats": []} for group in self.store.groups()]
+        by_id = {group["id"]: group for group in out}
+        for row in rows:
+            group = member.get(row.get("chat"))
+            if group:
+                by_id[group["id"]]["chats"].append({"session": row["id"], "title": row["title"]})
+        return web.json_response(out)
+
+    async def _changed(self):
+        await self.hub.broadcast({"kind": "sessions.changed"})
+
+    async def create_group(self, request):
+        body = await request.json()
+        group = self.store.create_group(body.get("name"), body.get("color") or None)
+        await self._changed()
+        return web.json_response(group)
+
+    async def update_group(self, request):
+        body = await request.json()
+        group = self.store.update_group(request.match_info["group"], body.get("name"), body.get("color") or None)
+        await self._changed()
+        return web.json_response(group)
+
+    async def delete_group(self, request):
+        group = self.store.delete_group(request.match_info["group"])
+        await self._changed()
+        return web.json_response(group)
+
+    async def set_group(self, request):
+        """Put a chat in a group (`group`: id or name), or take it out (`group`: null)."""
+        session = self._session(request)
+        if remote(session):
+            raise ValueError("Groups hold this machine's chats only")
+        body = await request.json()
+        hub = await self._hub()
+        chat = await asyncio.to_thread(hub.backend.chat_of, session)
+        if not chat:
+            raise ValueError("Only portal chats can be grouped")
+        group = self.store.set_chat_group(chat, body.get("group") or None)
+        await self._changed()
+        return web.json_response({"session": session, "group": group})
 
     async def answer(self, request):
         self._require(request)

@@ -258,6 +258,8 @@ class Hub:
             rows.append(
                 {
                     "id": session,
+                    # The thread the chat is; a group holds it by this (see Store.chat_groups).
+                    "chat": row.get("chat_id"),
                     "title": row.get("title") or row.get("preview") or "untitled",
                     "preview": FROM_THREAD_PREVIEW.sub("", row.get("preview") or ""),
                     "started_at": row.get("started_at") or 0,

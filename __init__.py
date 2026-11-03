@@ -1199,12 +1199,29 @@ def _mesh_tools():
     return sys.modules[name]
 
 
+def _groups_tools():
+    """The chat-group tools (groups_tools.py), loaded once under a private name."""
+    name = "nako_portal_groups_tools"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "groups_tools.py")
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules[name] = loaded
+        spec.loader.exec_module(loaded)
+        mesh = _mesh_tools()
+        loaded.CALL = lambda method, path, body=None: mesh._call(
+            method, path, body, missing="the portal server isn't running here, so chat groups can't be changed"
+        )
+    return sys.modules[name]
+
+
 def register(ctx):
     _quiet_display_defaults()
     # Other machines in this portal's mesh: the agent's tools for them and `hermes mesh`.
     tools = _mesh_tools()
     if hasattr(ctx, "register_tool"):
         tools.register(ctx)
+        # Chat groups in the sidebar, which the agent can make and fill.
+        _groups_tools().register(ctx)
     if hasattr(ctx, "register_cli_command"):
         tools.register_cli(ctx)
     # How the mesh works, for any agent on any machine in it (`nako-portal:mesh`).
