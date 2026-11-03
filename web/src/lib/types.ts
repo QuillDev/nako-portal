@@ -1,4 +1,12 @@
+import { z } from "zod"
+
 export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; name?: string }
+
+// A named, colored set of chats the sidebar shows together (`/api/groups`); a chat is in one at most.
+export const GROUP_COLORS = ["blue", "green", "yellow", "orange", "red", "teal", "purple", "grey"] as const
+export type GroupColor = (typeof GROUP_COLORS)[number]
+export const ChatGroup = z.object({ id: z.string(), name: z.string(), color: z.enum(GROUP_COLORS) })
+export type ChatGroup = z.infer<typeof ChatGroup>
 
 export type SessionRow = {
   id: string
@@ -14,6 +22,7 @@ export type SessionRow = {
   status?: Status | null
   // Another machine's chat, reached through this portal's mesh: that machine's name.
   machine?: string
+  group?: ChatGroup | null
 }
 
 // A slash command a portal chat can run (`/api/commands`).

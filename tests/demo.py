@@ -228,6 +228,15 @@ async def main(port):
     }
     data = Path(tempfile.mkdtemp())
     store = Store(data / "portal.db")
+    # Chat groups in the sidebar.
+    for name, color, sids in (
+        ("Shop refunds", "blue", ("20261024_094000_f00001", "20261024_090000_aaaaaa", "20261024_083000_5ec7e7")),
+        ("Importer", "green", ("20261023_060000_eeeeee", "20261023_070000_cccccc")),
+    ):
+        group = store.create_group(name, color)
+        for sid in sids:
+            store.set_chat_group(hermes.sessions[sid]["chat"], group["id"])
+    store.create_group("Garden", "orange")
     hub = Hub(Backend(hermes))
     hermes.hub = hub
     origin = f"http://localhost:{port}"

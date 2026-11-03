@@ -1,17 +1,21 @@
 import {
   ArrowDownToLineIcon,
   BellIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
+  FolderMinusIcon,
   GitPullRequestIcon,
   type LucideIcon,
   PinIcon,
   PlusIcon,
   NetworkIcon,
+  PencilIcon,
   SearchIcon,
   SettingsIcon,
 } from "lucide-react";
 import { health, useMesh } from "@/lib/mesh";
-import { memo, useMemo, useRef } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -29,9 +33,10 @@ import {
   installDesktopUpdate,
   useDesktopUpdate,
 } from "@/lib/desktop-update";
-import type { SessionRow, Status } from "@/lib/types";
+import { type ChatGroup, GROUP_COLORS, type GroupColor, type SessionRow, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useDrawer } from "./drawer";
+import { GROUP_HEX, GroupSwatch, useGroupPicker, useGroupRename } from "./groups";
 import {
   type ChatActions,
   sessionActions,
@@ -47,17 +52,57 @@ function age(seconds: number) {
   return "older";
 }
 
-function groups(rows: SessionRow[]) {
-  const out: [string, SessionRow[]][] = [];
+// A line in the list: one chat, or a chat group with its chats (newest first).
+type Entry =
+  | { kind: "chat"; row: SessionRow }
+  | { kind: "group"; group: ChatGroup; rows: SessionRow[] };
+
+// Pinned chats first, then the rest by age. A group sits where its newest chat would, so it moves
+// up as any of its chats does; the rows come newest first, so the first one met places it.
+function sections(rows: SessionRow[]) {
+  const out: [string, Entry[]][] = [];
   const pinned = rows.filter((r) => r.pinned);
-  if (pinned.length) out.push(["pinned", pinned]);
+  if (pinned.length) out.push(["pinned", pinned.map((row) => ({ kind: "chat", row }))]);
+  const placed = new Map<string, SessionRow[]>();
   for (const row of rows.filter((r) => !r.pinned)) {
+    const held = row.group && placed.get(row.group.id);
+    if (held) {
+      held.push(row);
+      continue;
+    }
     const label = age(row.started_at);
-    const group = out.find(([name]) => name === label);
-    if (group) group[1].push(row);
-    else out.push([label, [row]]);
+    let entry: Entry = { kind: "chat", row };
+    if (row.group) {
+      const members = [row];
+      placed.set(row.group.id, members);
+      entry = { kind: "group", group: row.group, rows: members };
+    }
+    const section = out.find(([name]) => name === label);
+    if (section) section[1].push(entry);
+    else out.push([label, [entry]]);
   }
   return out;
+}
+
+// Groups folded shut on this device.
+const FOLDED = "nako-folded-groups";
+function useFolded() {
+  const [folded, setFolded] = useState<Set<string>>(() => {
+    try {
+      return new Set(z.array(z.string()).parse(JSON.parse(localStorage.getItem(FOLDED) || "[]")));
+    } catch {
+      return new Set();
+    }
+  });
+  const toggle = useCallback((id: string) => {
+    setFolded((now) => {
+      const next = new Set(now);
+      if (!next.delete(id)) next.add(id);
+      localStorage.setItem(FOLDED, JSON.stringify([...next]));
+      return next;
+    });
+  }, []);
+  return [folded, toggle] as const;
 }
 
 // How long the pointer rests on a chat before it's read ahead of the click.
@@ -72,6 +117,8 @@ const DOT: Partial<Record<Status, string>> = {
 type RowProps = {
   row: SessionRow;
   selected: boolean;
+  // Drawn inside a group: indented, with the group's color down its left edge.
+  color?: GroupColor;
   go: (hash: string) => void;
   prefetch: (session: string) => void;
   actions: ChatActions;
@@ -82,6 +129,7 @@ type RowProps = {
 const ChatRow = memo(function ChatRow({
   row,
   selected,
+  color,
   go,
   prefetch,
   actions,
@@ -92,8 +140,9 @@ const ChatRow = memo(function ChatRow({
       <ContextMenuTrigger asChild>
         <button
           className={cn(
-            "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent",
+            "relative flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent",
             selected && "bg-accent",
+            color && "pl-7",
           )}
           // Shift+click pins or unpins instead of opening.
           onClick={(e) =>
@@ -109,6 +158,12 @@ const ChatRow = memo(function ChatRow({
           onPointerLeave={() => clearTimeout(hover.current)}
           type="button"
         >
+          {color && (
+            <span
+              className="absolute inset-y-0 left-[13px] w-0.5 opacity-70"
+              style={{ background: GROUP_HEX[color] }}
+            />
+          )}
           <span className="min-w-0 flex-1 truncate">{row.title}</span>
           {row.machine && (
             <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{row.machine}</span>
@@ -122,7 +177,7 @@ const ChatRow = memo(function ChatRow({
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        {sessionActions(actions, row.id, Boolean(row.pinned)).map((a) => (
+        {sessionActions(actions, row.id, Boolean(row.pinned), !row.machine).map((a) => (
           <ContextMenuItem key={a.label} onSelect={a.run}>
             <a.icon className="size-4 text-muted-foreground" />
             {a.label}
@@ -130,6 +185,92 @@ const ChatRow = memo(function ChatRow({
         ))}
       </ContextMenuContent>
     </ContextMenu>
+  );
+});
+
+type GroupProps = {
+  group: ChatGroup;
+  rows: SessionRow[];
+  folded: boolean;
+  open: string | null;
+  fold: (id: string) => void;
+  go: (hash: string) => void;
+  prefetch: (session: string) => void;
+  actions: ChatActions;
+  groupActions: GroupActions;
+};
+
+type GroupActions = {
+  rename: (group: ChatGroup) => void;
+  recolor: (group: string, color: GroupColor) => void;
+  ungroup: (group: string) => void;
+};
+
+// A chat group: its name row (click folds it; right-click renames, recolors or ungroups) and its chats.
+const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, go, prefetch, actions, groupActions }: GroupProps) {
+  const holdsOpen = rows.some((r) => r.id === open);
+  // Folded, a status dot inside still shows on the name row.
+  const dot = folded ? rows.map((r) => r.status).find((s) => s && DOT[s]) : undefined;
+  return (
+    <div>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <button
+            aria-expanded={!folded}
+            className={cn(
+              "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent",
+              folded && holdsOpen && "bg-accent",
+            )}
+            onClick={() => fold(group.id)}
+            type="button"
+          >
+            <GroupSwatch color={group.color} />
+            <span className="min-w-0 flex-1 truncate font-medium">{group.name}</span>
+            {dot && <span className={cn("size-2 shrink-0 rounded-full", DOT[dot])} title={dot} />}
+            <ChevronDownIcon
+              className={cn("size-4 shrink-0 text-muted-foreground transition-transform", folded && "-rotate-90")}
+            />
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => groupActions.rename(group)}>
+            <PencilIcon className="size-4 text-muted-foreground" />
+            Rename group
+          </ContextMenuItem>
+          <div className="flex gap-1.5 px-2 py-1.5">
+            {GROUP_COLORS.map((color) => (
+              <ContextMenuItem
+                aria-label={color}
+                className={cn(
+                  "size-5 rounded-[5px] p-0",
+                  color === group.color && "outline-2 outline-foreground outline-offset-2",
+                )}
+                key={color}
+                onSelect={() => groupActions.recolor(group.id, color)}
+                style={{ background: GROUP_HEX[color] }}
+                title={color}
+              />
+            ))}
+          </div>
+          <ContextMenuItem onSelect={() => groupActions.ungroup(group.id)}>
+            <FolderMinusIcon className="size-4 text-muted-foreground" />
+            Ungroup
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+      {!folded &&
+        rows.map((row) => (
+          <ChatRow
+            actions={actions}
+            color={group.color}
+            go={go}
+            key={row.id}
+            prefetch={prefetch}
+            row={row}
+            selected={open === row.id}
+          />
+        ))}
+    </div>
   );
 });
 
@@ -186,15 +327,26 @@ export function Sidebar({
 }) {
   const { go, phone, toggle } = useDrawer();
   const rename = useRenameDialog(portal);
-  const { sessions, pin, archive, prefetch } = portal;
+  const picker = useGroupPicker(portal);
+  const renameGroup = useGroupRename(portal);
+  const [folded, fold] = useFolded();
+  const { sessions, pin, archive, prefetch, updateGroup, deleteGroup } = portal;
   const listed = useMemo(
     () =>
-      groups(sessions.filter((s) => !s.notifications && !s.reviews)),
+      sections(sessions.filter((s) => !s.notifications && !s.reviews)),
     [sessions],
   );
   const actions = useMemo(
-    () => ({ pin, archive, rename: rename.start }),
-    [pin, archive, rename.start],
+    () => ({ pin, archive, rename: rename.start, group: picker.start }),
+    [pin, archive, rename.start, picker.start],
+  );
+  const groupActions = useMemo(
+    () => ({
+      rename: renameGroup.start,
+      recolor: (group: string, color: GroupColor) => updateGroup(group, { color }),
+      ungroup: deleteGroup,
+    }),
+    [renameGroup.start, updateGroup, deleteGroup],
   );
   const inbox = sessions.find((s) => s.notifications);
   const reviews = sessions.find((s) => s.reviews);
@@ -277,16 +429,31 @@ export function Sidebar({
               {label === "pinned" && <PinIcon className="size-3" />}
               {label}
             </p>
-            {items.map((row) => (
-              <ChatRow
-                actions={actions}
-                go={go}
-                key={row.id}
-                prefetch={prefetch}
-                row={row}
-                selected={open === row.id}
-              />
-            ))}
+            {items.map((entry) =>
+              entry.kind === "group" ? (
+                <GroupBlock
+                  actions={actions}
+                  fold={fold}
+                  folded={folded.has(entry.group.id)}
+                  go={go}
+                  group={entry.group}
+                  groupActions={groupActions}
+                  key={`g:${entry.group.id}`}
+                  open={open}
+                  prefetch={prefetch}
+                  rows={entry.rows}
+                />
+              ) : (
+                <ChatRow
+                  actions={actions}
+                  go={go}
+                  key={entry.row.id}
+                  prefetch={prefetch}
+                  row={entry.row}
+                  selected={open === entry.row.id}
+                />
+              ),
+            )}
           </div>
         ))}
       </nav>
@@ -315,6 +482,8 @@ export function Sidebar({
         </div>
       </div>
       {rename.dialog}
+      {picker.dialog}
+      {renameGroup.dialog}
     </aside>
   );
 }
