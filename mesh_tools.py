@@ -29,7 +29,7 @@ ONLY_WHEN_NEEDED = (
 )
 
 
-def _api():
+def _api(missing="the portal server isn't running here, so other machines can't be reached"):
     from hermes_constants import get_hermes_home
 
     data = get_hermes_home() / "nako-portal"
@@ -37,12 +37,12 @@ def _api():
         base = (data / "local-url").read_text().strip()
         token = (data / "local-token").read_text().strip()
     except FileNotFoundError:
-        raise RuntimeError("the portal server isn't running here, so other machines can't be reached")
+        raise RuntimeError(missing)
     return base, token
 
 
-def _call(method, path, body=None, timeout=60):
-    base, token = _api()
+def _call(method, path, body=None, timeout=60, missing=None):
+    base, token = _api(*([missing] if missing else []))
     request = urllib.request.Request(
         f"{base}{path}",
         method=method,

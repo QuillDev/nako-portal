@@ -15,11 +15,12 @@ import { PageHeader } from "./header"
 import { Presence } from "./presence"
 import { Processes } from "./processes"
 import { Requests } from "./requests"
+import { useGroupPicker } from "./groups"
 import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
 
 // The open chat's title, background processes and ⋯ menu; unchanged while a turn streams in below it.
-const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions, running }: { title: string; session: string; pinned: boolean; actions: ChatActions; running: boolean }) {
+const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable, actions, running }: { title: string; session: string; pinned: boolean; groupable: boolean; actions: ChatActions; running: boolean }) {
   const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
@@ -47,7 +48,7 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, actions, r
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {sessionActions(actions, session, pinned).map(a => (
+              {sessionActions(actions, session, pinned, groupable).map(a => (
                 <DropdownMenuItem key={a.label} onSelect={a.run}>
                   <a.icon className="size-4 text-muted-foreground" />
                   {a.label}
@@ -227,8 +228,9 @@ export function Chat({ portal }: { portal: Portal }) {
   const loading = !c || c.loading || !renderer
   const draftKey = c ? `draft:${c.session}` : ""
   const rename = useRenameDialog(portal)
+  const picker = useGroupPicker(portal)
   const { pin, archive } = portal
-  const actions = useMemo(() => ({ pin, archive, rename: rename.start }), [pin, archive, rename.start])
+  const actions = useMemo(() => ({ pin, archive, rename: rename.start, group: picker.start }), [pin, archive, rename.start, picker.start])
   const session = c?.session
   const start = c?.start ?? 0
   const notes = useMemo(() => portal.notes.filter(n => n.session === session && n.at >= start).map(n => ({ ...n, at: n.at - start })), [portal.notes, session, start])
@@ -244,8 +246,9 @@ export function Chat({ portal }: { portal: Portal }) {
     )
   return (
     <>
-      <ChatHeader running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} session={c.session} title={c.title || "chat"} />
+      <ChatHeader running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} groupable={!portal.sessions.find(s => s.id === c.session)?.machine} session={c.session} title={c.title || "chat"} />
       {rename.dialog}
+      {picker.dialog}
       {offline}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
       <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>

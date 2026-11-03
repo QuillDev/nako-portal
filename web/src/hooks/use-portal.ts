@@ -6,7 +6,7 @@ import { z } from "zod"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
 import { reloadSecrets } from "@/lib/secrets"
 import { rememberTitles } from "@/lib/session-refs"
-import type { Command, CommandNote, Frame, HistoryMessage, Live, Me, OpenSession, SessionRow } from "@/lib/types"
+import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type HistoryMessage, type Live, type Me, type OpenSession, type SessionRow } from "@/lib/types"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
@@ -435,6 +435,36 @@ export function usePortal() {
     [act, loadSessions],
   )
 
+  // Chat groups: a chat goes in one (or none, with null); a group is made, renamed, recolored or removed.
+  const setGroup = useCallback(
+    (session: string, group: string | null) =>
+      act(async () => {
+        await api(sessionPath(session, "/group"), { method: "POST", body: { group } })
+        await loadSessions()
+      }),
+    [act, loadSessions],
+  )
+
+  const createGroup = useCallback(async (name: string) => ChatGroup.parse(await api<unknown>("/api/groups", { method: "POST", body: { name } })), [])
+
+  const updateGroup = useCallback(
+    (group: string, change: { name?: string; color?: GroupColor }) =>
+      act(async () => {
+        await api(`/api/groups/${encodeURIComponent(group)}`, { method: "POST", body: change })
+        await loadSessions()
+      }),
+    [act, loadSessions],
+  )
+
+  const deleteGroup = useCallback(
+    (group: string) =>
+      act(async () => {
+        await api(`/api/groups/${encodeURIComponent(group)}/remove`, { method: "POST", body: {} })
+        await loadSessions()
+      }),
+    [act, loadSessions],
+  )
+
   const archive = useCallback(
     (session: string) =>
       act(async () => {
@@ -492,7 +522,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
+  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>
