@@ -14,7 +14,7 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import { health, useMesh } from "@/lib/mesh";
-import { memo, useCallback, useMemo, useRef, useState } from "react";
+import { type DragEvent, memo, useCallback, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import {
@@ -105,6 +105,19 @@ function useFolded() {
   return [folded, toggle] as const;
 }
 
+// Dragging a chat onto a group files it there; dropping it anywhere else in the list takes it out
+// of its group. Only with a mouse: on touch, a long press is the chat's menu.
+const CHAT_DRAG = "application/x-nako-chat";
+const canDrag = typeof matchMedia === "function" && !matchMedia("(pointer: coarse)").matches;
+
+type ChatDrag = {
+  start: (row: SessionRow) => void;
+  end: () => void;
+  // `group` is where the chat would land: a group id, or null for out of its group.
+  over: (e: DragEvent, group: string | null) => void;
+  drop: (e: DragEvent, group: string | null) => void;
+};
+
 // How long the pointer rests on a chat before it's read ahead of the click.
 const HOVER_MS = 80;
 
@@ -122,6 +135,7 @@ type RowProps = {
   go: (hash: string) => void;
   prefetch: (session: string) => void;
   actions: ChatActions;
+  drag?: ChatDrag;
 };
 
 // One chat in the list. It renders again only when its own row, selection or handlers change,
@@ -133,6 +147,7 @@ const ChatRow = memo(function ChatRow({
   go,
   prefetch,
   actions,
+  drag,
 }: RowProps) {
   const hover = useRef<ReturnType<typeof setTimeout>>(undefined);
   return (
@@ -140,7 +155,7 @@ const ChatRow = memo(function ChatRow({
       <ContextMenuTrigger asChild>
         <button
           className={cn(
-            "relative flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent",
+            "relative flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent data-[dragging]:opacity-50",
             selected && "bg-accent",
             color && "pl-7",
           )}
@@ -156,6 +171,19 @@ const ChatRow = memo(function ChatRow({
             hover.current = setTimeout(() => prefetch(row.id), HOVER_MS);
           }}
           onPointerLeave={() => clearTimeout(hover.current)}
+          // Another machine's chats can't be grouped.
+          draggable={Boolean(drag && !row.machine)}
+          onDragStart={(e) => {
+            if (!drag) return;
+            e.dataTransfer.setData(CHAT_DRAG, row.id);
+            e.dataTransfer.effectAllowed = "move";
+            e.currentTarget.dataset.dragging = "";
+            drag.start(row);
+          }}
+          onDragEnd={(e) => {
+            delete e.currentTarget.dataset.dragging;
+            drag?.end();
+          }}
           type="button"
         >
           {color && (
@@ -198,6 +226,9 @@ type GroupProps = {
   prefetch: (session: string) => void;
   actions: ChatActions;
   groupActions: GroupActions;
+  drag?: ChatDrag;
+  // A dragged chat is over this group and would land in it.
+  target: boolean;
 };
 
 type GroupActions = {
@@ -207,12 +238,16 @@ type GroupActions = {
 };
 
 // A chat group: its name row (click folds it; right-click renames, recolors or ungroups) and its chats.
-const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, go, prefetch, actions, groupActions }: GroupProps) {
+const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, go, prefetch, actions, groupActions, drag, target }: GroupProps) {
   const holdsOpen = rows.some((r) => r.id === open);
   // Folded, a status dot inside still shows on the name row.
   const dot = folded ? rows.map((r) => r.status).find((s) => s && DOT[s]) : undefined;
   return (
-    <div>
+    <div
+      className={cn("rounded-md", target && "bg-accent")}
+      onDragOver={drag && ((e) => drag.over(e, group.id))}
+      onDrop={drag && ((e) => drag.drop(e, group.id))}
+    >
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <button
@@ -263,6 +298,7 @@ const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, g
           <ChatRow
             actions={actions}
             color={group.color}
+            drag={drag}
             go={go}
             key={row.id}
             prefetch={prefetch}
@@ -330,7 +366,7 @@ export function Sidebar({
   const picker = useGroupPicker(portal);
   const renameGroup = useGroupRename(portal);
   const [folded, fold] = useFolded();
-  const { sessions, pin, archive, prefetch, updateGroup, deleteGroup } = portal;
+  const { sessions, pin, archive, prefetch, setGroup, updateGroup, deleteGroup } = portal;
   const listed = useMemo(
     () =>
       sections(sessions.filter((s) => !s.notifications && !s.reviews)),
@@ -348,6 +384,47 @@ export function Sidebar({
     }),
     [renameGroup.start, updateGroup, deleteGroup],
   );
+  // The chat being dragged, and the group it's over ("" for out of its group).
+  const dragged = useRef<SessionRow | null>(null);
+  const [dropAt, setDropAt] = useState<string | null>(null);
+  const drag = useMemo<ChatDrag | undefined>(() => {
+    if (!canDrag) return undefined;
+    const end = () => {
+      dragged.current = null;
+      setDropAt(null);
+    };
+    // The chat would move: it's ours being dragged, and the place isn't the group it's already in.
+    const moves = (e: DragEvent, group: string | null) => {
+      const row = dragged.current;
+      return row && e.dataTransfer.types.includes(CHAT_DRAG) && (row.group?.id ?? null) !== group ? row : null;
+    };
+    return {
+      start: (row) => {
+        dragged.current = row;
+      },
+      end,
+      over: (e, group) => {
+        if (!dragged.current) return;
+        // A group catches the drag before the list around it does.
+        e.stopPropagation();
+        if (!moves(e, group)) {
+          setDropAt(null);
+          return;
+        }
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDropAt(group ?? "");
+      },
+      drop: (e, group) => {
+        const row = moves(e, group);
+        if (!row) return;
+        e.preventDefault();
+        e.stopPropagation();
+        end();
+        setGroup(row.id, group);
+      },
+    };
+  }, [setGroup]);
   const inbox = sessions.find((s) => s.notifications);
   const reviews = sessions.find((s) => s.reviews);
   const open = portal.route.view === "chat" ? portal.route.session : null;
@@ -400,7 +477,14 @@ export function Sidebar({
           )}
         </button>
       </div>
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <nav
+        className="min-h-0 flex-1 overflow-y-auto px-2 pb-2"
+        onDragLeave={(e) => {
+          if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget))) setDropAt(null);
+        }}
+        onDragOver={drag && ((e) => drag.over(e, null))}
+        onDrop={drag && ((e) => drag.drop(e, null))}
+      >
         {/* Always first, Reviews under it once something has posted there. */}
         <ChannelRow
           fallback="Notifications"
@@ -433,6 +517,7 @@ export function Sidebar({
               entry.kind === "group" ? (
                 <GroupBlock
                   actions={actions}
+                  drag={drag}
                   fold={fold}
                   folded={folded.has(entry.group.id)}
                   go={go}
@@ -442,10 +527,12 @@ export function Sidebar({
                   open={open}
                   prefetch={prefetch}
                   rows={entry.rows}
+                  target={dropAt === entry.group.id}
                 />
               ) : (
                 <ChatRow
                   actions={actions}
+                  drag={drag}
                   go={go}
                   key={entry.row.id}
                   prefetch={prefetch}
