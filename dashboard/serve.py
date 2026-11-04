@@ -18,6 +18,7 @@ import aiohttp
 from aiohttp import web
 
 from portal import push
+from portal.environments import Environments
 from portal.hub import Hub
 from portal.link import GatewayLink
 from portal.machine_ops import MachineOps
@@ -88,6 +89,7 @@ async def main(config_path):
             android_release_dir=config.get("android_release_dir"),
             android_cert_sha256=config.get("android_cert_sha256"),
             desktop_release_dir=config.get("desktop_release_dir"),
+            environments=Environments(config["environments_command"]) if config.get("environments_command") else None,
         )
         link.on_change = portal.gateway_changed
         portal.ops = ops

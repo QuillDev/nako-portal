@@ -13,6 +13,7 @@ import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
 import { PageHeader } from "./header"
 import { Presence } from "./presence"
+import { ChatEnvironments } from "./chat-environments"
 import { Processes } from "./processes"
 import { Requests } from "./requests"
 import { SecretComposer } from "./secrets"
@@ -21,13 +22,14 @@ import { type ChatActions, sessionActions, useRenameDialog } from "./session-act
 import { Transcript } from "./transcript"
 
 // The open chat's title, background processes and ⋯ menu; unchanged while a turn streams in below it.
-const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable, actions, running }: { title: string; session: string; pinned: boolean; groupable: boolean; actions: ChatActions; running: boolean }) {
+const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable, actions, running, environments }: { title: string; session: string; pinned: boolean; groupable: boolean; actions: ChatActions; running: boolean; environments: boolean }) {
   const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
       {/* The floating panel keeps to the chat itself; its full controls are one tap away in the app. */}
       {!inBubble && (
         <>
+          {environments && <ChatEnvironments session={session} />}
           <Processes key={session} running={running} session={session} />
           {browser !== "none" && (
             <Button
@@ -249,7 +251,7 @@ export function Chat({ portal }: { portal: Portal }) {
     )
   return (
     <>
-      <ChatHeader running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} groupable={!portal.sessions.find(s => s.id === c.session)?.machine} session={c.session} title={c.title || "chat"} />
+      <ChatHeader environments={Boolean(portal.me?.environments)} running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} groupable={!portal.sessions.find(s => s.id === c.session)?.machine} session={c.session} title={c.title || "chat"} />
       {rename.dialog}
       {picker.dialog}
       {offline}

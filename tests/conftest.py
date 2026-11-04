@@ -489,6 +489,7 @@ async def world(tmp_path, monkeypatch):
     async with aiohttp.ClientSession(cookie_jar=jar) as http, aiohttp.ClientSession() as gateway_http:
         w = World(hermes, store, portal_server, http, hub)
         w.alerts = alerts
+        w.portal = portal
         w.local = local_server
         w.link = link
         w.gateway = Gateway(hermes, local_server, gateway_http)

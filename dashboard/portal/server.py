@@ -19,6 +19,7 @@ from aiohttp import WSMsgType, web
 from . import webauthn
 from .hub import NEEDS_YOU, WORKING, for_app, from_thread_line, page
 from .link import GATEWAY_PATH
+from .environments import EnvironmentsError
 from .media import media_paths, shown_files
 from .mesh import parse as remote
 
@@ -77,6 +78,7 @@ class Portal:
         android_release_dir=None,
         android_cert_sha256=None,
         desktop_release_dir=None,
+        environments=None,
         clock=time.time,
     ):
         self.vapid = vapid
@@ -84,6 +86,8 @@ class Portal:
         # The release key's SHA-256 fingerprint; lets the Android app use passkeys for this site.
         self.android_cert_sha256 = android_cert_sha256
         self.desktop_release_dir = Path(desktop_release_dir) if desktop_release_dir else None
+        # What runs on this machine, from the owner's own command (`environments.Environments`), else None.
+        self.environments = environments
         # Desktop sign-ins the browser approved, waiting for the app: code -> challenge, passkey, expiry.
         self.handoffs = {}
         parsed = urlparse(origin)
@@ -152,6 +156,7 @@ class Portal:
         r.add_get("/api/model", self.model)
         r.add_post("/api/model", self.set_model)
         r.add_get("/api/usage", self.usage)
+        r.add_get("/api/environments", self._auth(self.list_environments))
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -483,7 +488,18 @@ class Portal:
         me = {"signed_in": signed_in, "has_passkeys": self.store.has_credentials(), "connected": self.hub.connected}
         if signed_in:
             me["name"] = self.store.meta("name", "")
+            me["environments"] = self.environments is not None
         return web.json_response(me)
+
+    async def list_environments(self, request):
+        """What the owner's environments command says runs here; 404 when none is set."""
+        if self.environments is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "no environments command is set"}), content_type="application/json")
+        try:
+            return web.json_response(await self.environments.read())
+        except EnvironmentsError as error:
+            log.warning("portal: environments: %s", error)
+            return web.json_response({"error": str(error)}, status=502)
 
     async def set_name(self, request):
         """The name the new-chat greeting uses, kept here so every device says the same thing."""

@@ -11,6 +11,7 @@ from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import ROOT, Backend, FakeGateway  # noqa: E402
+from portal.environments import Environments  # noqa: E402
 from portal.hub import Hub  # noqa: E402
 from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
@@ -241,7 +242,9 @@ async def main(port):
     hermes.hub = hub
     origin = f"http://localhost:{port}"
     # NAKO_DESKTOP_RELEASE_DIR serves a desktop build for trying the app's self-update.
-    portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web", desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"))
+    # NAKO_ENVIRONMENTS_COMMAND: show the Environments page fed by that command.
+    environments = Environments(os.environ["NAKO_ENVIRONMENTS_COMMAND"]) if os.environ.get("NAKO_ENVIRONMENTS_COMMAND") else None
+    portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web", desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"), environments=environments)
     runner = web.AppRunner(portal.app())
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()
