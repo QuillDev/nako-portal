@@ -47,7 +47,7 @@ export function ChatEnvironments({ session }: { session: string }) {
           </Fragment>
         ))}
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-muted-foreground text-xs" onSelect={() => navigate("#/environments")}>
+        <DropdownMenuItem className="text-muted-foreground text-xs" onSelect={() => navigate("#/settings/environments")}>
           All {data.title.toLowerCase()}
         </DropdownMenuItem>
       </DropdownMenuContent>

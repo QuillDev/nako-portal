@@ -239,14 +239,14 @@ function AddSecret({ onDone, onError }: { onDone: () => void; onError: (m: strin
   )
 }
 
-/** Settings > Secrets: everything stored, revealed one at a time. Absent without the plugin. */
-export function SecretsSettings({ onError, Section }: { onError: (m: string) => void; Section: React.ComponentType<{ title: string; children: React.ReactNode }> }) {
+/** Settings > Secrets: everything stored, revealed one at a time. */
+export function SecretsSettings({ onError }: { onError: (m: string) => void }) {
   const secrets = useSecrets()
   const [adding, setAdding] = useState(false)
   if (!secrets) return null
   return (
-    <Section title="Secrets">
-      {secrets?.map(s => (
+    <>
+      {secrets.map(s => (
         <SecretRow key={s.name} onError={onError} secret={s} />
       ))}
       {adding ? (
@@ -258,6 +258,6 @@ export function SecretsSettings({ onError, Section }: { onError: (m: string) => 
           </Button>
         </div>
       )}
-    </Section>
+    </>
   )
 }

@@ -14,9 +14,8 @@ const usage = z.object({
     })),
   })),
 })
-type Usage = z.infer<typeof usage>
+export type Usage = z.infer<typeof usage>
 type Window = Usage["providers"][number]["accounts"][number]["windows"][number]
-type SectionProps = { title: string; defaultOpen?: boolean; children: React.ReactNode }
 
 const resetFormat = new Intl.DateTimeFormat([], { weekday: "short", hour: "numeric", minute: "2-digit" })
 
@@ -38,8 +37,8 @@ function Limit({ window }: { window: Window }) {
   )
 }
 
-// How much of each signed-in plan is used, one block per account. Hidden when model-controls can't say.
-export function UsageSettings({ onError, Section }: { onError: (message: string) => void; Section: React.ComponentType<SectionProps> }) {
+// How much of each signed-in plan is used. "unsupported" when model-controls can't say, so Settings drops the page.
+export function useUsage(onError: (message: string) => void) {
   const [state, setState] = useState<Usage | null | "unsupported">(null)
   useEffect(() => {
     let active = true
@@ -52,27 +51,27 @@ export function UsageSettings({ onError, Section }: { onError: (message: string)
       })
     return () => { active = false }
   }, [onError])
-  if (state === "unsupported") return null
-  return (
-    <Section title="Usage">
-      {state === null ? (
-        <p className="text-muted-foreground text-sm">checking…</p>
-      ) : state.providers.length === 0 ? (
-        <p className="text-muted-foreground text-sm">no plan limits reported</p>
-      ) : (
-        state.providers.map(provider => (
-          <div className="flex flex-col gap-3 py-1" data-usage-provider={provider.provider} key={provider.provider}>
-            <p className="font-medium text-muted-foreground text-xs">{provider.label}</p>
-            {provider.accounts.map((account, index) => (
-              <div className="flex flex-col gap-2" data-usage-account={account.label} key={account.label || index}>
-                {account.label && <p className="font-medium text-sm">{account.label}</p>}
-                {account.windows.map(window => <Limit key={window.label} window={window} />)}
-                {account.note && <p className="text-muted-foreground text-sm">{account.note}</p>}
-              </div>
-            ))}
+  return state
+}
+
+// One block per account.
+export function UsageSettings({ state }: { state: Usage | null }) {
+  return state === null ? (
+    <p className="text-muted-foreground text-sm">checking…</p>
+  ) : state.providers.length === 0 ? (
+    <p className="text-muted-foreground text-sm">no plan limits reported</p>
+  ) : (
+    state.providers.map(provider => (
+      <div className="flex flex-col gap-3 py-1" data-usage-provider={provider.provider} key={provider.provider}>
+        <p className="font-medium text-muted-foreground text-xs">{provider.label}</p>
+        {provider.accounts.map((account, index) => (
+          <div className="flex flex-col gap-2" data-usage-account={account.label} key={account.label || index}>
+            {account.label && <p className="font-medium text-sm">{account.label}</p>}
+            {account.windows.map(window => <Limit key={window.label} window={window} />)}
+            {account.note && <p className="text-muted-foreground text-sm">{account.note}</p>}
           </div>
-        ))
-      )}
-    </Section>
+        ))}
+      </div>
+    ))
   )
 }

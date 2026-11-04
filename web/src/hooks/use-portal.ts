@@ -11,7 +11,7 @@ import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor,
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings" } | { view: "mesh" } | { view: "environments" } | { view: "chat"; session: string } | { view: "desktop"; query: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null } | { view: "chat"; session: string } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -19,9 +19,11 @@ function parseRoute(hash: string): Route {
   const chat = hash.match(/^#\/c\/([\w.-]+)/)
   if (chat) return { view: "chat", session: chat[1] }
   if (hash === "#/new") return { view: "new" }
-  if (hash === "#/settings") return { view: "settings" }
-  if (hash === "#/mesh") return { view: "mesh" }
-  if (hash === "#/environments") return { view: "environments" }
+  const settings = hash.match(/^#\/settings(?:\/([\w-]+))?$/)
+  if (settings) return { view: "settings", page: settings[1] ?? null }
+  // Mesh and environments had their own pages before they moved into Settings.
+  if (hash === "#/mesh") return { view: "settings", page: "mesh" }
+  if (hash === "#/environments") return { view: "settings", page: "environments" }
   if (hash.startsWith("#/desktop?")) return { view: "desktop", query: hash.slice("#/desktop?".length) }
   return { view: "list" }
 }
