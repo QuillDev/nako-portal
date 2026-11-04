@@ -1,7 +1,6 @@
 import {
   ArrowDownToLineIcon,
   BellIcon,
-  BoxesIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   FolderMinusIcon,
@@ -9,13 +8,10 @@ import {
   type LucideIcon,
   PinIcon,
   PlusIcon,
-  NetworkIcon,
   PencilIcon,
   SearchIcon,
   SettingsIcon,
 } from "lucide-react";
-import { useEnvironments } from "@/lib/environments";
-import { health, useMesh } from "@/lib/mesh";
 import { type DragEvent, memo, useCallback, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
@@ -546,8 +542,6 @@ export function Sidebar({
           </div>
         ))}
       </nav>
-      {portal.me?.environments && <EnvironmentsRow go={go} open={portal.route.view === "environments"} />}
-      <MeshRow go={go} machinesSeen={portal.machinesSeen} open={portal.route.view === "mesh"} />
       <div className="flex items-center justify-between gap-2 border-t p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="flex min-w-0 items-center">
           <ConnectionDot connected={portal.connected} linked={portal.linked} />
@@ -575,61 +569,6 @@ export function Sidebar({
       {picker.dialog}
       {renameGroup.dialog}
     </aside>
-  );
-}
-
-/** The way to the owner's environments page, with how many are up; only when a command is set. */
-function EnvironmentsRow({ go, open }: { go: (hash: string) => void; open: boolean }) {
-  const { data } = useEnvironments(true);
-  const up = data?.environments.filter((env) => env.status !== "stopped").length ?? 0;
-  return (
-    <div className="border-t px-2 py-1">
-      <button
-        className={cn(
-          "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-          open && "bg-accent",
-        )}
-        onClick={() => go("#/environments")}
-        type="button"
-      >
-        <BoxesIcon className="size-4 text-muted-foreground" />
-        <span className="flex-1 truncate">{data?.title ?? "Environments"}</span>
-        {up > 0 && (
-          <span className="flex items-center gap-1.5 text-muted-foreground text-xs tabular-nums">
-            <span className="size-1.5 rounded-full bg-emerald-500" />
-            {up}
-          </span>
-        )}
-      </button>
-    </div>
-  );
-}
-
-const MESH_DOT = { online: "bg-emerald-500", degraded: "bg-amber-500", offline: "bg-muted-foreground/40" };
-
-/** The way to the Mesh page, with a dot per machine; only on a portal that is a mesh hub. */
-function MeshRow({ go, machinesSeen, open }: { go: (hash: string) => void; machinesSeen: number; open: boolean }) {
-  const mesh = useMesh(machinesSeen);
-  if (!mesh?.hub) return null;
-  return (
-    <div className="border-t px-2 py-1">
-      <button
-        className={cn(
-          "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-          open && "bg-accent",
-        )}
-        onClick={() => go("#/mesh")}
-        type="button"
-      >
-        <NetworkIcon className="size-4 text-muted-foreground" />
-        <span className="flex-1">Mesh</span>
-        <span className="flex items-center gap-1">
-          {mesh.machines.slice(0, 8).map((m) => (
-            <span className={cn("size-1.5 rounded-full", MESH_DOT[health(m)])} key={m.name} title={m.name} />
-          ))}
-        </span>
-      </button>
-    </div>
   );
 }
 

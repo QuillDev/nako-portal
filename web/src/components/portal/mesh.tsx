@@ -8,7 +8,6 @@ import { api } from "@/lib/api"
 import { health, type Health, loadMesh, machineKind, machineState, useMesh } from "@/lib/mesh"
 import type { Machine, PluginSource } from "@/lib/types"
 import { cn } from "@/lib/utils"
-import { PageHeader } from "./header"
 
 const KIND_ICON = { laptop: LaptopIcon, desktop: MonitorIcon, server: ServerIcon }
 const DOT: Record<Health, string> = { online: "bg-emerald-500", degraded: "bg-amber-500", offline: "bg-muted-foreground/40" }
@@ -288,7 +287,8 @@ function PluginSourceRow({ plugin, onError }: { plugin: PluginSource; onError: (
   )
 }
 
-export function MeshPage({ portal }: { portal: Portal }) {
+/** Settings > Mesh: the hub with its machines around it, and the way to add one. */
+export function MeshSettings({ portal }: { portal: Portal }) {
   const mesh = useMesh(portal.machinesSeen)
   const [selected, setSelected] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
@@ -302,37 +302,35 @@ export function MeshPage({ portal }: { portal: Portal }) {
   const machines = mesh?.machines ?? []
   const picked = machines.find(m => m.name === selected)
   return (
-    <>
-      <PageHeader title="Mesh">
-        {mesh?.hub && !adding && (
-          <Button
-            onClick={() => {
-              setAdding(true)
-              setSelected(null)
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            <PlusIcon />
-            Add machine
-          </Button>
-        )}
-      </PageHeader>
-      <section className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-4 overflow-y-auto px-4 pb-6">
-        {mesh && !mesh.hub && <p className="py-10 text-center text-muted-foreground text-sm">This portal isn't a mesh hub.</p>}
-        {mesh?.hub && (
-          <>
-            <MeshMap hubName={mesh.name ?? "hub"} machines={machines} pick={setSelected} selected={selected} />
-            {machines.length === 0 && !adding && (
-              <p className="text-center text-muted-foreground text-sm">No machines yet. Add one to hand it tasks from here.</p>
-            )}
-            {adding && <AddMachine close={() => setAdding(false)} onError={setError} ready={Boolean(mesh.plugin?.source)} />}
-            {picked && <MachineCard close={() => setSelected(null)} machine={picked} onError={setError} portal={portal} />}
-            {mesh.plugin && <PluginSourceRow onError={setError} plugin={mesh.plugin} />}
-          </>
-        )}
-        {error && <p className="text-destructive text-sm">{error}</p>}
-      </section>
-    </>
+    <div className="flex flex-col gap-4">
+      {mesh && !mesh.hub && <p className="py-10 text-center text-muted-foreground text-sm">This portal isn't a mesh hub.</p>}
+      {mesh?.hub && (
+        <>
+          <MeshMap hubName={mesh.name ?? "hub"} machines={machines} pick={setSelected} selected={selected} />
+          {machines.length === 0 && !adding && (
+            <p className="text-center text-muted-foreground text-sm">No machines yet. Add one to hand it tasks from here.</p>
+          )}
+          {adding && <AddMachine close={() => setAdding(false)} onError={setError} ready={Boolean(mesh.plugin?.source)} />}
+          {picked && <MachineCard close={() => setSelected(null)} machine={picked} onError={setError} portal={portal} />}
+          {!adding && (
+            <div className="flex justify-end">
+              <Button
+                onClick={() => {
+                  setAdding(true)
+                  setSelected(null)
+                }}
+                size="sm"
+                variant="outline"
+              >
+                <PlusIcon />
+                Add machine
+              </Button>
+            </div>
+          )}
+          {mesh.plugin && <PluginSourceRow onError={setError} plugin={mesh.plugin} />}
+        </>
+      )}
+      {error && <p className="text-destructive text-sm">{error}</p>}
+    </div>
   )
 }

@@ -1,19 +1,26 @@
-import { ChevronRightIcon, ExternalLinkIcon, MenuIcon, XIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, MenuIcon, XIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { closeBubble, inBubble, openBubbleInApp } from "@/lib/bubble"
 import { useWindowControls, windowAction } from "@/lib/desktop-window"
 import { useDrawer } from "./drawer"
 
-export function PageHeader({ title, children }: { title: string; children?: ReactNode }) {
+export function PageHeader({ title, back, children }: { title: ReactNode; back?: () => void; children?: ReactNode }) {
   const { show, collapsed, toggle } = useDrawer()
   const windowControls = useWindowControls()
   return (
     // The desktop app drags its window by this strip.
     <header className="flex items-center gap-1 px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]" data-tauri-drag-region="deep">
-      <Button aria-label="Chats" className="md:hidden" onClick={show} size="icon" variant="ghost">
-        <MenuIcon />
-      </Button>
+      {/* A phone sub-page steps back to its parent instead of opening the chats. */}
+      {back ? (
+        <Button aria-label="Back" className="md:hidden" onClick={back} size="icon" variant="ghost">
+          <ChevronLeftIcon />
+        </Button>
+      ) : (
+        <Button aria-label="Chats" className="md:hidden" onClick={show} size="icon" variant="ghost">
+          <MenuIcon />
+        </Button>
+      )}
       {collapsed && (
         <Button aria-label="Show chats" onClick={toggle} size="icon" title="Show chats (Ctrl+B)" variant="ghost">
           <ChevronRightIcon />

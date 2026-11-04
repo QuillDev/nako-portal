@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button"
 import { type Environment, loadEnvironments, STATUS_DOT, useEnvironments } from "@/lib/environments"
 import { useChatTitle } from "@/lib/session-refs"
 import { cn } from "@/lib/utils"
-import { PageHeader } from "./header"
 
 // The chat this environment belongs to, by its title.
 function ChatLink({ session }: { session: string }) {
@@ -46,15 +45,24 @@ function Row({ env }: { env: Environment }) {
   )
 }
 
-/** Whatever the owner's environments command says runs on this machine, with links to open each. */
-export function EnvironmentsPage() {
+/** Settings > Environments: whatever the owner's command says runs on this machine, with links to open each. */
+export function EnvironmentsSettings() {
   const { data, error } = useEnvironments(true, 10_000)
   const [busy, setBusy] = useState(false)
   const live = data?.environments.filter(env => env.status !== "stopped") ?? []
   const stopped = data?.environments.filter(env => env.status === "stopped") ?? []
   return (
-    <>
-      <PageHeader title={data?.title ?? "Environments"}>
+    <div className="flex flex-col">
+      {error && <p className="py-3 text-destructive text-sm">{error}</p>}
+      {data && data.environments.length === 0 && <p className="py-10 text-center text-muted-foreground text-sm">Nothing here yet.</p>}
+      {live.length > 0 && <ul className="divide-y">{live.map(env => <Row env={env} key={env.name} />)}</ul>}
+      {stopped.length > 0 && (
+        <>
+          <p className="pt-6 pb-1 text-muted-foreground text-xs">Stopped</p>
+          <ul className="divide-y">{stopped.map(env => <Row env={env} key={env.name} />)}</ul>
+        </>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-1 pt-4">
         {data?.links.map(link => (
           <Button asChild key={link.url} size="sm" variant="ghost">
             <a href={link.url} rel="noreferrer" target="_blank">
@@ -63,30 +71,18 @@ export function EnvironmentsPage() {
           </Button>
         ))}
         <Button
-          aria-label="Refresh"
           disabled={busy}
           onClick={() => {
             setBusy(true)
             void loadEnvironments().finally(() => setBusy(false))
           }}
-          size="icon"
-          title="Refresh"
-          variant="ghost"
+          size="sm"
+          variant="outline"
         >
           <RotateCwIcon className={cn(busy && "animate-spin")} />
+          Refresh
         </Button>
-      </PageHeader>
-      <section className="mx-auto flex w-full max-w-2xl flex-1 flex-col overflow-y-auto px-4 pb-6">
-        {error && <p className="py-3 text-destructive text-sm">{error}</p>}
-        {data && data.environments.length === 0 && <p className="py-10 text-center text-muted-foreground text-sm">Nothing here yet.</p>}
-        {live.length > 0 && <ul className="divide-y">{live.map(env => <Row env={env} key={env.name} />)}</ul>}
-        {stopped.length > 0 && (
-          <>
-            <p className="pt-6 pb-1 text-muted-foreground text-xs">Stopped</p>
-            <ul className="divide-y">{stopped.map(env => <Row env={env} key={env.name} />)}</ul>
-          </>
-        )}
-      </section>
-    </>
+      </div>
+    </div>
   )
 }
