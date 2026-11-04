@@ -32,6 +32,7 @@ const Gate = screen(() => import("@/components/portal/gate").then(m => m.Gate))
 const DesktopLink = screen(() => import("@/components/portal/desktop-link").then(m => m.DesktopLink))
 const Settings = screen(() => import("@/components/portal/settings").then(m => m.Settings))
 const MeshPage = screen(() => import("@/components/portal/mesh").then(m => m.MeshPage))
+const EnvironmentsPage = screen(() => import("@/components/portal/environments").then(m => m.EnvironmentsPage))
 
 // Settings is one tap away from every chat; fetch it once things are quiet so it opens at once.
 function useWarmSettings(signedIn: boolean) {
@@ -55,7 +56,7 @@ export function App() {
   return (
     <TooltipProvider>
       <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>
-        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings portal={portal} /> : portal.route.view === "mesh" ? <MeshPage portal={portal} /> : <Chat portal={portal} />}</main>
+        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings portal={portal} /> : portal.route.view === "mesh" ? <MeshPage portal={portal} /> : portal.route.view === "environments" ? <EnvironmentsPage /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
       <ChatSearch sessions={portal.sessions} unarchive={portal.unarchive} />
       <UpdatingScreen />

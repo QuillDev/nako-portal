@@ -252,6 +252,8 @@ def _settings():
         "android_release_dir": entry.get("android_release_dir") or None,
         "android_cert_sha256": entry.get("android_cert_sha256") or None,
         "desktop_release_dir": entry.get("desktop_release_dir") or None,
+        # Optional: a command printing JSON about what runs on this machine (environments.py).
+        "environments_command": entry.get("environments_command") or None,
         "mesh": mesh,
     }
     contact = str(entry.get("contact") or "mailto:owner@localhost")
