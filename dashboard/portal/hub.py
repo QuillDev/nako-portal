@@ -271,6 +271,8 @@ class Hub:
                     "reviews": row.get("chat_id") == REVIEWS,
                     "pinned": bool(row.get("pinned")),
                     "status": self.status.get(session),
+                    # A turn ended here while you weren't looking; opening the chat clears it.
+                    "finished": session in self.unread,
                 }
             )
         self.inboxes = inboxes

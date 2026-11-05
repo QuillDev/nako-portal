@@ -153,8 +153,8 @@ export function usePortal() {
       // A chat opened mid-turn (or reread after the tab slept) carries on from what the turn has
       // shown so far; its own live view, when it has one, is already as far along.
       if (currentRef.current?.session === session) setLive(l => (opened.running ? caughtUp(l, opened.live) : null))
-      // Opening the notifications chat marks its posts seen on the server too.
-      setSessions(rows => (rows.some(r => r.id === session && r.unread) ? rows.map(r => (r.id === session ? { ...r, unread: false } : r)) : rows))
+      // Opening a chat marks it seen on the server too (the notifications chat's posts, any chat's ended turn).
+      setSessions(rows => (rows.some(r => r.id === session && (r.unread || r.finished)) ? rows.map(r => (r.id === session ? { ...r, unread: false, finished: false } : r)) : rows))
     } catch (e) {
       setError((e as Error).message)
     }
@@ -191,7 +191,7 @@ export function usePortal() {
           if (currentRef.current && !currentRef.current.running) refresh(currentRef.current.session)
           return
         case "status":
-          setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status } : r)))
+          setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status, finished: Boolean(frame.unread) } : r)))
           return
         case "alert":
         case "status.synced":

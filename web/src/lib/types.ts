@@ -20,6 +20,8 @@ export type SessionRow = {
   // A post landed in the Notifications or Reviews chat since it was last opened.
   unread?: boolean
   status?: Status | null
+  // A turn ended here that you haven't opened the chat for since: the sidebar marks it.
+  finished?: boolean
   // Another machine's chat, reached through this portal's mesh: that machine's name.
   machine?: string
   group?: ChatGroup | null
@@ -123,7 +125,7 @@ export type Passkey = { id: string; label: string; current?: boolean }
 
 export type Frame =
   | { kind: "hub.connected" | "hub.disconnected" | "sessions.changed" | "status.synced" }
-  | { kind: "status"; session: string; status: Status | null }
+  | { kind: "status"; session: string; status: Status | null; unread?: boolean }
   | { kind: "sticker"; mood: "idle" | "working" | "needs-you"; working: number; finished: number }
   | { kind: "request"; session: string; request: PortalRequest }
   | { kind: "request.closed"; session: string; id: string }

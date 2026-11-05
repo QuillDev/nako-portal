@@ -125,6 +125,9 @@ const DOT: Partial<Record<Status, string>> = {
   failed: "bg-destructive",
 };
 
+// A chat with something you haven't read yet: a reply that landed while you were elsewhere, or a post.
+const NEW = "bg-emerald-500";
+
 type RowProps = {
   row: SessionRow;
   selected: boolean;
@@ -194,11 +197,14 @@ const ChatRow = memo(function ChatRow({
           {row.machine && (
             <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{row.machine}</span>
           )}
-          {row.status && DOT[row.status] && (
+          {row.status && DOT[row.status] ? (
             <span
               className={cn("size-2 shrink-0 rounded-full", DOT[row.status])}
               title={row.status}
             />
+          ) : (
+            row.finished &&
+            !selected && <span className={cn("size-2 shrink-0 rounded-full", NEW)} title="new reply" />
           )}
         </button>
       </ContextMenuTrigger>
@@ -238,8 +244,9 @@ type GroupActions = {
 // A chat group: its name row (click folds it; right-click renames, recolors or ungroups) and its chats.
 const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, go, prefetch, actions, groupActions, drag, target }: GroupProps) {
   const holdsOpen = rows.some((r) => r.id === open);
-  // Folded, a status dot inside still shows on the name row.
+  // Folded, a status dot inside still shows on the name row, or else a new reply's.
   const dot = folded ? rows.map((r) => r.status).find((s) => s && DOT[s]) : undefined;
+  const fresh = folded && !dot && rows.some((r) => r.finished && r.id !== open);
   return (
     <div
       className={cn("rounded-md", target && "bg-accent")}
@@ -260,6 +267,7 @@ const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, g
             <GroupSwatch color={group.color} />
             <span className="min-w-0 flex-1 truncate font-medium">{group.name}</span>
             {dot && <span className={cn("size-2 shrink-0 rounded-full", DOT[dot])} title={dot} />}
+            {fresh && <span className={cn("size-2 shrink-0 rounded-full", NEW)} title="new reply" />}
             <ChevronDownIcon
               className={cn("size-4 shrink-0 text-muted-foreground transition-transform", folded && "-rotate-90")}
             />
@@ -343,7 +351,7 @@ function ChannelRow({
         row?.unread &&
         open !== row.id && (
           <span
-            className="size-2 shrink-0 rounded-full bg-emerald-500"
+            className={cn("size-2 shrink-0 rounded-full", NEW)}
             title="new post"
           />
         )

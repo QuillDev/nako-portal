@@ -625,7 +625,8 @@ class Mesh:
                 if row.get("notifications") or row.get("reviews"):
                     continue
                 session = remote_id(machine, row["id"])
-                shown.append({**row, "id": session, "machine": machine, "status": (self.status.get(session) or {}).get("status")})
+                entry = self.status.get(session) or {}
+                shown.append({**row, "id": session, "machine": machine, "status": entry.get("status"), "finished": bool(entry.get("unread"))})
             return shown
 
         lists = await asyncio.gather(*(one(m) for m in list(self.peers)))
