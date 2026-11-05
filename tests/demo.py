@@ -244,6 +244,10 @@ async def main(port):
     store.create_group("Garden", "orange")
     hub = Hub(Backend(hermes))
     hermes.hub = hub
+    # Turns that ended while nobody was looking: the sidebar marks them until they're opened.
+    for sid in ("20261024_085000_dddddd", "20261023_070000_cccccc"):
+        hub.status[sid] = "done"
+        hub.unread.add(sid)
     origin = f"http://localhost:{port}"
     # NAKO_DESKTOP_RELEASE_DIR serves a desktop build for trying the app's self-update.
     # NAKO_ENVIRONMENTS_COMMAND: show the Environments page fed by that command.

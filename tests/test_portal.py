@@ -301,6 +301,13 @@ async def test_a_turn_that_ends_unseen_stays_unread_until_its_chat_is_opened(wor
     finished = await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("status") == "done")
     assert (finished["session"], finished["unread"]) == (sid, True)
 
+    async def listed():
+        rows = await (await world.http.get(world.url("/api/sessions"))).json()
+        return next(row["finished"] for row in rows if row["id"] == sid)
+
+    # The chat list marks it too, so a page loaded now shows it waiting.
+    assert await listed() is True
+
     # A socket that joins later hears where every chat stands right away.
     late = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
     joined = await next_message(late, lambda m: m.get("kind") == "status")
@@ -313,6 +320,7 @@ async def test_a_turn_that_ends_unseen_stays_unread_until_its_chat_is_opened(wor
     await page.send_json({"watch": sid, "looking": True})
     read = await next_message(sticker, lambda m: m.get("kind") == "status")
     assert (read["session"], read["status"], read["unread"]) == (sid, "done", False)
+    assert await listed() is False
 
     # A turn that ends while you're reading it is never unread.
     await world.http.post(world.url(f"/api/sessions/{sid}/messages"), data={"text": "again"}, headers={"Origin": ORIGIN})
