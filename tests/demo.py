@@ -36,16 +36,20 @@ class DemoGateway(FakeGateway):
 
     def usage(self):
         time.sleep(0.8)
-        resets = "2026-11-05T16:00:00+00:00"
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        resets = (now + timedelta(days=4)).isoformat()
+        session = (now + timedelta(hours=3)).isoformat()
         return [
             {"provider": "claude", "label": "Claude", "accounts": [
                 {"label": "work", "windows": [
-                    {"label": "Current session", "used_percent": 38.0, "resets_at": "2026-11-02T22:00:00+00:00"},
-                    {"label": "Current week", "used_percent": 100.0, "resets_at": resets},
+                    {"label": "Current session", "used_percent": 38.0, "resets_at": session},
+                    {"label": "Current week", "used_percent": 100.0, "resets_at": (now + timedelta(hours=20)).isoformat()},
                 ], "note": None},
                 {"label": "personal", "windows": [
                     {"label": "Current session", "used_percent": 4.0, "resets_at": None},
-                    {"label": "Current week", "used_percent": 61.0, "resets_at": resets},
+                    {"label": "Current week", "used_percent": 34.0, "resets_at": resets},
                 ], "note": None},
             ]},
             {"provider": "codex", "label": "OpenAI Codex", "accounts": [
