@@ -1,4 +1,5 @@
-"""A background process that finishes in a portal thread wakes that thread's agent.
+"""A background process that finishes in a portal thread wakes that thread's agent, and a turn
+Hermes runs from its queue shows as working in the portal like a typed one.
 
 Runs against the real gateway where Hermes is installed; CI has no Hermes and skips.
 """
@@ -108,4 +109,69 @@ async def test_a_thread_stored_by_an_older_release_is_woken_after_the_portal_con
         runner.session_store._loaded = False
         assert (await wake(runner, authority, adapter, plugin, "old", "proc_2")).admission_id
     finally:
+        authority.db.close()
+
+
+class Heard:
+    """The portal server's end of the link: what the gateway half told the hub, in order."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def call(self, method, *args):
+        self.calls.append((method, *args))
+
+    async def until(self, *call, timeout=3):
+        import asyncio
+
+        deadline = asyncio.get_running_loop().time() + timeout
+        while call not in self.calls:
+            assert asyncio.get_running_loop().time() < deadline, f"never heard {call}: {self.calls}"
+            await asyncio.sleep(0.02)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_hermes_runs_from_its_queue_shows_working_then_done(tmp_path, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    plugin, runner, authority, adapter = await gateway(tmp_path, monkeypatch)
+    from hermes_state_runtime import claim_session_input, settle_session_input
+
+    monkeypatch.setattr(plugin, "TURN_SWEEP", 0.05)
+    adapter.backend = plugin.HermesBackend(adapter, tmp_path)
+    adapter.link = heard = Heard()
+    sweep = asyncio.get_running_loop().create_task(adapter._sweep_turns())
+    try:
+        # A message that waited in the queue (behind a busy turn, or over a restart) starts running
+        # with no processing hook: the portal still hears the turn start and, once it ends, finish.
+        queued = plugin._ensure_chat(runner.session_store, "queued", "queued")
+        await say(runner, authority, adapter, "queued", "please continue")
+        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=queued)
+        await heard.until("turn_started", "queued")
+        settle_session_input(authority.db, epoch=authority.epoch, admission_id=turn["admission_id"], generation=turn["generation"], outcome="completed")
+        await heard.until("turn_finished", "queued", "success")
+
+        # A failed one finishes as a failure.
+        heard.calls.clear()
+        await say(runner, authority, adapter, "queued", "and the next one")
+        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=queued)
+        await heard.until("turn_started", "queued")
+        settle_session_input(authority.db, epoch=authority.epoch, admission_id=turn["admission_id"], generation=turn["generation"], outcome="failed")
+        await heard.until("turn_finished", "queued", "failure")
+
+        # A typed turn the hooks report is told once, also while its record outlives the hook.
+        typed = plugin._ensure_chat(runner.session_store, "typed", "typed")
+        await say(runner, authority, adapter, "typed", "hi")
+        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=typed)
+        event = SimpleNamespace(source=plugin._source("typed"))
+        await adapter.on_processing_start(event)
+        await asyncio.sleep(0.3)
+        await adapter.on_processing_complete(event, SimpleNamespace(value="success"))
+        await asyncio.sleep(0.3)
+        settle_session_input(authority.db, epoch=authority.epoch, admission_id=turn["admission_id"], generation=turn["generation"], outcome="completed")
+        await asyncio.sleep(0.3)
+        assert [c for c in heard.calls if c[1] == "typed"] == [("turn_started", "typed"), ("turn_finished", "typed", "success")]
+    finally:
+        sweep.cancel()
         authority.db.close()
