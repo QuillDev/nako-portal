@@ -261,6 +261,23 @@ async def test_a_file_a_newer_reply_delivers_opens_right_after_an_older_one(worl
     assert (await status(second), await status(first)) == (200, 200)
 
 
+async def test_a_delivered_picture_opens_in_place_and_saves_under_its_name_on_download(world, tmp_path):
+    logo = tmp_path / "logo 640.png"
+    logo.write_bytes(b"png")
+    sid = world.hermes.add_session("20261024_050505_acacac", "logo", messages=[("assistant", f"here you go\nMEDIA:{logo}")])
+    await world.sign_up()
+
+    async def get(**extra):
+        response = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(logo), **extra})
+        return response.status, response.headers["Content-Disposition"], await response.read()
+
+    shown = await get()
+    saved = await get(download="1")
+    assert shown[0] == saved[0] == 200 and shown[2] == saved[2] == b"png"
+    assert shown[1].startswith("inline;")
+    assert saved[1] == "attachment; filename=\"logo 640.png\"; filename*=UTF-8''logo%20640.png"
+
+
 async def test_built_files_are_kept_by_the_browser_and_the_page_is_always_checked(world):
     built = next((ROOT / "dashboard" / "web" / "assets").iterdir()).name
     asset = await world.http.get(world.url(f"/assets/{built}"))

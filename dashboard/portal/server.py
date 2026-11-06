@@ -948,25 +948,28 @@ class Portal:
             path = self.mesh.attachments.file(session, raw) if self.mesh is not None else None
             if path is None:
                 raise web.HTTPNotFound()
-            return self._file_response(path, raw)
+            return self._file_response(path, raw, request.query.get("download") == "1")
         hub = await self._hub()
         if not raw.startswith(("/", "~/")):
             raise web.HTTPNotFound()
         path = Path(raw).expanduser()
         if raw not in await self._shown_files(hub, session, raw) or not path.is_file() or path.stat().st_size > MAX_FILE:
             raise web.HTTPNotFound()
-        return self._file_response(path, raw)
+        return self._file_response(path, raw, request.query.get("download") == "1")
 
-    def _file_response(self, path, raw):
+    def _file_response(self, path, raw, download=False):
+        """Pictures, sound and PDFs open in place; `download` saves any of them under its own name."""
         from pathlib import PureWindowsPath
         from urllib.parse import quote
 
         name = PureWindowsPath(raw).name
         kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
         inline = kind.startswith("image/") or kind.startswith("audio/") or kind.startswith("video/") or kind == "application/pdf"
-        disposition = "inline" if inline else "attachment"
+        disposition = "inline" if inline and not download else "attachment"
+        # A plain ASCII name first for clients that don't read `filename*` (some Android versions).
+        plain = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in name)
         return web.FileResponse(
-            path, headers={"Content-Type": kind, "Content-Disposition": f"{disposition}; filename*=UTF-8''{quote(name, safe='')}", "Cache-Control": SHOWN_FILE_CACHE, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
+            path, headers={"Content-Type": kind, "Content-Disposition": f"{disposition}; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}", "Cache-Control": SHOWN_FILE_CACHE, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
         )
 
     async def _shown_files(self, hub, session, wanted):

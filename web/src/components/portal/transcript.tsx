@@ -6,7 +6,7 @@ import { Message, MessageContent, MessageResponse } from "@/components/ai-elemen
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
-import { fileUrl } from "@/lib/api"
+import { downloadUrl, fileUrl } from "@/lib/api"
 import { ImageViewer } from "./image-viewer"
 import { SharedSecret } from "./secrets"
 import { markdownComponents } from "./markdown-link"
@@ -122,7 +122,8 @@ const Steps = memo(function Steps({ steps }: { steps: Step[] }) {
   )
 })
 
-type Item = { url: string; name: string; path: string }
+// `download` is missing for a picture that is still being sent: it isn't on the server yet.
+type Item = { url: string; name: string; path: string; download?: string }
 
 function Thumb({ item, onOpen, onBroken }: { item: Item; onOpen: () => void; onBroken: () => void }) {
   return (
@@ -157,7 +158,7 @@ function Files({ urls }: { urls: Item[] }) {
         if (/\.(mp3|m4a|ogg|wav|opus|flac)$/i.test(path)) return <audio className="w-full" controls key={url} src={url} />
         if (/\.(mp4|webm|mov)$/i.test(path)) return <video className="max-h-96 rounded-md" controls key={url} src={url} />
         return (
-          <a className="inline-flex items-center gap-2 text-sm underline" download href={url} key={url}>
+          <a className="inline-flex items-center gap-2 text-sm underline" download={name} href={item.download ?? url} key={url}>
             <FileIcon className="size-4" />
             {name}
           </a>
@@ -172,6 +173,7 @@ function Files({ urls }: { urls: Item[] }) {
             <>
               <DialogTitle className="sr-only">{shown.name}</DialogTitle>
               <ImageViewer
+                download={shown.download}
                 key={shown.url}
                 name={shown.name}
                 onNext={open! < pictures.length - 1 ? () => step(1) : undefined}
@@ -188,9 +190,11 @@ function Files({ urls }: { urls: Item[] }) {
 
 const named = (path: string) => path.split(/[\\/]/).pop() || path
 
+const sessionFile = (session: string, path: string): Item => ({ url: fileUrl(session, path), name: named(path), path, download: downloadUrl(session, path) })
+
 const User = memo(function User({ session, text, images, steered }: { session: string; text: string; images?: string[]; steered?: boolean }) {
   const turn = splitUserTurn(text)
-  const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => ({ url: fileUrl(session, path), name: named(path), path }))]
+  const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => sessionFile(session, path))]
   return (
     <Message from="user">
       <MessageContent className="whitespace-pre-wrap">
@@ -267,7 +271,7 @@ const Assistant = memo(function Assistant({
                 </MessageResponse>
               ),
             )}
-          <Files urls={files.map(path => ({ url: fileUrl(session, path), name: named(path), path }))} />
+          <Files urls={files.map(path => sessionFile(session, path))} />
         </div>
       </MessageContent>
     </Message>

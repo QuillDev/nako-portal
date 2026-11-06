@@ -1,4 +1,4 @@
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react"
+import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { DialogClose } from "@/components/ui/dialog"
 
@@ -25,10 +25,19 @@ function zoomAt(view: View, factor: number, at: Point): View {
   return { scale, x: at.x - (at.x - view.x) * k, y: at.y - (at.y - view.y) * k }
 }
 
+const corner =
+  "absolute top-3 grid size-9 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/60"
+
 const arrow =
   "absolute top-1/2 hidden size-10 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/60 md:grid"
 
-export function ImageViewer({ src, name, onPrev, onNext }: { src: string; name: string; onPrev?: () => void; onNext?: () => void }) {
+export function ImageViewer({
+  src,
+  name,
+  download,
+  onPrev,
+  onNext,
+}: { src: string; name: string; download?: string; onPrev?: () => void; onNext?: () => void }) {
   const box = useRef<HTMLDivElement>(null)
   const image = useRef<HTMLImageElement>(null)
   const close = useRef<HTMLButtonElement>(null)
@@ -84,7 +93,7 @@ export function ImageViewer({ src, name, onPrev, onNext }: { src: string; name: 
   }, [])
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 || (e.target as Element).closest("button")) return
+    if (e.button !== 0 || (e.target as Element).closest("button, a")) return
     box.current!.setPointerCapture(e.pointerId)
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     const g = gesture.current
@@ -188,11 +197,12 @@ export function ImageViewer({ src, name, onPrev, onNext }: { src: string; name: 
           <ChevronRightIcon className="size-5" />
         </button>
       )}
-      <DialogClose
-        aria-label="Close"
-        className="absolute top-3 right-3 grid size-9 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/60"
-        ref={close}
-      >
+      {download && (
+        <a aria-label={`Download ${name}`} className={`${corner} right-14`} download={name} href={download} title="Download">
+          <DownloadIcon className="size-4" />
+        </a>
+      )}
+      <DialogClose aria-label="Close" className={`${corner} right-3`} ref={close}>
         <XIcon className="size-4" />
       </DialogClose>
     </div>
