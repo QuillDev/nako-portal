@@ -55,6 +55,10 @@ OWNER = "owner"
 # Notifications thread) must carry it too: a background process's wake is checked against it.
 PERSON = {"chat_name": "Nako", "user_id": OWNER, "user_name": "you"}
 INBOX_POLL = 2
+# How often the gateway half looks for turns Hermes runs without telling the adapter.
+TURN_SWEEP = 2
+# A turn's settled admission says how it went; the hub's words for those.
+TURN_OUTCOMES = {"completed": "success", "failed": "failure"}
 # How long an out-of-process send waits for the gateway to open a named thread (a few inbox polls).
 CHANNEL_WAIT = 4 * INBOX_POLL + 2
 # Transcripts kept projected for chats read lately; a long one holds a few MB.
@@ -492,6 +496,35 @@ class HermesBackend:
         if chat:
             self.owner[chat] = self.profile
         return chat
+
+    def running_turns(self):
+        """Every portal chat with a turn Hermes is running right now, in every served profile, by
+        the admission that turn runs: Hermes's own record, so a turn it starts without the adapter
+        hearing (a queued message run after the one before it, one held over a restart) counts."""
+        running = {}
+        for profile in self.homes():
+            try:
+                rows = self._read(
+                    "SELECT s.chat_id, a.admission_id FROM sessions s JOIN session_admissions a ON a.target_session_id = s.id "
+                    "WHERE s.source='portal' AND s.ended_at IS NULL AND s.chat_id IS NOT NULL AND a.status='started'",
+                    (),
+                    profile,
+                )
+            except sqlite3.OperationalError:  # a Hermes from before the durable queue: hooks cover every turn
+                continue
+            running.update(rows)
+        return running
+
+    def turn_outcome(self, admission):
+        """How a finished admission went, in the hub's words (an interrupted one is neither)."""
+        for profile in self.homes():
+            try:
+                rows = self._read("SELECT outcome FROM session_admissions WHERE admission_id=?", (admission,), profile)
+            except sqlite3.OperationalError:
+                continue
+            if rows:
+                return TURN_OUTCOMES.get(rows[0][0], "cancelled")
+        return "cancelled"
 
     def title_of(self, session):
         """Any session's title in the shown profile, portal or not: the thread a message came from."""
@@ -947,6 +980,10 @@ def _adapter(config):
             self._tasks = []
             self._http = None
             self._spawned = 0.0
+            # Chats whose turn the gateway announced through the processing hooks, and the turns
+            # the sweep announced itself because Hermes ran them without the hooks (chat -> admission).
+            self._hooked = set()
+            self._swept = {}
 
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             import aiohttp
@@ -977,6 +1014,7 @@ def _adapter(config):
                 loop = asyncio.get_running_loop()
                 self._tasks.append(loop.create_task(self.link.run(self._http)))
                 self._tasks.append(loop.create_task(_forward_inbox(_portal("store").Store(data / "portal.db"), self)))
+                self._tasks.append(loop.create_task(self._sweep_turns()))
                 _LIVE_TOOLS.update(link=self.link, loop=loop)
                 # With agent-secrets loaded, the portal is where its requests and shared secrets show.
                 secrets_api = _secrets_api()
@@ -1088,12 +1126,48 @@ def _adapter(config):
             return {"name": "Nako", "type": "dm"}
 
         async def on_processing_start(self, event):
+            chat = event.source.chat_id
+            self._hooked.add(chat)
+            self._swept.pop(chat, None)  # the hooks report this chat's turns from here
             if self.backend is not None:
                 await asyncio.to_thread(self.backend.restore_model_options, event.source)
-            await self._hub("turn_started", event.source.chat_id)
+            await self._hub("turn_started", chat)
 
         async def on_processing_complete(self, event, outcome):
+            self._hooked.discard(event.source.chat_id)
             await self._hub("turn_finished", event.source.chat_id, getattr(outcome, "value", str(outcome)))
+
+        async def _sweep_turns(self):
+            """Hermes runs some turns without the processing hooks: a message queued behind a busy
+            turn runs from its durable queue, and so does one held over a gateway restart. Read
+            what it is running and tell the hub, so those chats show as working and finish with a
+            reply and a ping like any other turn. A turn is announced once it has run a whole sweep,
+            and never for a turn the hooks already reported, whose record may settle a moment after it ends."""
+            seen, hooked = {}, set()
+            while True:
+                await asyncio.sleep(TURN_SWEEP)
+                backend = self.backend
+                if backend is None:
+                    continue
+                try:
+                    running = await asyncio.to_thread(backend.running_turns)
+                except Exception:
+                    log.warning("portal: could not read running turns", exc_info=True)
+                    continue
+                for chat, admission in list(self._swept.items()):
+                    if running.get(chat) != admission:
+                        del self._swept[chat]
+                        outcome = await asyncio.to_thread(backend.turn_outcome, admission)
+                        await self._hub("turn_finished", chat, outcome)
+                for chat, admission in running.items():
+                    if chat in self._hooked:
+                        hooked.add(admission)
+                    if admission in hooked or self._swept.get(chat) == admission:
+                        continue
+                    if seen.get(chat) == admission:
+                        self._swept[chat] = admission
+                        await self._hub("turn_started", chat)
+                seen, hooked = running, hooked & set(running.values())
 
         async def _send_exec_approval_prompt(self, prompt):
             request = {
