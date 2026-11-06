@@ -302,6 +302,7 @@ class MainActivity : ComponentActivity() {
             addJavascriptInterface(AppBridge(), "NakoApp")
             webViewClient = ShellWebViewClient(server)
             webChromeClient = ShellChromeClient()
+            FileDownloads.attach(this, server, ::openExternally)
         }
         CookieManager.getInstance().setAcceptCookie(true)
         webView = web

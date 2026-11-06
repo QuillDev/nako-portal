@@ -30,6 +30,7 @@ import androidx.core.graphics.toColorInt
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import moe.nakode.portal.R
+import moe.nakode.portal.shell.FileDownloads
 import moe.nakode.portal.shell.MainActivity
 import moe.nakode.portal.shell.ServerOrigin
 import kotlin.math.abs
@@ -389,6 +390,10 @@ class Bubble(private val context: Context, private val origin: ServerOrigin) {
                 }
 
                 override fun onPageFinished(view: WebView, url: String) = matchPortal()
+            }
+            FileDownloads.attach(this, origin) { uri ->
+                collapse()
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
         }
         private val frame = object : LinearLayout(context) {

@@ -48,6 +48,9 @@ export function fileUrl(session: string, path: string) {
   return `/api/file?session=${encodeURIComponent(session)}&path=${encodeURIComponent(path)}`
 }
 
+/** The same file, sent to be saved under its own name rather than shown in place. */
+export const downloadUrl = (session: string, path: string) => `${fileUrl(session, path)}&download=1`
+
 export function b64url(buffer: ArrayBuffer) {
   return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
 }
