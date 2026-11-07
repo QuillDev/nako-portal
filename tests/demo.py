@@ -226,10 +226,18 @@ async def main(port):
     hermes.add_session("20261024_093000_p00002", "Notifications", chat="inbox", profile="work")
     hermes.add_session("20261023_100000_p00003", "Compare vector databases", profile="work")
     # What the agent-secrets plugin would hold.
+    day = 86400
+    now = time.time()
     hermes.vault = {
-        "STAGING_DB_ADMIN": {"value": "q7Rz-Lw2v-9KpT-x4Hn", "note": "staging postgres admin", "origin": "agent"},
-        "OPENAI_API_KEY": {"value": "sk-demo-0000000000000000", "note": "personal key for the eval scripts", "origin": "you"},
-        "GITHUB_TOKEN": {"value": "ghp_demo000000000000000000000000", "note": "repo access for release.sh", "origin": "you"},
+        "STAGING_DB_ADMIN": {"value": "q7Rz-Lw2v-9KpT-x4Hn", "note": "staging postgres admin", "origin": "agent", "updated_at": now - 2 * day},
+        "OPENAI_API_KEY": {"value": "sk-dem...0000", "note": "personal key for the eval scripts", "origin": "you", "updated_at": now - 29 * day},
+        "GITHUB_TOKEN": {"value": "ghp_de...0000", "note": "repo access for release.sh", "origin": "you", "updated_at": now - 38 * day},
+        "AWS_ACCESS_KEY_ID": {"value": "AKIADEMO0000", "note": "deploy user for the staging bucket", "origin": "you", "updated_at": now - 17 * day},
+        "AWS_SECRET_ACCESS_KEY": {"value": "demo/secret/0000", "note": "pairs with AWS_ACCESS_KEY_ID", "origin": "you", "updated_at": now - 17 * day},
+        "CLOUDFLARE_API_TOKEN": {"value": "cf-demo-0000", "note": "DNS edit on example.test zones", "origin": "agent", "updated_at": now - 5 * day},
+        "LINEAR_API_KEY": {"value": "lin_demo_0000", "note": "", "origin": "agent", "updated_at": now - 2 * day},
+        "SENTRY_AUTH_TOKEN": {"value": "sntrys_demo", "note": "source map uploads", "origin": "agent", "updated_at": now - 10 * day},
+        "STRIPE_TEST_KEY": {"value": "sk_test_51Pz8eDEMOq9fK2vLmN0aBcDeF7hTuV", "note": "test mode key from dashboard.stripe.example.test/apikeys", "origin": "agent", "updated_at": now - 3600},
     }
     data = Path(tempfile.mkdtemp())
     store = Store(data / "portal.db")

@@ -369,7 +369,7 @@ class FakeGateway:
     def secrets(self):
         if self.vault is None:
             return None
-        return [{"name": n, "note": s["note"], "origin": s["origin"], "created_at": 1.0, "updated_at": 1.0} for n, s in sorted(self.vault.items())]
+        return [{"name": n, "note": s["note"], "origin": s["origin"], "created_at": s.get("updated_at", 1.0), "updated_at": s.get("updated_at", 1.0)} for n, s in sorted(self.vault.items())]
 
     def secret(self, name):
         return None if self.vault is None or name not in self.vault else self.vault[name]["value"]
@@ -380,7 +380,7 @@ class FakeGateway:
         if not value:
             raise ValueError("The secret is empty")
         old = self.vault.get(name, {})
-        self.vault[name] = {"value": value, "note": old.get("note", "") if note is None else note, "origin": "you"}
+        self.vault[name] = {"value": value, "note": old.get("note", "") if note is None else note, "origin": "you", "updated_at": time.time()}
 
     def remove_secret(self, name):
         return self.vault.pop(name, None) is not None
