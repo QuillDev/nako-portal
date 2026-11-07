@@ -80,7 +80,7 @@ class DemoGateway(FakeGateway):
             await self.hub.ask(chat, card)
             result = await self.secret_answer
             if result.get("value"):
-                self.vault["STRIPE_TEST_KEY"] = {"value": result["value"], "note": note, "origin": "you"}
+                self.vault["STRIPE_TEST_KEY"] = {"value": result["value"], "note": note, "origin": "you", "updated_at": time.time()}
             reply = "got it, the smoke test passed with STRIPE_TEST_KEY." if result.get("value") else "ok, skipping the smoke test."
             await self.hub.outgoing(chat, "reply", reply)
             self._row(sid, "assistant", reply)

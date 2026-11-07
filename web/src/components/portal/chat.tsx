@@ -16,7 +16,7 @@ import { Presence } from "./presence"
 import { ChatEnvironments } from "./chat-environments"
 import { Processes } from "./processes"
 import { Requests } from "./requests"
-import { SecretComposer } from "./secrets"
+import { SecretDock } from "./secrets"
 import { useGroupPicker } from "./groups"
 import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
@@ -291,9 +291,7 @@ export function Chat({ portal }: { portal: Portal }) {
           </Dock>
         )}
       </Conversation>
-      {secret ? (
-        <SecretComposer answer={portal.answer} key={secret.id} request={secret} />
-      ) : (
+      <SecretDock answer={portal.answer} key={c.session} request={secret}>
         <Composer
           command={portal.command}
           commands={portal.commands}
@@ -305,7 +303,7 @@ export function Chat({ portal }: { portal: Portal }) {
           setError={portal.setError}
           stop={portal.stop}
         />
-      )}
+      </SecretDock>
     </>
   )
 }

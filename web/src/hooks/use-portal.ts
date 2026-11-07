@@ -393,11 +393,14 @@ export function usePortal() {
   )
 
   const act = useCallback(
+    // True when it went through; a failure shows as the page error instead.
     async (fn: () => Promise<unknown>) => {
       try {
         await fn()
+        return true
       } catch (e) {
         setError((e as Error).message)
+        return false
       }
     },
     [],

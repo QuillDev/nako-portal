@@ -1,47 +1,86 @@
 import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react"
-import { memo, useEffect, useState } from "react"
+import { memo, type ReactNode, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
+import { cn } from "@/lib/utils"
 import { recheckSecret, reloadSecrets, revealSecret, type SecretInfo, secretPath, useSecrets } from "@/lib/secrets"
 import type { PortalRequest } from "@/lib/types"
 
+// Long enough for the check in the save button to draw, then for the "saved" line to be read.
+const CHECK_MS = 450
+const SAVED_MS = 1100
+
+/** A check that draws itself in, for a secret that just saved. */
+function SavedCheck({ className }: { className?: string }) {
+  return <CheckIcon className={cn("secret-check", className)} />
+}
+
 /** Nako asking for a secret: the composer turns into a masked field for it, and she only ever gets its name. */
-export const SecretComposer = memo(function SecretComposer({ request, answer }: { request: PortalRequest; answer: Portal["answer"] }) {
+const SecretComposer = memo(function SecretComposer({ request, answer, onStart, onEnd }: { request: PortalRequest; answer: Portal["answer"]; onStart: () => void; onEnd: () => void }) {
   const { name = "", note, replace } = request.params
   const [value, setValue] = useState("")
   const [shown, setShown] = useState(false)
   const [busy, setBusy] = useState(false)
-  const send = async (result: Record<string, unknown>) => {
+  const [phase, setPhase] = useState<"ask" | "check" | "saved">("ask")
+  const decline = async () => {
     setBusy(true)
     try {
-      await answer(request.id, result)
+      await answer(request.id, { declined: true })
     } finally {
       setBusy(false)
     }
   }
-  const save = () => value && !busy && send({ value })
+  const save = async () => {
+    if (!value || busy) return
+    setBusy(true)
+    // Held on screen through the animation, even once the request is gone.
+    onStart()
+    if (!(await answer(request.id, { value }))) {
+      setBusy(false)
+      onEnd()
+      return
+    }
+    setPhase("check")
+    setTimeout(() => setPhase("saved"), CHECK_MS)
+    setTimeout(onEnd, CHECK_MS + SAVED_MS)
+  }
+  if (phase === "saved")
+    return (
+      <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="fade-in-0 slide-in-from-bottom-1 flex h-12 animate-in items-center gap-2.5 rounded-[22px] border bg-card px-4 text-[13px] duration-200" role="status">
+          <span className="grid size-5 place-items-center rounded-full bg-primary/15 text-primary">
+            <CheckIcon className="size-3 stroke-[2.6]" />
+          </span>
+          <span className="truncate">
+            <span className="font-medium font-mono">{name}</span> <span className="text-muted-foreground">saved</span>
+          </span>
+        </div>
+      </div>
+    )
   return (
     <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
       <form
-        className="flex flex-col gap-1 rounded-[22px] border border-primary/35 bg-card py-2.5 pr-2.5 pl-4 has-[input:focus-visible]:border-primary/60"
+        className="flex flex-col rounded-[22px] border border-primary/35 bg-card py-1.5 pr-1.5 pl-4 has-[input:focus-visible]:border-primary/60"
         data-secret-request={name}
         onSubmit={e => {
           e.preventDefault()
           void save()
         }}
       >
-        <div className="flex flex-wrap items-start gap-x-2 text-[13px] leading-7">
-          <KeyRoundIcon className="mt-1.5 size-4 shrink-0 text-primary" />
-          <span className="font-medium font-mono">{name}</span>
-          {replace && <span className="text-muted-foreground">new value</span>}
-          {note && <span className="order-last min-w-0 basis-full py-1 pl-6 leading-5 text-muted-foreground sm:order-none sm:basis-0 sm:flex-1 sm:pl-0">{note}</span>}
-          <Button className="ml-auto h-7 px-2 text-[13px] text-muted-foreground sm:ml-0" disabled={busy} onClick={() => send({ declined: true })} size="sm" type="button" variant="ghost">
-            Not now
+        <div className="flex h-8 items-center gap-2 text-[13px]">
+          <KeyRoundIcon className="size-4 shrink-0 text-primary" />
+          <span className="min-w-0 truncate font-medium font-mono" title={note || undefined}>
+            {name}
+          </span>
+          {replace && <span className="shrink-0 text-muted-foreground">new value</span>}
+          <span className="flex-1" />
+          <Button aria-label="Not now" className="rounded-full text-muted-foreground" disabled={busy} onClick={decline} size="icon-sm" title="Not now" type="button" variant="ghost">
+            <XIcon />
           </Button>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 pl-6">
           <input
             aria-label={name}
             autoCapitalize="off"
@@ -52,6 +91,7 @@ export const SecretComposer = memo(function SecretComposer({ request, answer }: 
             data-1p-ignore
             onChange={e => setValue(e.target.value)}
             placeholder="Paste the secret"
+            readOnly={phase !== "ask"}
             spellCheck={false}
             type={shown ? "text" : "password"}
             value={value}
@@ -59,14 +99,22 @@ export const SecretComposer = memo(function SecretComposer({ request, answer }: 
           <Button aria-label={shown ? "Hide" : "Show"} className="rounded-full text-muted-foreground" onClick={() => setShown(s => !s)} size="icon-sm" type="button" variant="ghost">
             {shown ? <EyeOffIcon /> : <EyeIcon />}
           </Button>
-          <Button aria-label="Save" className="rounded-full" disabled={!value || busy} size="icon-sm" type="submit">
-            <ArrowUpIcon />
+          <Button aria-label={phase === "ask" ? "Save" : "Saved"} className="rounded-full disabled:opacity-100" disabled={!value || busy} size="icon-sm" type="submit">
+            {phase === "ask" ? <ArrowUpIcon /> : <SavedCheck />}
           </Button>
         </div>
       </form>
     </div>
   )
 })
+
+/** The chat's composer, or the secret Nako is waiting on in its place (kept through the save animation). */
+export function SecretDock({ request, answer, children }: { request: PortalRequest | undefined; answer: Portal["answer"]; children: ReactNode }) {
+  const [held, setHeld] = useState<PortalRequest | null>(null)
+  const shown = held ?? request
+  if (!shown) return children
+  return <SecretComposer answer={answer} key={shown.id} onEnd={() => setHeld(null)} onStart={() => setHeld(shown)} request={shown} />
+}
 
 // Copy without showing: the value is fetched, copied and dropped.
 function useCopy(name: string, onError: (message: string) => void) {
@@ -170,7 +218,7 @@ const PANEL =
   "gap-3 rounded-[22px] bg-card p-4 sm:max-w-[440px] max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(1.75rem,env(safe-area-inset-bottom))] max-sm:data-[state=open]:zoom-in-100 max-sm:data-[state=closed]:zoom-out-100 max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:slide-out-to-bottom"
 
 // The value field, shaped like the chat composer's secret request: masked input, eye, round save.
-function ValueComposer({ label, onSave, busy, focus = true }: { label: string; onSave: (value: string) => void; busy: boolean; focus?: boolean }) {
+function ValueComposer({ label, onSave, busy, done = false, focus = true }: { label: string; onSave: (value: string) => void; busy: boolean; done?: boolean; focus?: boolean }) {
   const [value, setValue] = useState("")
   const [shown, setShown] = useState(false)
   return (
@@ -200,8 +248,8 @@ function ValueComposer({ label, onSave, busy, focus = true }: { label: string; o
       <Button aria-label={shown ? "Hide" : "Show"} className="rounded-full text-muted-foreground" onClick={() => setShown(s => !s)} size="icon-sm" type="button" variant="ghost">
         {shown ? <EyeOffIcon /> : <EyeIcon />}
       </Button>
-      <Button aria-label="Save" className="rounded-full" disabled={!value || busy} size="icon-sm" type="submit">
-        <ArrowUpIcon />
+      <Button aria-label={done ? "Saved" : "Save"} className="rounded-full disabled:opacity-100" disabled={!value || busy || done} size="icon-sm" type="submit">
+        {done ? <SavedCheck /> : <ArrowUpIcon />}
       </Button>
     </form>
   )
@@ -240,9 +288,15 @@ function SecretPanel({ secret, onClose, onError }: { secret: SecretInfo; onClose
   const reveal = useReveal(secret.name, onError)
   const { copied, copy } = useCopy(secret.name, onError)
   const [replacing, setReplacing] = useState(false)
+  const [done, setDone] = useState(false)
   const { busy, run } = useSave(onError)
   const replace = async (value: string) => {
-    if (await run(() => api(secretPath(secret.name), { method: "POST", body: { value } }))) setReplacing(false)
+    if (!(await run(() => api(secretPath(secret.name), { method: "POST", body: { value } })))) return
+    setDone(true)
+    setTimeout(() => {
+      setDone(false)
+      setReplacing(false)
+    }, CHECK_MS + 150)
   }
   const remove = async () => {
     if (!confirm(`Delete ${secret.name}? Nako won't be able to use it any more.`)) return
@@ -256,7 +310,7 @@ function SecretPanel({ secret, onClose, onError }: { secret: SecretInfo; onClose
         <CloseButton />
       </DialogHeader>
       {replacing ? (
-        <ValueComposer busy={busy} label={`New value for ${secret.name}`} onSave={replace} />
+        <ValueComposer busy={busy} done={done} label={`New value for ${secret.name}`} onSave={replace} />
       ) : (
         <div className="flex items-start gap-1 rounded-[22px] border bg-background py-1.5 pr-1.5 pl-4">
           <div className="min-w-0 flex-1 py-1.5">
@@ -296,10 +350,13 @@ function SecretPanel({ secret, onClose, onError }: { secret: SecretInfo; onClose
 function NewSecretPanel({ initialName, onClose, onError }: { initialName: string; onClose: () => void; onError: (m: string) => void }) {
   const [name, setName] = useState(initialName)
   const [note, setNote] = useState("")
+  const [done, setDone] = useState(false)
   const { busy, run } = useSave(onError)
   const save = async (value: string) => {
     if (!name) return onError("Give it a name first")
-    if (await run(() => api(secretPath(name), { method: "POST", body: { value, note } }))) onClose()
+    if (!(await run(() => api(secretPath(name), { method: "POST", body: { value, note } })))) return
+    setDone(true)
+    setTimeout(onClose, CHECK_MS + 150)
   }
   return (
     <>
@@ -329,7 +386,7 @@ function NewSecretPanel({ initialName, onClose, onError }: { initialName: string
         placeholder="What it's for"
         value={note}
       />
-      <ValueComposer busy={busy} focus={!!initialName} label={name ? `Value for ${name}` : "Value"} onSave={save} />
+      <ValueComposer busy={busy} done={done} focus={!!initialName} label={name ? `Value for ${name}` : "Value"} onSave={save} />
     </>
   )
 }
