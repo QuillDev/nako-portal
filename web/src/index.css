@@ -304,3 +304,23 @@ html.bubble {
     animation: none;
   }
 }
+
+/* A secret that just saved: the check in its save button draws itself in. */
+.secret-check path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: secret-check 0.35s 0.05s ease-out forwards;
+}
+
+@keyframes secret-check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .secret-check path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
