@@ -1023,12 +1023,28 @@ def _oauth_routes():
     return oauth
 
 
-def _provider_row(entry, env, accounts):
+def _default_endpoint(slug):
+    """The address Hermes calls for a provider when nothing overrides it ("" when it has none)."""
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+
+        config = PROVIDER_REGISTRY.get(slug)
+    except Exception:
+        return None
+    return None if config is None else str(getattr(config, "inference_base_url", "") or "")
+
+
+LOOPBACK = re.compile(r"^https?://(localhost|127\.|0\.0\.0\.0|\[::1\])", re.I)
+
+
+def _provider_row(entry, env, accounts, endpoint=_default_endpoint):
     """One row for the Providers page, or None for a provider this page can't finish setting up.
 
     A single pasted key needs nothing else, and a provider with a device-code sign-in needs only
-    the code. Anything else (a Bedrock AWS login, a Vertex service-account file, an Azure or local
-    endpoint's address) is left out until it has a form of its own, rather than shown and failing.
+    the code. Most key providers also name a base-URL variable, but only as an optional override:
+    Hermes already knows their address. Left out until they have a form of their own are the ones
+    that can't run on a key alone: no key variable (Bedrock's AWS login, Vertex's service-account
+    file), no built-in address (Azure Foundry), or an address on this machine (a local server).
     """
     if entry.auth_type in ("virtual",):
         return None
@@ -1047,7 +1063,11 @@ def _provider_row(entry, env, accounts):
             "signup_url": entry.signup_url or "",
         }
     key_vars = tuple(entry.api_key_env_vars or ())
-    if not key_vars or entry.base_url_env_var:
+    if not key_vars:
+        return None
+    address = endpoint(entry.slug)
+    # No registry entry (OpenRouter): Hermes routes it by name, so the key is all it needs.
+    if address is not None and (not address or LOOPBACK.match(address)):
         return None
     found = next((v for v in key_vars if env.get(v)), "")
     return {

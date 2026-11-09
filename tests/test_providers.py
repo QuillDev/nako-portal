@@ -1,9 +1,11 @@
 """Settings > Providers: the list `hermes model` offers, an API key pasted into it, and a
 sign-in that finishes on the provider's own page."""
 
+import importlib.util
 import json
+from types import SimpleNamespace
 
-from conftest import ORIGIN, next_message
+from conftest import ORIGIN, ROOT, next_message
 
 KEY = "sk-or-not-a-real-key-1234"
 
@@ -132,3 +134,55 @@ async def test_providers_need_a_signed_in_page_from_this_origin(world):
     await world.sign_up()
     assert (await world.post("/api/providers/openrouter/key", {"value": KEY}, origin="https://evil.example.test")).status == 403
     assert world.hermes.provider_keys == {}
+
+
+# Which providers the adapter offers, from catalog entries shaped like `hermes model`'s.
+
+def _plugin():
+    spec = importlib.util.spec_from_file_location("nako_portal_providers_test", ROOT / "__init__.py")
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    return plugin
+
+
+def _entry(slug, key_vars=(), base_url_var="", auth_type="api_key", tab="keys"):
+    return SimpleNamespace(slug=slug, label=slug.title(), description="", auth_type=auth_type, tab=tab,
+                           api_key_env_vars=tuple(key_vars), base_url_env_var=base_url_var, signup_url="")
+
+
+ENDPOINTS = {
+    "deepseek": "https://api.deepseek.example.test/v1",
+    "anthropic": "https://api.anthropic.example.test",
+    "azure-foundry": "",
+    "lmstudio": "http://127.0.0.1:1234/v1",
+    "bedrock": "https://bedrock.example.test",
+}
+
+
+def _offered(entries, env=None):
+    plugin = _plugin()
+    rows = [plugin._provider_row(e, env or {}, {}, endpoint=ENDPOINTS.get) for e in entries]
+    return {r["slug"]: r for r in rows if r is not None}
+
+
+def test_a_key_provider_with_an_optional_address_override_is_still_offered():
+    offered = _offered([
+        _entry("deepseek", ["DEEPSEEK_API_KEY"], "DEEPSEEK_BASE_URL"),
+        _entry("anthropic", ["ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN"], "ANTHROPIC_BASE_URL"),
+        _entry("openrouter", ["OPENROUTER_API_KEY"]),
+    ], env={"ANTHROPIC_TOKEN": "set"})
+
+    assert sorted(offered) == ["anthropic", "deepseek", "openrouter"]
+    assert offered["deepseek"]["env_var"] == "DEEPSEEK_API_KEY"
+    assert offered["anthropic"]["connected"] is True
+
+
+def test_providers_a_key_alone_cannot_run_are_left_out():
+    offered = _offered([
+        _entry("azure-foundry", ["AZURE_FOUNDRY_API_KEY"], "AZURE_FOUNDRY_BASE_URL"),
+        _entry("lmstudio", ["LM_API_KEY"], "LM_BASE_URL"),
+        _entry("bedrock", auth_type="aws_sdk"),
+        _entry("moa", auth_type="virtual"),
+    ])
+
+    assert offered == {}
