@@ -56,6 +56,11 @@ BACKEND_SYNC = (
     "secret",
     "set_secret",
     "remove_secret",
+    "providers",
+    "set_provider_key",
+    "remove_provider_key",
+    "start_provider_signin",
+    "provider_signin",
     "set_model_options",
     "session_model",
 )
@@ -64,7 +69,7 @@ BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve", "set_session_model
 # Reads the server answers itself from the session store while no gateway is connected.
 OFFLINE_READS = ("thread", "chat_of", "title_of")
 # What the gateway tells the hub.
-HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed")
+HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed", "providers_changed")
 
 
 def _error(frame):
