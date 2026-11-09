@@ -643,6 +643,65 @@ class HermesBackend:
     def remove_secret(self, name):
         return self._scoped(_need_secrets().remove, name)
 
+    # Providers: the catalog `hermes model` offers, and the two ways to sign one in.
+
+    def providers(self):
+        """What this profile can run on and whether it's already set up. Nothing secret comes back."""
+        env = _provider_env()
+        accounts = _account_status()
+        rows = []
+        for entry in _provider_catalog():
+            row = _provider_row(entry, env, accounts)
+            if row is not None:
+                rows.append(row)
+        return rows
+
+    def set_provider_key(self, slug, value):
+        """Save an API key to the profile on screen, under the provider's own variable name."""
+        from hermes_cli.config import save_env_value
+
+        row = self._provider_for_key(slug)
+        key = str(value or "").strip()
+        if not key:
+            raise ValueError("Paste a key first")
+        self._scoped(lambda: save_env_value(row["env_var"], key))
+
+    def remove_provider_key(self, slug):
+        from hermes_cli.config import remove_env_value
+
+        row = self._provider_for_key(slug)
+        for name in row["env_vars"]:
+            try:
+                self._scoped(remove_env_value, name)
+            except Exception:  # a variable that was never set is already the goal
+                log.debug("portal: provider %s: nothing to remove for %s", slug, name)
+
+    def _provider_for_key(self, slug):
+        row = next((r for r in self.providers() if r["slug"] == slug), None)
+        if row is None:
+            raise ValueError("That provider isn't one this page can set up")
+        if row["kind"] != "key":
+            raise ValueError("That provider doesn't take an API key here")
+        return row
+
+    def start_provider_signin(self, slug):
+        """Begin a provider's device-code sign-in: the code and link to show, for polling after."""
+        routes = _oauth_routes()
+        if slug not in routes._DEVICE_CODE_STARTERS:
+            raise ValueError("That provider signs in from a terminal on this machine")
+        body = self._scoped(lambda: asyncio.run(routes._start_device_code_flow(slug)))
+        return {k: body[k] for k in ("session_id", "user_code", "verification_url", "expires_in", "poll_interval")}
+
+    def provider_signin(self, slug, session):
+        """How a started sign-in is going: pending until the provider is approved, then done."""
+        routes = _oauth_routes()
+        with routes._oauth_sessions_lock:
+            state = routes._oauth_sessions.get(str(session))
+        if state is None or state.get("provider") != slug:
+            raise ValueError("That sign-in expired. Start it again")
+        status = "cancelled" if state.get("cancelled") else state.get("status")
+        return {"status": status, "error": state.get("error_message")}
+
     def set_title(self, session, title):
         self._scoped(lambda: self.db.set_session_title(session, title))
 
@@ -919,6 +978,90 @@ def _need_secrets():
     if api is None:
         raise ValueError("The agent-secrets plugin isn't installed")
     return api
+
+
+# Providers: the catalog and status helpers `hermes model` itself uses, so the portal never keeps
+# a second list of names, key variables or sign-in flows.
+
+def _provider_catalog():
+    """Every provider this Hermes offers, in `hermes model` order."""
+    from hermes_cli.provider_catalog import provider_catalog
+
+    return provider_catalog()
+
+
+def _provider_env():
+    """The profile's `.env` plus the process environment: a key counts if either has it."""
+    from hermes_cli.config import load_env
+
+    env = {}
+    try:
+        env.update({str(k): str(v) for k, v in (load_env() or {}).items()})
+    except Exception:  # an unreadable .env mustn't hide the process environment
+        log.debug("portal: could not read .env for providers", exc_info=True)
+    env.update(os.environ)
+    return env
+
+
+def _account_status():
+    """Sign-in status for the account providers (`{"slug": {"logged_in": bool, "source_label": str}}`)."""
+    try:
+        from hermes_cli.web_routers.oauth import _build_oauth_catalog, _resolve_provider_status
+
+        return {
+            entry["id"]: _resolve_provider_status(entry["id"], entry.get("status_fn"))
+            for entry in _build_oauth_catalog()
+        }
+    except Exception:  # an older Hermes: keys still work, the accounts tab just has nothing to say
+        log.warning("portal: could not read provider sign-in status", exc_info=True)
+        return {}
+
+
+def _oauth_routes():
+    from hermes_cli.web_routers import oauth
+
+    return oauth
+
+
+def _provider_row(entry, env, accounts):
+    """One row for the Providers page, or None for a provider this page can't finish setting up.
+
+    A single pasted key needs nothing else, and a provider with a device-code sign-in needs only
+    the code. Anything else (a Bedrock AWS login, a Vertex service-account file, an Azure or local
+    endpoint's address) is left out until it has a form of its own, rather than shown and failing.
+    """
+    if entry.auth_type in ("virtual",):
+        return None
+    account = accounts.get(entry.slug) or {}
+    if entry.tab == "accounts" and account:
+        return {
+            "slug": entry.slug,
+            "label": entry.label,
+            "description": entry.description,
+            "kind": "signin" if account.get("flow") == "device_code" else "cli",
+            "command": account.get("cli_command") or "",
+            "connected": bool((account.get("status") or {}).get("logged_in")),
+            "source": (account.get("status") or {}).get("source_label") or "",
+            "env_var": "",
+            "env_vars": [],
+            "signup_url": entry.signup_url or "",
+        }
+    key_vars = tuple(entry.api_key_env_vars or ())
+    if not key_vars or entry.base_url_env_var:
+        return None
+    found = next((v for v in key_vars if env.get(v)), "")
+    return {
+        "slug": entry.slug,
+        "label": entry.label,
+        "description": entry.description,
+        "kind": "key",
+        "command": "",
+        "connected": bool(found),
+        "source": found,
+        "env_var": key_vars[0],
+        "env_vars": list(key_vars),
+        "signup_url": entry.signup_url or "",
+    }
 
 
 class SecretSurface:

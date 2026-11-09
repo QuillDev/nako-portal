@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { ModelSelection } from "@/components/portal/model-picker"
 import { z } from "zod"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
+import { reloadProviders } from "@/lib/providers"
 import { reloadSecrets } from "@/lib/secrets"
 import { rememberTitles } from "@/lib/session-refs"
 import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type HistoryMessage, type Live, type Me, type OpenSession, type SessionRow } from "@/lib/types"
@@ -202,6 +203,9 @@ export function usePortal() {
           return
         case "secrets.changed":
           void reloadSecrets()
+          return
+        case "providers.changed":
+          void reloadProviders()
           return
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.

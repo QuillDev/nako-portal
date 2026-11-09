@@ -161,6 +161,12 @@ class FakeGateway:
         self.proc_logs = {}
         # What the agent-secrets plugin keeps, as the adapter reaches it; None: plugin not installed.
         self.vault = {}
+        # Providers `hermes model` offers, as the backend lists them; None: too old to offer any.
+        self.provider_list = None
+        self.provider_keys = {}
+        self.provider_accounts = {}
+        self.signin_pending = {}
+        self.signin_status = {}
 
     def add_session(self, sid, title, chat=None, messages=(), profile=None):
         self.sessions[sid] = {
@@ -384,6 +390,38 @@ class FakeGateway:
 
     def remove_secret(self, name):
         return self.vault.pop(name, None) is not None
+
+    def providers(self):
+        rows = []
+        for row in self.provider_list or []:
+            connected = bool(self.provider_keys.get(row["slug"])) if row["kind"] == "key" else self.provider_accounts.get(row["slug"], False)
+            rows.append({**row, "connected": connected, "source": (row.get("env_var") or "") if connected else ""})
+        return rows
+
+    def set_provider_key(self, slug, value):
+        row = next((r for r in self.provider_list or [] if r["slug"] == slug), None)
+        if row is None or row["kind"] != "key":
+            raise ValueError("That provider doesn't take an API key here")
+        if not str(value or "").strip():
+            raise ValueError("Paste a key first")
+        self.provider_keys[slug] = value
+
+    def remove_provider_key(self, slug):
+        self.provider_keys.pop(slug, None)
+
+    def start_provider_signin(self, slug):
+        row = next((r for r in self.provider_list or [] if r["slug"] == slug), None)
+        if row is None or row["kind"] != "signin":
+            raise ValueError("That provider signs in from a terminal on this machine")
+        self.signin_pending.setdefault(slug, []).append(slug)
+        self.signin_status[slug] = "pending"
+        return {"session_id": f"{slug}-session", "user_code": "K7QF-M2XD", "verification_url": "https://example.test/device",
+                "expires_in": 900, "poll_interval": 5}
+
+    def provider_signin(self, slug, session):
+        if session != f"{slug}-session":
+            raise ValueError("That sign-in expired. Start it again")
+        return {"status": self.signin_status.get(slug, "pending"), "error": None}
 
     def commands(self):
         return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]

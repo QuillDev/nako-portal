@@ -133,4 +133,5 @@ export type Frame =
   | { kind: "profile.changed"; profile: string }
   | { kind: "machines.changed" }
   | { kind: "secrets.changed" }
+  | { kind: "providers.changed" }
   | { kind: "event"; session: string; type: string; payload: Record<string, unknown> }

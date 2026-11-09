@@ -422,6 +422,33 @@ class Hub:
     async def secrets_changed(self):
         await self.broadcast({"kind": "secrets.changed"})
 
+    # Providers: signed-in accounts and API keys, read and changed from Settings.
+
+    async def providers(self):
+        return await asyncio.to_thread(self.backend.providers)
+
+    async def set_provider_key(self, slug, value):
+        await asyncio.to_thread(self.backend.set_provider_key, str(slug), value)
+        await self.broadcast({"kind": "providers.changed"})
+
+    async def remove_provider_key(self, slug):
+        await asyncio.to_thread(self.backend.remove_provider_key, str(slug))
+        await self.broadcast({"kind": "providers.changed"})
+
+    async def start_provider_signin(self, slug):
+        started = await asyncio.to_thread(self.backend.start_provider_signin, str(slug))
+        await self.broadcast({"kind": "providers.changed"})
+        return started
+
+    async def provider_signin(self, slug, session):
+        status = await asyncio.to_thread(self.backend.provider_signin, str(slug), str(session))
+        if status.get("status") == "approved":
+            await self.providers_changed()
+        return status
+
+    async def providers_changed(self):
+        await self.broadcast({"kind": "providers.changed"})
+
     async def archive(self, session, archived=True):
         chat = await asyncio.to_thread(self.backend.chat_of, session) if archived else None
         if chat == INBOX:

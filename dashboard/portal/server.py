@@ -188,6 +188,11 @@ class Portal:
         r.add_get("/api/secrets/{name}", self.secret)
         r.add_post("/api/secrets/{name}", self.set_secret)
         r.add_post("/api/secrets/{name}/remove", self.remove_secret)
+        r.add_get("/api/providers", self.providers)
+        r.add_post("/api/providers/{slug}/key", self.set_provider_key)
+        r.add_post("/api/providers/{slug}/remove", self.remove_provider_key)
+        r.add_post("/api/providers/{slug}/signin", self.start_provider_signin)
+        r.add_get("/api/providers/{slug}/signin/{session}", self.provider_signin)
         r.add_get("/api/file", self.file)
         r.add_get("/api/inbox", self.inbox)
         r.add_get("/api/mesh", self.machines)
@@ -936,6 +941,52 @@ class Portal:
         self._require(request)
         hub = await self._secrets()
         return web.json_response({"removed": await hub.remove_secret(request.match_info["name"])})
+
+    # Providers: the same list `hermes model` offers, read and changed here.
+
+    async def providers(self, request):
+        """Accounts already signed in and API keys already saved, grouped as Hermes lists them."""
+        self._require(request)
+        hub = await self._hub()
+        return web.json_response(await hub.providers())
+
+    async def set_provider_key(self, request):
+        self._require(request)
+        hub = await self._hub()
+        body = await request.json()
+        try:
+            await hub.set_provider_key(request.match_info["slug"], body.get("value"))
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        return web.json_response({"ok": True})
+
+    async def remove_provider_key(self, request):
+        self._require(request)
+        hub = await self._hub()
+        try:
+            await hub.remove_provider_key(request.match_info["slug"])
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        return web.json_response({"ok": True})
+
+    async def start_provider_signin(self, request):
+        self._require(request)
+        hub = await self._hub()
+        try:
+            return web.json_response(await hub.start_provider_signin(request.match_info["slug"]))
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        except Exception as error:  # the provider's own refusal, e.g. device login disabled
+            log.warning("portal: provider sign-in failed: %s", error)
+            return web.json_response({"error": str(error) or "That sign-in didn't start"}, status=502)
+
+    async def provider_signin(self, request):
+        self._require(request)
+        hub = await self._hub()
+        try:
+            return web.json_response(await hub.provider_signin(request.match_info["slug"], request.match_info["session"]))
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=404)
 
     async def file(self, request):
         """A file shown in that session's transcript (a reply's MEDIA: tag or an image the user attached), and nothing else."""
