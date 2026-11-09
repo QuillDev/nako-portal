@@ -607,7 +607,20 @@ class HermesBackend:
         source = self.adapter.build_source(chat_id=chat, chat_type="dm", **PERSON)
         source = dataclasses.replace(source, profile=_named(self.owner.get(chat, self.profile)))
         event = MessageEvent(text=text, message_type=kind, source=source, message_id=uuid.uuid4().hex, media_urls=paths, media_types=kinds)
-        await self.adapter.handle_message(event)
+        await self._carrier(source.profile).handle_message(event)
+
+    def _carrier(self, profile):
+        """The adapter the gateway accepts a turn in ``profile`` from: the one that profile owns.
+        Hermes refuses a turn whose profile isn't its adapter's owner, so another profile's
+        message goes through the portal adapter that profile loaded. Without one (a profile
+        that doesn't load this plugin) it stays with this adapter, as before."""
+        if profile:
+            runner = getattr(self.adapter, "gateway_runner", None)
+            own = (getattr(runner, "_profile_adapters", None) or {}).get(profile) or {}
+            carrier = own.get(self.adapter.platform)
+            if carrier is not None:
+                return carrier
+        return self.adapter
 
     async def resolve(self, request, result):
         private = request.get("private") or {}
@@ -1143,9 +1156,30 @@ def _adapter(config):
             self._hooked = set()
             self._swept = {}
 
+        # One portal per machine: the default profile's adapter runs the link to the server and
+        # shows every served profile. Hermes still gives each other profile that loads this
+        # plugin its own portal adapter, and only that adapter may carry the profile's turns
+        # (the gateway refuses a turn whose profile isn't its adapter's owner). So such a
+        # secondary never dials the server; the primary hands it that profile's messages, and it
+        # hands everything it sends back to the primary.
+
+        def _secondary(self):
+            return bool(getattr(self, "_owner_profile", None))
+
+        def _primary(self):
+            """The adapter that holds the link, when this one is a secondary; else None."""
+            if not self._secondary():
+                return None
+            adapters = getattr(getattr(self, "gateway_runner", None), "adapters", None) or {}
+            primary = adapters.get(self.platform)
+            return primary if primary is not None and primary is not self else None
+
         async def connect(self, *, is_reconnect: bool = False) -> bool:
             import aiohttp
 
+            if self._secondary():
+                self._mark_connected()
+                return True
             if self.link is None:
                 home, origin, port, contact, apps = _settings()
                 data = home / "nako-portal"
@@ -1192,6 +1226,9 @@ def _adapter(config):
             return True
 
         async def disconnect(self) -> None:
+            if self._secondary():
+                self._mark_disconnected()
+                return
             # The server keeps running and shows "offline" until a gateway dials in again.
             for task in self._tasks:
                 task.cancel()
@@ -1242,6 +1279,8 @@ def _adapter(config):
             return chat
 
         async def send(self, chat_id, content, reply_to=None, metadata=None):
+            if (primary := self._primary()) is not None:
+                return await primary.send(chat_id, content, reply_to=reply_to, metadata=metadata)
             chat = str(chat_id or HOME_CHANNEL)
             if chat == NEW_THREAD:
                 chat = await self._new_thread(content)
@@ -1255,6 +1294,8 @@ def _adapter(config):
             return SendResult(success=True, message_id=message_id)
 
         async def edit_message(self, chat_id, message_id, content, *, finalize=False):
+            if (primary := self._primary()) is not None:
+                return await primary.edit_message(chat_id, message_id, content, finalize=finalize)
             await self._hub("outgoing", str(chat_id), message_id, content)
             return SendResult(success=True, message_id=message_id)
 
@@ -1277,6 +1318,8 @@ def _adapter(config):
             return None
 
         def toolsets_for_source(self, source):
+            if (primary := self._primary()) is not None:
+                return primary.toolsets_for_source(source)
             home = self.backend.home_of(getattr(source, "profile", None)) if self.backend is not None else None
             return _fallback_toolsets(home)
 
@@ -1284,6 +1327,8 @@ def _adapter(config):
             return {"name": "Nako", "type": "dm"}
 
         async def on_processing_start(self, event):
+            if (primary := self._primary()) is not None:
+                return await primary.on_processing_start(event)
             chat = event.source.chat_id
             self._hooked.add(chat)
             self._swept.pop(chat, None)  # the hooks report this chat's turns from here
@@ -1292,6 +1337,8 @@ def _adapter(config):
             await self._hub("turn_started", chat)
 
         async def on_processing_complete(self, event, outcome):
+            if (primary := self._primary()) is not None:
+                return await primary.on_processing_complete(event, outcome)
             self._hooked.discard(event.source.chat_id)
             await self._hub("turn_finished", event.source.chat_id, getattr(outcome, "value", str(outcome)))
 
@@ -1328,6 +1375,8 @@ def _adapter(config):
                 seen, hooked = running, hooked & set(running.values())
 
         async def _send_exec_approval_prompt(self, prompt):
+            if (primary := self._primary()) is not None:
+                return await primary._send_exec_approval_prompt(prompt)
             request = {
                 "id": uuid.uuid4().hex,
                 "method": "approval",
@@ -1339,6 +1388,8 @@ def _adapter(config):
             return SendResult(success=True, message_id=request["id"])
 
         async def send_clarify(self, chat_id, question, choices, clarify_id, session_key, metadata=None):
+            if (primary := self._primary()) is not None:
+                return await primary.send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
             if self.link is None or self.link.peer is None or not choices:
                 # An open question is answered by the next message, which the gateway intercepts.
                 return await super().send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
