@@ -646,15 +646,13 @@ class HermesBackend:
     # Providers: the catalog `hermes model` offers, and the two ways to sign one in.
 
     def providers(self):
-        """What this profile can run on and whether it's already set up. Nothing secret comes back."""
-        env = _provider_env()
-        accounts = _account_status()
-        rows = []
-        for entry in _provider_catalog():
-            row = _provider_row(entry, env, accounts)
-            if row is not None:
-                rows.append(row)
-        return rows
+        """What the shown profile can run on and whether it's already set up. Read inside that
+        profile's own scope, the way its turns see keys: another profile's key in the gateway's
+        environment must not count. Nothing secret comes back."""
+        with self._profile_scope():
+            env = _ScopedEnv()
+            accounts = _account_status()
+            return [row for row in (_provider_row(entry, env, accounts) for entry in _provider_catalog()) if row is not None]
 
     def set_provider_key(self, slug, value):
         """Save an API key to the profile on screen, under the provider's own variable name."""
@@ -990,17 +988,14 @@ def _provider_catalog():
     return provider_catalog()
 
 
-def _provider_env():
-    """The profile's `.env` plus the process environment: a key counts if either has it."""
-    from hermes_cli.config import load_env
+class _ScopedEnv:
+    """A key's value as the current profile scope sees it: that profile's `.env`, and process
+    variables only where Hermes treats them as shared (`get_env_value` holds the policy)."""
 
-    env = {}
-    try:
-        env.update({str(k): str(v) for k, v in (load_env() or {}).items()})
-    except Exception:  # an unreadable .env mustn't hide the process environment
-        log.debug("portal: could not read .env for providers", exc_info=True)
-    env.update(os.environ)
-    return env
+    def get(self, name, default=None):
+        from hermes_cli.config import get_env_value
+
+        return get_env_value(name) or default
 
 
 def _account_status():
