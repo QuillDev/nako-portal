@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { ModelSelection } from "@/components/portal/model-picker"
 import { z } from "zod"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
+import { reloadMcp } from "@/lib/mcp"
 import { reloadProviders } from "@/lib/providers"
 import { reloadSecrets } from "@/lib/secrets"
 import { rememberTitles } from "@/lib/session-refs"
@@ -207,11 +208,15 @@ export function usePortal() {
         case "providers.changed":
           void reloadProviders()
           return
+        case "mcp.changed":
+          void reloadMcp()
+          return
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.
           if (currentRef.current) navigate("#/")
           cacheRef.current.clear()
           loadSessions()
+          void reloadMcp()
           return
       }
       const open = currentRef.current

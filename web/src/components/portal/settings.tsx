@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { BellIcon, BoxesIcon, ChartLineIcon, ChevronRightIcon, KeyRoundIcon, type LucideIcon, NetworkIcon, PlugIcon, SlidersHorizontalIcon, SparklesIcon, UserIcon } from "lucide-react"
+import { BellIcon, BoxesIcon, ChartLineIcon, ChevronRightIcon, KeyRoundIcon, type LucideIcon, BlocksIcon, NetworkIcon, PlugIcon, SlidersHorizontalIcon, SparklesIcon, UserIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -13,11 +13,13 @@ import { setPresence, usePresence } from "@/lib/presence"
 import { setTheme, type Theme, useTheme } from "@/lib/theme"
 import { useEnvironments } from "@/lib/environments"
 import { useMesh } from "@/lib/mesh"
+import { useMcp } from "@/lib/mcp"
 import { useProviders } from "@/lib/providers"
 import { useSecrets } from "@/lib/secrets"
 import { cn } from "@/lib/utils"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
+import { McpSettings } from "./mcp"
 import { ProvidersSettings } from "./providers"
 import { SecretsSettings } from "./secrets"
 import { SignOffSettings } from "./sign-off-settings"
@@ -197,6 +199,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
   const usage = useUsage(setError)
   const secrets = useSecrets()
   const providers = useProviders()
+  const mcp = useMcp()
   const mesh = useMesh(portal.machinesSeen)
   const environments = useEnvironments(Boolean(portal.me?.environments)).data
   const buckets: Bucket[] = [
@@ -208,6 +211,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
         ...(usage !== "unsupported" ? [{ id: "usage", label: "Usage", icon: ChartLineIcon }] : []),
         ...(providers ? [{ id: "providers", label: "Providers", icon: PlugIcon }] : []),
         ...(secrets ? [{ id: "secrets", label: "Secrets", icon: KeyRoundIcon }] : []),
+        ...(mcp ? [{ id: "mcp", label: "MCP servers", icon: BlocksIcon }] : []),
       ],
     },
     {
@@ -300,6 +304,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     usage: usage !== "unsupported" && <UsageSettings state={usage} />,
     providers: <ProvidersSettings onError={setError} />,
     secrets: <SecretsSettings onError={setError} />,
+    mcp: <McpSettings onError={setError} />,
     mesh: <MeshSettings portal={portal} />,
     environments: <EnvironmentsSettings />,
     account: (
