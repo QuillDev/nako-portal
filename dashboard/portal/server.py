@@ -12,7 +12,7 @@ import re
 import secrets
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from aiohttp import WSMsgType, web
 
@@ -37,6 +37,13 @@ ANDROID_PACKAGE = "moe.nakode.portal"
 HANDOFF_TTL = 120
 # Built files carry their content hash in the name, so a browser can keep them for good.
 IMMUTABLE = "public, max-age=31536000, immutable"
+# What the browser tab says after an MCP server's sign-in page sends it back: title, line, status.
+MCP_CALLBACK_PAGES = {
+    "ok": ("Signed in", "You can close this tab and go back to Nako.", 200),
+    "failed": ("Sign-in didn't finish", "The server said no. Go back to Nako and try again.", 400),
+    "rejected": ("Sign-in already used", "This link was already used. Go back to Nako and try again.", 409),
+    "expired": ("Sign-in expired", "Go back to Nako and start it again.", 404),
+}
 # The page's head waits on these two small scripts before the app can run. A browser runs the copy
 # it has and checks for a new one in the background, so a load doesn't wait a round trip on them.
 HEAD_SCRIPTS = {"theme.js", "early.js"}
@@ -193,6 +200,18 @@ class Portal:
         r.add_post("/api/providers/{slug}/remove", self.remove_provider_key)
         r.add_post("/api/providers/{slug}/signin", self.start_provider_signin)
         r.add_get("/api/providers/{slug}/signin/{session}", self.provider_signin)
+        r.add_get("/api/mcp", self.mcp_servers)
+        r.add_get("/api/mcp/catalog", self.mcp_catalog)
+        r.add_post("/api/mcp/catalog/{name}/install", self.mcp_install)
+        r.add_post("/api/mcp/servers", self.mcp_add)
+        r.add_post("/api/mcp/servers/{name}/enabled", self.mcp_set_enabled)
+        r.add_post("/api/mcp/servers/{name}/remove", self.mcp_remove)
+        r.add_post("/api/mcp/servers/{name}/test", self.mcp_test)
+        r.add_post("/api/mcp/servers/{name}/tools", self.mcp_set_tools)
+        r.add_post("/api/mcp/servers/{name}/signin", self.mcp_start_signin)
+        r.add_get("/api/mcp/signin/{flow}", self.mcp_signin)
+        r.add_post("/api/mcp/signin/{flow}/cancel", self.mcp_cancel_signin)
+        r.add_get("/api/mcp/oauth/callback/{name}", self.mcp_oauth_callback)
         r.add_get("/api/file", self.file)
         r.add_get("/api/inbox", self.inbox)
         r.add_get("/api/mesh", self.machines)
@@ -987,6 +1006,81 @@ class Portal:
             return web.json_response(await hub.provider_signin(request.match_info["slug"], request.match_info["session"]))
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=404)
+
+    # MCP servers: the list `hermes mcp` keeps for the shown profile, read and changed here.
+
+    async def mcp_servers(self, request):
+        self._require(request)
+        listed = await (await self._hub()).mcp_servers()
+        if listed is None:
+            return web.json_response({"error": "This Hermes can't run MCP servers"}, status=404)
+        return web.json_response(listed)
+
+    async def mcp_catalog(self, request):
+        self._require(request)
+        return web.json_response(await (await self._hub()).mcp_catalog())
+
+    async def mcp_install(self, request):
+        self._require(request)
+        body = await request.json()
+        env = body.get("env") if isinstance(body.get("env"), dict) else {}
+        return web.json_response(await (await self._hub()).mcp_change("mcp_install", request.match_info["name"], env))
+
+    async def mcp_add(self, request):
+        self._require(request)
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("bad server")
+        return web.json_response(await (await self._hub()).mcp_change("mcp_add", body))
+
+    async def mcp_set_enabled(self, request):
+        self._require(request)
+        body = await request.json()
+        await (await self._hub()).mcp_change("mcp_set_enabled", request.match_info["name"], bool(body.get("enabled")))
+        return web.json_response({"ok": True})
+
+    async def mcp_remove(self, request):
+        self._require(request)
+        await (await self._hub()).mcp_change("mcp_remove", request.match_info["name"])
+        return web.json_response({"ok": True})
+
+    async def mcp_test(self, request):
+        self._require(request)
+        return web.json_response(await (await self._hub()).mcp_test(request.match_info["name"]))
+
+    async def mcp_set_tools(self, request):
+        self._require(request)
+        body = await request.json()
+        tools, on = body.get("tools"), body.get("on")
+        if not isinstance(tools, list) or not isinstance(on, list):
+            raise ValueError("bad tool list")
+        await (await self._hub()).mcp_change("mcp_set_tools", request.match_info["name"], [str(t) for t in tools], [str(t) for t in on])
+        return web.json_response({"ok": True})
+
+    async def mcp_start_signin(self, request):
+        """Begin a server's browser sign-in; the provider comes back to `mcp_oauth_callback`."""
+        self._require(request)
+        name = request.match_info["name"]
+        redirect = f"{self.origin}/api/mcp/oauth/callback/{quote(name, safe='')}"
+        return web.json_response(await (await self._hub()).mcp_change("mcp_start_signin", name, redirect))
+
+    async def mcp_signin(self, request):
+        self._require(request)
+        return web.json_response(await (await self._hub()).mcp_signin(request.match_info["flow"]))
+
+    async def mcp_cancel_signin(self, request):
+        self._require(request)
+        await (await self._hub()).mcp_change("mcp_cancel_signin", request.match_info["flow"])
+        return web.json_response({"ok": True})
+
+    async def mcp_oauth_callback(self, request):
+        """Where a server's sign-in page sends the browser back. It arrives from another site, so
+        the login cookie (SameSite=Strict) isn't sent: the flow's own one-time state is the check."""
+        q = request.query
+        outcome = await (await self._hub()).mcp_oauth_callback(request.match_info["name"], q.get("code"), q.get("state"), q.get("error"), q.get("iss"))
+        title, line, status = MCP_CALLBACK_PAGES.get(outcome, MCP_CALLBACK_PAGES["expired"])
+        page = f"<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'><title>{title}</title><body style='font:15px system-ui;margin:3rem auto;max-width:28rem;padding:0 1rem'><h1 style='font-size:20px'>{title}</h1><p>{line}</p>"
+        return web.Response(text=page, content_type="text/html", status=status)
 
     async def file(self, request):
         """A file shown in that session's transcript (a reply's MEDIA: tag or an image the user attached), and nothing else."""

@@ -167,6 +167,15 @@ class FakeGateway:
         self.provider_accounts = {}
         self.signin_pending = {}
         self.signin_status = {}
+        # MCP servers as `hermes mcp` keeps them (name -> config); None: a Hermes without MCP.
+        self.mcp = {}
+        self.mcp_plugins = {}
+        self.mcp_live = {}
+        self.mcp_tools = {}
+        self.mcp_catalog_list = []
+        self.mcp_env = {}
+        self.mcp_flows = {}
+        self.mcp_tokens = set()
 
     def add_session(self, sid, title, chat=None, messages=(), profile=None):
         self.sessions[sid] = {
@@ -422,6 +431,102 @@ class FakeGateway:
         if session != f"{slug}-session":
             raise ValueError("That sign-in expired. Start it again")
         return {"status": self.signin_status.get(slug, "pending"), "error": None}
+
+    def mcp_servers(self):
+        if self.mcp is None:
+            return None
+        rows = []
+        for name, cfg in sorted({**self.mcp, **{n: c for n, (c, _p) in self.mcp_plugins.items()}}.items()):
+            tools = cfg.get("tools") or {}
+            rows.append({"name": name, "url": cfg.get("url", ""), "command": cfg.get("command", ""), "args": cfg.get("args", []),
+                         "env": sorted(cfg.get("env") or {}), "auth": cfg.get("auth", "none"), "enabled": cfg.get("enabled", True),
+                         "plugin": self.mcp_plugins.get(name, (None, ""))[1], "status": self.mcp_live.get(name, "connected" if cfg.get("enabled", True) else "disabled"),
+                         "error": "", "signed_in": cfg.get("auth") != "oauth" or name in self.mcp_tokens,
+                         "picked": bool(tools), "codex": "", "installing": False})
+        return {"servers": rows, "codex": False}
+
+    def mcp_catalog(self):
+        return [{**row, "installed": row["name"] in self.mcp} for row in self.mcp_catalog_list]
+
+    def mcp_install(self, name, env=None):
+        row = next((r for r in self.mcp_catalog_list if r["name"] == name), None)
+        if row is None:
+            raise ValueError("That server isn't in the catalog")
+        missing = [e["name"] for e in row["env"] if e["required"] and not (env or {}).get(e["name"])]
+        if missing:
+            raise ValueError(f"{name} needs {', '.join(missing)}")
+        self.mcp_env.update(env or {})
+        self.mcp[name] = {"url": row.get("url", ""), "command": row.get("command", ""), "auth": row.get("auth", "none")}
+        return {"name": name}
+
+    def mcp_add(self, spec):
+        name = str(spec.get("name") or "").strip()
+        if not name:
+            raise ValueError("Server name is required")
+        if name in self.mcp:
+            raise ValueError(f"There's already a server named {name}")
+        if bool(spec.get("url")) == bool(spec.get("command")):
+            raise ValueError("Provide exactly one of URL (HTTP/SSE) or command (stdio)")
+        cfg = {k: spec[k] for k in ("url", "command", "args", "env", "auth") if spec.get(k)}
+        if spec.get("token"):
+            self.mcp_env[f"MCP_{name.upper()}_API_KEY"] = spec["token"]
+            cfg["auth"] = "header"
+        self.mcp[name] = cfg
+        return {"name": name}
+
+    def _mcp_own(self, name):
+        if name in self.mcp_plugins:
+            raise ValueError(f"{name} comes from the {self.mcp_plugins[name][1]} plugin")
+        if name not in self.mcp:
+            raise ValueError(f"No server named {name}")
+
+    def mcp_set_enabled(self, name, enabled):
+        self._mcp_own(name)
+        self.mcp[name]["enabled"] = bool(enabled)
+
+    def mcp_remove(self, name):
+        self._mcp_own(name)
+        del self.mcp[name]
+
+    def mcp_test(self, name):
+        if name not in self.mcp and name not in self.mcp_plugins:
+            raise ValueError(f"No server named {name}")
+        if self.mcp.get(name, {}).get("auth") == "oauth" and name not in self.mcp_tokens:
+            return {"ok": False, "error": "Sign in first", "tools": []}
+        include = (self.mcp.get(name, {}).get("tools") or {}).get("include")
+        tools = self.mcp_tools.get(name, [])
+        return {"ok": True, "error": "", "tools": [{"name": t, "description": d, "on": include is None or t in include} for t, d in tools]}
+
+    def mcp_set_tools(self, name, tools, chosen):
+        self._mcp_own(name)
+        if set(tools) == set(chosen):
+            self.mcp[name].pop("tools", None)
+        else:
+            self.mcp[name]["tools"] = {"include": [t for t in tools if t in chosen]}
+
+    def mcp_start_signin(self, name, redirect_uri):
+        self._mcp_own(name)
+        self.mcp_flows[f"{name}-flow"] = {"name": name, "redirect": redirect_uri, "status": "authorization_required"}
+        return {"flow_id": f"{name}-flow", "server_name": name, "status": "authorization_required",
+                "authorization_url": f"https://auth.example.test/authorize?redirect_uri={redirect_uri}", "error": None}
+
+    def mcp_signin(self, flow):
+        state = self.mcp_flows.get(flow)
+        if state is None:
+            raise ValueError("That sign-in expired. Start it again")
+        return {"flow_id": flow, "server_name": state["name"], "status": state["status"], "authorization_url": None, "error": None}
+
+    def mcp_cancel_signin(self, flow):
+        if flow in self.mcp_flows:
+            self.mcp_flows[flow]["status"] = "error"
+
+    def mcp_oauth_callback(self, name, code=None, state=None, error=None, iss=None):
+        flow = self.mcp_flows.get(f"{name}-flow")
+        if flow is None or state != "good-state":
+            return "expired"
+        flow["status"] = "approved"
+        self.mcp_tokens.add(name)
+        return "ok"
 
     def commands(self):
         return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]

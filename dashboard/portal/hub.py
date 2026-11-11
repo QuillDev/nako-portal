@@ -449,6 +449,35 @@ class Hub:
     async def providers_changed(self):
         await self.broadcast({"kind": "providers.changed"})
 
+    # MCP servers: what `hermes mcp` keeps, read and changed from Settings.
+
+    async def mcp_servers(self):
+        return await asyncio.to_thread(self.backend.mcp_servers)
+
+    async def mcp_catalog(self):
+        return await asyncio.to_thread(self.backend.mcp_catalog)
+
+    async def mcp_test(self, name):
+        return await asyncio.to_thread(self.backend.mcp_test, str(name))
+
+    async def mcp_change(self, method, *args):
+        """Any write: run it, then tell every open tab to reread the list."""
+        result = await asyncio.to_thread(getattr(self.backend, method), *args)
+        await self.mcp_changed()
+        return result
+
+    async def mcp_signin(self, flow):
+        status = await asyncio.to_thread(self.backend.mcp_signin, str(flow))
+        if status.get("status") == "approved":
+            await self.mcp_changed()
+        return status
+
+    async def mcp_oauth_callback(self, name, code, state, error, iss):
+        return await asyncio.to_thread(self.backend.mcp_oauth_callback, str(name), code, state, error, iss)
+
+    async def mcp_changed(self):
+        await self.broadcast({"kind": "mcp.changed"})
+
     async def archive(self, session, archived=True):
         chat = await asyncio.to_thread(self.backend.chat_of, session) if archived else None
         if chat == INBOX:

@@ -228,6 +228,34 @@ async def main(port):
     # What the agent-secrets plugin would hold.
     day = 86400
     now = time.time()
+    # MCP servers as a profile might have them: one failing sign-in, one switched off, one a plugin brings.
+    hermes.mcp = {
+        "deepwiki": {"url": "https://mcp.deepwiki.example.test/mcp"},
+        "linear": {"url": "https://mcp.linear.example.test/mcp", "auth": "oauth"},
+        "local-files": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/srv/notes"], "env": {"LOG_LEVEL": "info"}},
+        "notion": {"url": "https://mcp.notion.example.test/mcp", "auth": "oauth", "tools": {"include": ["search", "fetch", "create-pages", "update-page", "get-comments"]}},
+        "weather": {"command": "uvx", "args": ["weather-mcp"], "enabled": False},
+    }
+    hermes.mcp_tokens = {"notion"}
+    hermes.mcp_plugins = {"tracker": ({"url": "https://tracker.example.test/mcp"}, "tracker-tools")}
+    hermes.mcp_tools = {
+        "notion": [("search", "Search pages and databases"), ("fetch", "Read a page or database"), ("create-pages", "Create pages"),
+                   ("update-page", "Edit a page's content or properties"), ("move-pages", "Move pages to a new parent"), ("get-comments", "List comments on a page")],
+        "deepwiki": [("ask_question", "Ask about a public GitHub repo"), ("read_wiki_structure", "List a repo's wiki topics"), ("read_wiki_contents", "Read a repo's wiki")],
+    }
+    hermes.mcp_catalog_list = [
+        {"name": n, "description": d, "transport": "http" if u else "stdio", "url": u, "command": c, "args": a, "auth": au, "env": e, "source": "", "post_install": p}
+        for n, d, u, c, a, au, e, p in [
+            ("airtable", "Bases, tables, and records from your Airtable workspace.", "", "npx", ["-y", "airtable-mcp-server"], "none",
+             [{"name": "AIRTABLE_API_KEY", "prompt": "Airtable personal access token", "required": True, "secret": True, "saved": False}], "Create a token at airtable.com/create/tokens with data.records:read."),
+            ("asana", "Tasks, projects, and goals from your Asana workspace.", "https://mcp.asana.example.test/sse", "", [], "oauth", [], ""),
+            ("context7", "Up-to-date, version-specific library docs and code examples.", "https://mcp.context7.example.test/mcp", "", [], "none", [], ""),
+            ("deepwiki", "Ask questions about any public GitHub repo.", "https://mcp.deepwiki.example.test/mcp", "", [], "none", [], ""),
+            ("figma", "Design context and write-to-canvas from Figma.", "https://mcp.figma.example.test/mcp", "", [], "oauth", [], ""),
+            ("github", "Issues, pull requests, and code from GitHub.", "https://api.github.example.test/mcp", "", [], "none",
+             [{"name": "GITHUB_TOKEN", "prompt": "GitHub token", "required": True, "secret": True, "saved": False}], ""),
+        ]
+    ]
     hermes.vault = {
         "STAGING_DB_ADMIN": {"value": "q7Rz-Lw2v-9KpT-x4Hn", "note": "staging postgres admin", "origin": "agent", "updated_at": now - 2 * day},
         "OPENAI_API_KEY": {"value": "sk-dem...0000", "note": "personal key for the eval scripts", "origin": "you", "updated_at": now - 29 * day},

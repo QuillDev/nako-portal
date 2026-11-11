@@ -61,6 +61,18 @@ BACKEND_SYNC = (
     "remove_provider_key",
     "start_provider_signin",
     "provider_signin",
+    "mcp_servers",
+    "mcp_catalog",
+    "mcp_install",
+    "mcp_add",
+    "mcp_set_enabled",
+    "mcp_remove",
+    "mcp_test",
+    "mcp_set_tools",
+    "mcp_start_signin",
+    "mcp_signin",
+    "mcp_cancel_signin",
+    "mcp_oauth_callback",
     "set_model_options",
     "session_model",
 )
@@ -69,7 +81,7 @@ BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve", "set_session_model
 # Reads the server answers itself from the session store while no gateway is connected.
 OFFLINE_READS = ("thread", "chat_of", "title_of")
 # What the gateway tells the hub.
-HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed", "providers_changed")
+HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed", "providers_changed", "mcp_changed")
 
 
 def _error(frame):
