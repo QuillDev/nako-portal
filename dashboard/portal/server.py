@@ -200,6 +200,10 @@ class Portal:
         r.add_post("/api/providers/{slug}/remove", self.remove_provider_key)
         r.add_post("/api/providers/{slug}/signin", self.start_provider_signin)
         r.add_get("/api/providers/{slug}/signin/{session}", self.provider_signin)
+        r.add_post("/api/providers/{slug}/accounts/signin", self.start_account_signin)
+        r.add_get("/api/providers/{slug}/accounts/signin/{attempt}", self.account_signin)
+        r.add_post("/api/providers/{slug}/accounts/signin/{attempt}/code", self.finish_account_signin)
+        r.add_post("/api/providers/{slug}/accounts/signin/{attempt}/cancel", self.cancel_account_signin)
         r.add_get("/api/mcp", self.mcp_servers)
         r.add_get("/api/mcp/catalog", self.mcp_catalog)
         r.add_post("/api/mcp/catalog/{name}/install", self.mcp_install)
@@ -1006,6 +1010,48 @@ class Portal:
             return web.json_response(await hub.provider_signin(request.match_info["slug"], request.match_info["session"]))
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=404)
+
+    async def start_account_signin(self, request):
+        """Sign in to one more account, or again to one already here: whoever signs in decides which."""
+        self._require(request)
+        hub = await self._hub()
+        body = await request.json() if request.can_read_body else {}
+        try:
+            return web.json_response(await hub.start_account_signin(request.match_info["slug"], (body or {}).get("target")))
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        except Exception as error:  # the provider's own refusal
+            log.warning("portal: account sign-in failed to start: %s", error)
+            return web.json_response({"error": str(error) or "That sign-in didn't start"}, status=502)
+
+    async def finish_account_signin(self, request):
+        self._require(request)
+        hub = await self._hub()
+        body = await request.json()
+        try:
+            return web.json_response(await hub.finish_account_signin(request.match_info["slug"], request.match_info["attempt"], body.get("code")))
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        except Exception as error:
+            log.warning("portal: account sign-in failed: %s", error)
+            return web.json_response({"error": str(error) or "That sign-in failed"}, status=502)
+
+    async def account_signin(self, request):
+        self._require(request)
+        hub = await self._hub()
+        try:
+            return web.json_response(await hub.account_signin(request.match_info["slug"], request.match_info["attempt"]))
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=404)
+
+    async def cancel_account_signin(self, request):
+        self._require(request)
+        hub = await self._hub()
+        try:
+            await hub.cancel_account_signin(request.match_info["slug"], request.match_info["attempt"])
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        return web.json_response({"ok": True})
 
     # MCP servers: the list `hermes mcp` keeps for the shown profile, read and changed here.
 

@@ -1,13 +1,20 @@
-import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, SearchIcon, TerminalIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, UserRoundIcon, SearchIcon, TerminalIcon, XIcon } from "lucide-react"
 import { memo, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import {
+  type Account,
+  type AccountResult,
+  type AccountSignIn,
+  cancelAccountSignIn,
+  finishAccountSignIn,
+  pollAccountSignIn,
   pollSignIn,
   removeProviderKey,
   reloadProviders,
   setProviderKey,
+  startAccountSignIn,
   startSignIn,
   type Provider,
   type SignIn,
@@ -58,7 +65,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 }
 
 /** The key field, shaped like the chat composer's secret request: masked, eye, round save. */
-function KeyField({ label, onSave, busy, done = false }: { label: string; onSave: (value: string) => void; busy: boolean; done?: boolean }) {
+function KeyField({ label, onSave, busy, done = false, placeholder = "Paste your API key" }: { label: string; onSave: (value: string) => void; busy: boolean; done?: boolean; placeholder?: string }) {
   const [value, setValue] = useState("")
   const [shown, setShown] = useState(false)
   return (
@@ -79,7 +86,7 @@ function KeyField({ label, onSave, busy, done = false }: { label: string; onSave
         className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
         data-1p-ignore
         onChange={e => setValue(e.target.value)}
-        placeholder="Paste your API key"
+        placeholder={placeholder}
         spellCheck={false}
         type={shown ? "text" : "password"}
         value={value}
@@ -317,6 +324,206 @@ function NewKeyPanel({ provider, onClose, onError }: { provider: Provider; onClo
   )
 }
 
+const accountTitle = (a: Account) => a.email || a.label
+const accountLine = (a: Account) =>
+  [a.email && a.label !== a.email ? a.label : "", a.plan, a.signed_in ? "signed in" : "signed out"].filter(Boolean).join(" · ")
+
+type AccountView = { kind: "list"; notice?: AccountResult } | { kind: "signin"; target?: string }
+
+/** A provider that can hold several accounts: each one, signing one in again, and adding another. */
+function AccountsPanel({ provider, onError }: { provider: Provider; onError: (message: string) => void }) {
+  const [view, setView] = useState<AccountView>({ kind: "list" })
+  const accounts = provider.accounts ?? []
+  return (
+    <>
+      <DialogHeader className="flex-row items-center gap-2 text-left">
+        <UserRoundIcon className="size-4 shrink-0 text-primary" />
+        <DialogTitle className="min-w-0 flex-1 truncate font-medium text-sm leading-8">{provider.label}</DialogTitle>
+        <CloseButton />
+      </DialogHeader>
+      {view.kind === "signin" ? (
+        <AccountSignInFlow
+          key={view.target ?? "new"}
+          onDone={result => setView({ kind: "list", notice: result })}
+          onError={onError}
+          provider={provider}
+          target={view.target}
+        />
+      ) : (
+        <>
+          {view.notice && (
+            <p className="flex items-center gap-2 px-1 text-sm" data-account-notice={view.notice.outcome}>
+              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-primary/15 text-primary">
+                <CheckIcon className="size-3 stroke-[2.6]" />
+              </span>
+              <span className="min-w-0">
+                {view.notice.outcome === "added" ? "Added " : "Refreshed "}
+                <span className="font-medium">{view.notice.email || view.notice.label}</span>
+                {view.notice.outcome === "added"
+                  ? view.notice.plan
+                    ? ` (${view.notice.plan})`
+                    : ""
+                  : ". It was already here, so nothing was added."}
+              </span>
+            </p>
+          )}
+          <div className="flex flex-col">
+            {accounts.map(a => (
+              <div className="flex items-center gap-3 px-1 py-2" data-account={a.id} key={a.id}>
+                <span className={cn("size-2 shrink-0 rounded-full", a.signed_in ? "bg-primary" : "border-[1.5px] border-muted-foreground")} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm">{accountTitle(a)}</span>
+                  <span className="block truncate text-muted-foreground text-xs">{accountLine(a)}</span>
+                </span>
+                <Button
+                  className={cn("rounded-full", a.signed_in && "text-muted-foreground")}
+                  onClick={() => setView({ kind: "signin", target: a.id })}
+                  size="sm"
+                  variant={a.signed_in ? "ghost" : "outline"}
+                >
+                  {a.signed_in ? "Sign in again" : "Sign in"}
+                </Button>
+              </div>
+            ))}
+            {accounts.length === 0 && <p className="px-1 py-2 text-muted-foreground text-sm">No accounts yet.</p>}
+          </div>
+          <div className="flex justify-end pt-1">
+            <Button className="rounded-full" onClick={() => setView({ kind: "signin" })} size="sm" variant="outline">
+              <PlusIcon />
+              Add an account
+            </Button>
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
+/** One sign-in: a link and the code it shows (paste), or a code to enter on the provider's page. */
+function AccountSignInFlow({
+  provider,
+  target,
+  onDone,
+  onError,
+}: {
+  provider: Provider
+  target?: string
+  onDone: (result: AccountResult) => void
+  onError: (message: string) => void
+}) {
+  const [started, setStarted] = useState<AccountSignIn | null>(null)
+  const [message, setMessage] = useState("")
+  const [busy, setBusy] = useState(false)
+  const finished = useRef(false)
+  const reportError = useRef(onError)
+  reportError.current = onError
+
+  useEffect(() => {
+    let live = true
+    let attempt = ""
+    startAccountSignIn(provider.slug, target).then(
+      signIn => {
+        attempt = signIn.attempt
+        if (live) setStarted(signIn)
+        else void cancelAccountSignIn(provider.slug, attempt).catch(() => {})
+      },
+      (e: Error) => {
+        if (!live) return
+        setMessage(e.message)
+        reportError.current(e.message)
+      },
+    )
+    return () => {
+      live = false
+      // Closing the panel mid-way stops the sign-in on the gateway too.
+      if (attempt && !finished.current) void cancelAccountSignIn(provider.slug, attempt).catch(() => {})
+    }
+  }, [provider.slug, target])
+
+  const done = (result: AccountResult) => {
+    finished.current = true
+    void reloadProviders().then(() => onDone(result))
+  }
+
+  // A code sign-in finishes on the provider's page: poll until the gateway has linked it.
+  useEffect(() => {
+    if (!started || started.mode !== "code") return
+    const every = Math.max(2, started.poll_interval || 5) * 1000
+    const timer = window.setInterval(() => {
+      pollAccountSignIn(provider.slug, started.attempt).then(
+        state => {
+          if (state.status === "done" && state.result) {
+            window.clearInterval(timer)
+            done(state.result)
+          } else if (state.status !== "pending") {
+            window.clearInterval(timer)
+            finished.current = true
+            setMessage(state.error || `The sign-in ${state.status}. Try again.`)
+          }
+        },
+        e => {
+          window.clearInterval(timer)
+          setMessage((e as Error).message)
+        },
+      )
+    }, every)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [started, provider.slug])
+
+  const redeem = async (code: string) => {
+    if (!started) return
+    setBusy(true)
+    setMessage("")
+    try {
+      done(await finishAccountSignIn(provider.slug, started.attempt, code))
+    } catch (e) {
+      finished.current = true
+      setMessage((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (message) return <p className="px-1 text-destructive text-sm">{message}</p>
+  if (!started) return <p className="px-1 text-muted-foreground text-sm">Asking {provider.label} for a sign-in link…</p>
+  const open = (
+    <Button asChild className="rounded-full" size="sm">
+      <a href={started.mode === "paste" ? started.url : started.verification_url} rel="noreferrer" target="_blank">
+        Open sign-in page
+        <ExternalLinkIcon />
+      </a>
+    </Button>
+  )
+  if (started.mode === "code") {
+    return (
+      <>
+        <DialogDescription className="px-1 text-foreground">Enter this code on the sign-in page.</DialogDescription>
+        <div className="flex h-16 items-center justify-center gap-2 rounded-[22px] border bg-background font-mono font-medium text-2xl tracking-[0.12em]">
+          {started.user_code}
+          <CopyButton label="Copy code" value={started.user_code ?? ""} />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-2 text-muted-foreground text-xs">
+            <span className="size-2 rounded-full bg-primary/70" />
+            Waiting for you to sign in
+          </span>
+          <span className="flex-1" />
+          {open}
+        </div>
+      </>
+    )
+  }
+  return (
+    <>
+      <DialogDescription className="px-1 text-foreground">Sign in with the account to add or refresh, then paste the code it shows you.</DialogDescription>
+      <div className="flex justify-end">{open}</div>
+      <KeyField busy={busy} label={`Sign-in code for ${provider.label}`} onSave={redeem} placeholder="Paste the code" />
+      <p className="px-1 text-muted-foreground text-xs">An account that's already here gets its sign-in refreshed. A new one is added.</p>
+    </>
+  )
+}
+
 /** The picker: everything Hermes offers that this page can set up, searched by name. */
 function AddPanel({ rows, onPick }: { rows: Provider[]; onPick: (provider: Provider) => void }) {
   const [query, setQuery] = useState("")
@@ -366,7 +573,7 @@ export function ProvidersSettings({ onError }: { onError: (message: string) => v
   const providers = useProviders()
   const [open, setOpen] = useState<Open>(null)
   if (!providers) return null
-  const connected = providers.filter(p => p.connected)
+  const connected = providers.filter(p => p.connected || (p.accounts?.length ?? 0) > 0)
   const current = open?.kind === "provider" ? providers.find(p => p.slug === open.slug) : undefined
   const close = () => setOpen(null)
   return (
@@ -382,7 +589,7 @@ export function ProvidersSettings({ onError }: { onError: (message: string) => v
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm">{p.label}</span>
-              <span className="block truncate text-muted-foreground text-xs">{p.kind === "key" ? "API key" : "signed in"}</span>
+              <span className="block truncate text-muted-foreground text-xs">{p.kind === "key" ? "API key" : p.accounts?.some(a => !a.signed_in) ? "needs sign-in" : "signed in"}</span>
             </span>
             <ChevronRightIcon className="size-4 text-muted-foreground" />
           </button>
@@ -403,7 +610,9 @@ export function ProvidersSettings({ onError }: { onError: (message: string) => v
               rows={providers}
             />
           ) : current ? (
-            current.kind === "key" ? (
+            current.accounts ? (
+              <AccountsPanel key={current.slug} onError={onError} provider={current} />
+            ) : current.kind === "key" ? (
               current.connected ? (
                 <KeyPanel key={current.slug} onClose={close} onError={onError} provider={current} />
               ) : (
