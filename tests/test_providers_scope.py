@@ -24,6 +24,17 @@ def _backend(home):
     return lambda: {row["slug"]: row for row in plugin.HermesBackend.providers(shown)}
 
 
+def test_account_providers_show_how_they_sign_in(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text("model:\n  default: some-model\n")
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    rows = _backend(tmp_path)()
+
+    assert rows["nous"]["kind"] == "signin"
+    assert rows["qwen-oauth"]["kind"] == "cli"
+    assert rows["qwen-oauth"]["command"] == "hermes auth add qwen-oauth"
+    assert all(row["command"] for row in rows.values() if row["kind"] == "cli")
+
+
 def test_a_key_only_another_profile_has_does_not_count_as_set_up(tmp_path, monkeypatch):
     main, other = tmp_path / "main", tmp_path / "other"
     for home in (main, other):
