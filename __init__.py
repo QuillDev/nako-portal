@@ -1336,12 +1336,19 @@ class _ScopedEnv:
 
 
 def _account_status():
-    """Sign-in status for the account providers (`{"slug": {"logged_in": bool, "source_label": str}}`)."""
+    """How each account provider signs in, and whether it has (`{"slug": {"flow", "cli_command", "status"}}`).
+
+    Built the way Hermes's own Accounts page builds it, so the command shown is the one Hermes shows.
+    """
     try:
-        from hermes_cli.web_routers.oauth import _build_oauth_catalog, _resolve_provider_status
+        from hermes_cli.web_routers.oauth import _build_oauth_catalog, _external_process_cli_command, _resolve_provider_status
 
         return {
-            entry["id"]: _resolve_provider_status(entry["id"], entry.get("status_fn"))
+            entry["id"]: {
+                "flow": entry.get("flow") or "",
+                "cli_command": _external_process_cli_command(entry["id"], entry.get("cli_command") or ""),
+                "status": _resolve_provider_status(entry["id"], entry.get("status_fn")),
+            }
             for entry in _build_oauth_catalog()
         }
     except Exception:  # an older Hermes: keys still work, the accounts tab just has nothing to say
