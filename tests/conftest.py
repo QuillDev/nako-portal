@@ -167,6 +167,10 @@ class FakeGateway:
         self.provider_accounts = {}
         self.signin_pending = {}
         self.signin_status = {}
+        # Providers with several accounts: slug -> {"mode": "paste" | "code", "accounts": [...]}.
+        # A sign-in's code (or, for "code", the email passed to approve_account) names who signed in.
+        self.account_logins = {}
+        self.account_attempts = {}
         # MCP servers as `hermes mcp` keeps them (name -> config); None: a Hermes without MCP.
         self.mcp = {}
         self.mcp_plugins = {}
@@ -404,8 +408,57 @@ class FakeGateway:
         rows = []
         for row in self.provider_list or []:
             connected = bool(self.provider_keys.get(row["slug"])) if row["kind"] == "key" else self.provider_accounts.get(row["slug"], False)
-            rows.append({**row, "connected": connected, "source": (row.get("env_var") or "") if connected else ""})
+            out = {**row, "connected": connected, "source": (row.get("env_var") or "") if connected else ""}
+            logins = self.account_logins.get(row["slug"])
+            if logins is not None:
+                out.update(accounts=[dict(a) for a in logins["accounts"]], login=logins["mode"],
+                           connected=any(a["signed_in"] for a in logins["accounts"]))
+            rows.append(out)
         return rows
+
+    def start_account_signin(self, slug, target=None):
+        logins = self.account_logins.get(slug)
+        if logins is None:
+            raise ValueError("That provider has a single sign-in")
+        attempt = f"{slug}-attempt-{len(self.account_attempts) + 1}"
+        self.account_attempts[attempt] = {"slug": slug, "target": target, "status": "pending"}
+        if logins["mode"] == "paste":
+            return {"attempt": attempt, "mode": "paste", "url": "https://claude.example.test/oauth/authorize?state=demo"}
+        return {"attempt": attempt, "mode": "code", "user_code": "K7QM-9XRT", "verification_url": "https://auth.example.test/device", "poll_interval": 1}
+
+    def _link_account(self, attempt, email):
+        state = self.account_attempts[attempt]
+        accounts = self.account_logins[state["slug"]]["accounts"]
+        row = next((a for a in accounts if a["id"] == state["target"] and a["email"] in ("", email)), None)
+        row = row or next((a for a in accounts if a["email"] == email), None)
+        if row is not None:
+            row.update(email=email, signed_in=True)
+            result = {"outcome": "refreshed", "label": row["label"], "email": email, "plan": row.get("plan", "")}
+        else:
+            accounts.append({"id": email, "label": email, "email": email, "plan": "Pro", "signed_in": True})
+            result = {"outcome": "added", "label": email, "email": email, "plan": "Pro"}
+        state.update(status="done", result=result)
+        return result
+
+    def finish_account_signin(self, slug, attempt, code):
+        if attempt not in self.account_attempts:
+            raise ValueError("That sign-in expired. Start it again")
+        if code == "bad":
+            raise ValueError("That code didn't work. Start the sign-in again")
+        return self._link_account(attempt, code)
+
+    def approve_account(self, attempt, email):
+        """The user approved a code sign-in on the provider's page as `email`."""
+        self._link_account(attempt, email)
+
+    def account_signin(self, slug, attempt):
+        state = self.account_attempts.get(attempt)
+        if state is None:
+            raise ValueError("That sign-in expired. Start it again")
+        return {"status": state["status"], **({"result": state["result"]} if "result" in state else {})}
+
+    def cancel_account_signin(self, slug, attempt):
+        self.account_attempts.pop(attempt, None)
 
     def set_provider_key(self, slug, value):
         row = next((r for r in self.provider_list or [] if r["slug"] == slug), None)

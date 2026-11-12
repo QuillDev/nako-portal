@@ -186,3 +186,35 @@ def test_providers_a_key_alone_cannot_run_are_left_out():
     ])
 
     assert offered == {}
+
+
+async def test_one_more_account_signs_in_through_the_page(world):
+    await world.sign_up()
+    world.hermes.provider_list = a_hermes_that_lists(ROWS + [
+        {"slug": "claude-sub", "label": "Claude Subscription", "description": "", "kind": "cli", "command": "", "env_var": "", "env_vars": [], "signup_url": ""}])
+    world.hermes.account_logins["claude-sub"] = {"mode": "paste", "accounts": [
+        {"id": "primary", "label": "primary", "email": "alex@example.test", "plan": "Max", "signed_in": True}]}
+    world.hermes.account_logins["openai-codex"] = {"mode": "code", "accounts": []}
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+
+    started = await (await world.post("/api/providers/claude-sub/accounts/signin", {})).json()
+    assert started["mode"] == "paste" and started["url"].startswith("https://")
+    done = await world.post(f"/api/providers/claude-sub/accounts/signin/{started['attempt']}/code", {"code": "sam@example.test"})
+    assert (await done.json())["outcome"] == "added"
+    await next_message(ws, lambda m: m.get("kind") == "providers.changed")
+
+    started = await (await world.post("/api/providers/openai-codex/accounts/signin", {})).json()
+    assert started["mode"] == "code" and started["user_code"]
+    poll = world.url(f"/api/providers/openai-codex/accounts/signin/{started['attempt']}")
+    assert (await (await world.http.get(poll)).json())["status"] == "pending"
+    world.hermes.approve_account(started["attempt"], "kim@example.test")
+    assert (await (await world.http.get(poll)).json())["result"]["outcome"] == "added"
+
+    listed = {r["slug"]: r for r in await (await world.http.get(world.url("/api/providers"))).json()}
+    assert [a["email"] for a in listed["claude-sub"]["accounts"]] == ["alex@example.test", "sam@example.test"]
+    assert [a["email"] for a in listed["openai-codex"]["accounts"]] == ["kim@example.test"]
+    assert listed["openai-codex"]["connected"] is True
+
+    refused = await world.post(f"/api/providers/claude-sub/accounts/signin/{started['attempt']}x/code", {"code": "bad"})
+    assert refused.status == 400
+    await ws.close()

@@ -446,6 +446,23 @@ class Hub:
             await self.providers_changed()
         return status
 
+    async def start_account_signin(self, slug, target=None):
+        return await asyncio.to_thread(self.backend.start_account_signin, str(slug), target)
+
+    async def finish_account_signin(self, slug, attempt, code):
+        result = await asyncio.to_thread(self.backend.finish_account_signin, str(slug), str(attempt), code)
+        await self.providers_changed()
+        return result
+
+    async def account_signin(self, slug, attempt):
+        status = await asyncio.to_thread(self.backend.account_signin, str(slug), str(attempt))
+        if status.get("status") == "done":
+            await self.providers_changed()
+        return status
+
+    async def cancel_account_signin(self, slug, attempt):
+        await asyncio.to_thread(self.backend.cancel_account_signin, str(slug), str(attempt))
+
     async def providers_changed(self):
         await self.broadcast({"kind": "providers.changed"})
 

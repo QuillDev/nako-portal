@@ -229,6 +229,20 @@ async def main(port):
     day = 86400
     now = time.time()
     # MCP servers as a profile might have them: one failing sign-in, one switched off, one a plugin brings.
+    # Settings > Providers: two subscriptions with several accounts each, and one API key.
+    hermes.provider_list = [
+        {"slug": "claude-sub", "label": "Claude Subscription", "description": "", "kind": "cli", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
+        {"slug": "openai-codex", "label": "ChatGPT or Codex Subscription", "description": "", "kind": "signin", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
+        {"slug": "openrouter", "label": "OpenRouter", "description": "", "kind": "key", "command": "", "env_var": "OPENROUTER_API_KEY", "env_vars": ["OPENROUTER_API_KEY"], "signup_url": "https://openrouter.ai/keys"},
+    ]
+    hermes.provider_keys = {"openrouter": "demo"}
+    hermes.account_logins = {
+        "claude-sub": {"mode": "paste", "accounts": [
+            {"id": "primary", "label": "alex@example.test", "email": "alex@example.test", "plan": "Claude Max", "signed_in": True},
+            {"id": "secondary", "label": "secondary", "email": "", "plan": "", "signed_in": False}]},
+        "openai-codex": {"mode": "code", "accounts": [
+            {"id": "a1b2c3", "label": "alex@example.test", "email": "alex@example.test", "plan": "", "signed_in": True}]},
+    }
     hermes.mcp = {
         "deepwiki": {"url": "https://mcp.deepwiki.example.test/mcp"},
         "linear": {"url": "https://mcp.linear.example.test/mcp", "auth": "oauth"},

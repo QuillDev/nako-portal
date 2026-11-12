@@ -670,7 +670,11 @@ class HermesBackend:
         with self._profile_scope():
             env = _ScopedEnv()
             accounts = _account_status()
-            return [row for row in (_provider_row(entry, env, accounts) for entry in _provider_catalog()) if row is not None]
+            rows = [row for row in (_provider_row(entry, env, accounts) for entry in _provider_catalog()) if row is not None]
+            for row in rows:
+                if row["kind"] != "key":
+                    _add_accounts(row)
+            return rows
 
     def set_provider_key(self, slug, value):
         """Save an API key to the profile on screen, under the provider's own variable name."""
@@ -717,6 +721,41 @@ class HermesBackend:
             raise ValueError("That sign-in expired. Start it again")
         status = "cancelled" if state.get("cancelled") else state.get("status")
         return {"status": status, "error": state.get("error_message")}
+
+    # Several accounts per provider: one sign-in that adds a new account or refreshes the one
+    # that came back (provider_accounts.py decides which).
+
+    def _account_source(self, slug):
+        source = _provider_accounts().source_for(str(slug))
+        if source is None:
+            raise ValueError("That provider has a single sign-in")
+        return source
+
+    def start_account_signin(self, slug, target=None):
+        """Begin a sign-in: a link and a code field (`paste`), or a code to enter (`code`)."""
+        from gateway.run import _profile_runtime_scope
+
+        source = self._account_source(slug)
+        home = Path(self._home())
+        with self._profile_scope():
+            return source.start(str(target) if target else None, lambda: _profile_runtime_scope(home))
+
+    def finish_account_signin(self, slug, attempt, code):
+        """Redeem a pasted code: `{outcome: added | refreshed, label, email, plan}`."""
+        source = self._account_source(slug)
+        with self._profile_scope():
+            return source.finish(str(attempt), str(code or ""))
+
+    def account_signin(self, slug, attempt):
+        """How a code sign-in is going: pending, then done with its outcome."""
+        source = self._account_source(slug)
+        with self._profile_scope():
+            return source.status(str(attempt))
+
+    def cancel_account_signin(self, slug, attempt):
+        source = self._account_source(slug)
+        with self._profile_scope():
+            source.cancel(str(attempt))
 
     # MCP servers: the list `hermes mcp` keeps in the shown profile's config.yaml. Every change
     # goes through Hermes's own config helpers, then the running gateway is brought in step the
@@ -1455,6 +1494,32 @@ def _hub_tell(call, *args):
     link, loop = _LIVE_TOOLS.get("link"), _LIVE_TOOLS.get("loop")
     if link is not None and loop is not None and link.peer is not None:
         loop.call_soon_threadsafe(link.tell, call, *args)
+
+
+def _provider_accounts():
+    """provider_accounts.py, loaded once under a private name (its sign-ins in flight live there)."""
+    name = "nako_portal_provider_accounts"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "provider_accounts.py")
+        loaded = importlib.util.module_from_spec(spec)
+        sys.modules.setdefault(name, loaded)
+        spec.loader.exec_module(loaded)
+    return sys.modules[name]
+
+
+def _add_accounts(row):
+    """Put a provider's accounts on its row, when it can have more than one."""
+    try:
+        source = _provider_accounts().source_for(row["slug"])
+        if source is None:
+            return
+        accounts = source.list()
+    except Exception:  # the page still shows the single sign-in it had before
+        log.warning("portal: could not list %s accounts", row["slug"], exc_info=True)
+        return
+    row["accounts"] = accounts
+    row["login"] = source.mode
+    row["connected"] = any(a["signed_in"] for a in accounts)
 
 
 def _oauth_routes():
