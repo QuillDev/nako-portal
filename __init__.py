@@ -723,7 +723,7 @@ class HermesBackend:
         return {"status": status, "error": state.get("error_message")}
 
     # Several accounts per provider: one sign-in that adds a new account or refreshes the one
-    # that came back (provider_accounts.py decides which).
+    # that came back (provider_accounts.py decides which), and removing one.
 
     def _account_source(self, slug):
         source = _provider_accounts().source_for(str(slug))
@@ -756,6 +756,12 @@ class HermesBackend:
         source = self._account_source(slug)
         with self._profile_scope():
             source.cancel(str(attempt))
+
+    def remove_account(self, slug, account):
+        """Remove one of a provider's accounts from the profile on screen."""
+        source = self._account_source(slug)
+        with self._profile_scope():
+            source.remove(str(account))
 
     # MCP servers: the list `hermes mcp` keeps in the shown profile's config.yaml. Every change
     # goes through Hermes's own config helpers, then the running gateway is brought in step the

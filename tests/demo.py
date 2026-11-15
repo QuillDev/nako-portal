@@ -242,10 +242,11 @@ async def main(port):
     hermes.provider_keys = {"openrouter": "demo"}
     hermes.account_logins = {
         "claude-sub": {"mode": "paste", "accounts": [
-            {"id": "primary", "label": "alex@example.test", "email": "alex@example.test", "plan": "Claude Max", "signed_in": True},
-            {"id": "secondary", "label": "secondary", "email": "", "plan": "", "signed_in": False}]},
+            {"id": "primary", "label": "alex@example.test", "email": "alex@example.test", "plan": "Claude Max", "signed_in": True, "removable": True},
+            {"id": "sam@example.test", "label": "sam@example.test", "email": "sam@example.test", "plan": "Claude Pro", "signed_in": True, "removable": True},
+            {"id": "secondary", "label": "secondary", "email": "", "plan": "", "signed_in": False, "removable": True}]},
         "openai-codex": {"mode": "code", "accounts": [
-            {"id": "a1b2c3", "label": "alex@example.test", "email": "alex@example.test", "plan": "", "signed_in": True}]},
+            {"id": "a1b2c3", "label": "alex@example.test", "email": "alex@example.test", "plan": "", "signed_in": True, "removable": True}]},
     }
     hermes.mcp = {
         "deepwiki": {"url": "https://mcp.deepwiki.example.test/mcp"},

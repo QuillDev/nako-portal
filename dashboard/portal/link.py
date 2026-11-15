@@ -65,6 +65,7 @@ BACKEND_SYNC = (
     "finish_account_signin",
     "account_signin",
     "cancel_account_signin",
+    "remove_account",
     "mcp_servers",
     "mcp_catalog",
     "mcp_install",

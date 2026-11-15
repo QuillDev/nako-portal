@@ -460,6 +460,13 @@ class FakeGateway:
     def cancel_account_signin(self, slug, attempt):
         self.account_attempts.pop(attempt, None)
 
+    def remove_account(self, slug, account):
+        accounts = (self.account_logins.get(slug) or {}).get("accounts")
+        row = next((a for a in accounts or [] if a["id"] == account), None)
+        if row is None or not row.get("removable", True):
+            raise ValueError("That account isn't linked here")
+        accounts.remove(row)
+
     def set_provider_key(self, slug, value):
         row = next((r for r in self.provider_list or [] if r["slug"] == slug), None)
         if row is None or row["kind"] != "key":

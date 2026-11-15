@@ -204,6 +204,7 @@ class Portal:
         r.add_get("/api/providers/{slug}/accounts/signin/{attempt}", self.account_signin)
         r.add_post("/api/providers/{slug}/accounts/signin/{attempt}/code", self.finish_account_signin)
         r.add_post("/api/providers/{slug}/accounts/signin/{attempt}/cancel", self.cancel_account_signin)
+        r.add_post("/api/providers/{slug}/accounts/{account}/remove", self.remove_account)
         r.add_get("/api/mcp", self.mcp_servers)
         r.add_get("/api/mcp/catalog", self.mcp_catalog)
         r.add_post("/api/mcp/catalog/{name}/install", self.mcp_install)
@@ -1049,6 +1050,15 @@ class Portal:
         hub = await self._hub()
         try:
             await hub.cancel_account_signin(request.match_info["slug"], request.match_info["attempt"])
+        except ValueError as error:
+            return web.json_response({"error": str(error)}, status=400)
+        return web.json_response({"ok": True})
+
+    async def remove_account(self, request):
+        self._require(request)
+        hub = await self._hub()
+        try:
+            await hub.remove_account(request.match_info["slug"], request.match_info["account"])
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=400)
         return web.json_response({"ok": True})
