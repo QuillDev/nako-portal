@@ -85,3 +85,33 @@ def test_signing_in_again_on_a_row_as_someone_else_leaves_that_row_alone(codex):
 
     assert result["outcome"] == "added"
     assert _shown(codex)["alex@example.test"] == before
+
+
+def test_an_empty_row_never_takes_an_account_that_is_already_here(codex):
+    from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+
+    codex._link(_tokens("alex@example.test"), None)
+    empty = load_pool("openai-codex").add_entry(PooledCredential(
+        provider="openai-codex", id="empty1", label="spare", auth_type=AUTH_TYPE_OAUTH, priority=0, source="manual",
+        access_token=""))
+
+    result = codex._link(_tokens("alex@example.test", n=2), empty.id)
+
+    assert result["outcome"] == "refreshed"
+    assert [(r["label"], r["signed_in"]) for r in codex.list()] == [("alex@example.test", True), ("spare", False)]
+
+
+def test_removing_an_account_takes_it_out_of_the_pool_for_good(codex):
+    from hermes_cli.auth_codex import _save_codex_tokens
+
+    _save_codex_tokens(_tokens("alex@example.test"), set_active=False)
+    codex._link(_tokens("sam@example.test", account="acct-2"), None)
+    rows = {r["email"]: r["id"] for r in codex.list()}
+
+    codex.remove(rows["sam@example.test"])
+    assert list(_shown(codex)) == ["alex@example.test"]
+
+    codex.remove(rows["alex@example.test"])  # Hermes's own login: it must not come back on the next read
+    assert _shown(codex) == {}
+    with pytest.raises(ValueError, match="isn't here"):
+        codex.remove(rows["alex@example.test"])

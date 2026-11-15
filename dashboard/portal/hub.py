@@ -463,6 +463,10 @@ class Hub:
     async def cancel_account_signin(self, slug, attempt):
         await asyncio.to_thread(self.backend.cancel_account_signin, str(slug), str(attempt))
 
+    async def remove_account(self, slug, account):
+        await asyncio.to_thread(self.backend.remove_account, str(slug), str(account))
+        await self.providers_changed()
+
     async def providers_changed(self):
         await self.broadcast({"kind": "providers.changed"})
 

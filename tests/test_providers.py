@@ -218,3 +218,23 @@ async def test_one_more_account_signs_in_through_the_page(world):
     refused = await world.post(f"/api/providers/claude-sub/accounts/signin/{started['attempt']}x/code", {"code": "bad"})
     assert refused.status == 400
     await ws.close()
+
+
+async def test_an_account_is_removed_from_the_page(world):
+    await world.sign_up()
+    world.hermes.provider_list = a_hermes_that_lists(ROWS + [
+        {"slug": "claude-sub", "label": "Claude Subscription", "description": "", "kind": "cli", "command": "", "env_var": "", "env_vars": [], "signup_url": ""}])
+    world.hermes.account_logins["claude-sub"] = {"mode": "paste", "accounts": [
+        {"id": "primary", "label": "primary", "email": "alex@example.test", "plan": "Max", "signed_in": True, "removable": True},
+        {"id": "sam@example.test", "label": "sam@example.test", "email": "sam@example.test", "plan": "Pro", "signed_in": True, "removable": True}]}
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+
+    removed = await world.post("/api/providers/claude-sub/accounts/sam@example.test/remove", {})
+    assert removed.status == 200
+    await next_message(ws, lambda m: m.get("kind") == "providers.changed")
+    listed = {r["slug"]: r for r in await (await world.http.get(world.url("/api/providers"))).json()}
+    assert [a["email"] for a in listed["claude-sub"]["accounts"]] == ["alex@example.test"]
+
+    refused = await world.post("/api/providers/claude-sub/accounts/nobody/remove", {})
+    assert refused.status == 400 and "isn't linked" in (await refused.json())["error"]
+    await ws.close()

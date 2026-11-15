@@ -1,4 +1,4 @@
-import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, UserRoundIcon, SearchIcon, TerminalIcon, XIcon } from "lucide-react"
+import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, UserRoundIcon, SearchIcon, TerminalIcon, Trash2Icon, XIcon } from "lucide-react"
 import { memo, useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -10,6 +10,7 @@ import {
   cancelAccountSignIn,
   finishAccountSignIn,
   pollAccountSignIn,
+  removeAccount,
   pollSignIn,
   removeProviderKey,
   reloadProviders,
@@ -333,7 +334,21 @@ type AccountView = { kind: "list"; notice?: AccountResult } | { kind: "signin"; 
 /** A provider that can hold several accounts: each one, signing one in again, and adding another. */
 function AccountsPanel({ provider, onError }: { provider: Provider; onError: (message: string) => void }) {
   const [view, setView] = useState<AccountView>({ kind: "list" })
+  const [removing, setRemoving] = useState<string | null>(null)
   const accounts = provider.accounts ?? []
+  const remove = async (a: Account) => {
+    if (!confirm(`Remove ${accountTitle(a)}? ${provider.label} stops using it until you sign in to it again.`)) return
+    setRemoving(a.id)
+    try {
+      await removeAccount(provider.slug, a.id)
+      setView({ kind: "list" })
+      await reloadProviders()
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setRemoving(null)
+    }
+  }
   return (
     <>
       <DialogHeader className="flex-row items-center gap-2 text-left">
@@ -383,6 +398,19 @@ function AccountsPanel({ provider, onError }: { provider: Provider; onError: (me
                 >
                   {a.signed_in ? "Sign in again" : "Sign in"}
                 </Button>
+                {a.removable && (
+                  <Button
+                    aria-label={`Remove ${accountTitle(a)}`}
+                    className="rounded-full text-muted-foreground hover:text-destructive"
+                    disabled={removing !== null}
+                    onClick={() => void remove(a)}
+                    size="icon-sm"
+                    title="Remove"
+                    variant="ghost"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                )}
               </div>
             ))}
             {accounts.length === 0 && <p className="px-1 py-2 text-muted-foreground text-sm">No accounts yet.</p>}

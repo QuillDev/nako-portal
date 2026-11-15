@@ -1,4 +1,4 @@
-"""Several accounts per provider on the Providers page: list them, add one, refresh one.
+"""Several accounts per provider on the Providers page: list them, add, refresh or remove one.
 
 One sign-in covers both cases. Whoever the provider says signed in decides what happens: an
 account that is already linked gets its login refreshed in place, a new one is added. A row's
@@ -9,6 +9,7 @@ Two kinds of source:
 
 - A provider plugin whose profile has the account hooks (`account_logins`, `start_account_login`,
   `finish_account_login`, `cancel_account_login`). It signs in through a link and a pasted code.
+  With `remove_account_login` too, accounts can be removed (the plugin decides which may go).
 - A Hermes OAuth provider with a credential pool and a device-code login (Codex). Hermes keeps
   every account as its own pool row; this reuses Hermes's own device-code steps and pool.
 """
@@ -47,9 +48,18 @@ class PluginAccounts:
         self.profile = profile
 
     def list(self):
+        rows = self.profile.account_logins()
+        # The plugin keeps its last account (with none left it falls back to a login of its own).
+        removable = callable(getattr(self.profile, "remove_account_login", None)) and len(rows) > 1
         return [{"id": str(row.get("id") or row.get("label") or ""), "label": str(row.get("label") or ""),
                  "email": str(row.get("email") or ""), "plan": str(row.get("plan") or ""),
-                 "signed_in": bool(row.get("signed_in"))} for row in self.profile.account_logins()]
+                 "signed_in": bool(row.get("signed_in")), "removable": removable} for row in rows]
+
+    def remove(self, account):
+        hook = getattr(self.profile, "remove_account_login", None)
+        if not callable(hook):
+            raise ValueError("That provider can't remove accounts here")
+        hook(account)
 
     def start(self, target, scope):
         started = self.profile.start_account_login(target or None)
@@ -94,8 +104,29 @@ class CodexAccounts:
             # Hermes names its own login's row after where it came from ("device_code"); the email says more.
             label = entry.label if entry.label and entry.label != entry.source else email
             rows.append({"id": entry.id, "label": label or entry.label, "email": email, "plan": plan,
-                         "signed_in": bool(entry.access_token) and entry.last_status != STATUS_DEAD})
+                         "signed_in": bool(entry.access_token) and entry.last_status != STATUS_DEAD, "removable": True})
         return rows
+
+    def remove(self, account):
+        """Remove a pool row the way `hermes auth remove` does, so its source can't re-seed it."""
+        from agent.credential_sources import find_removal_step
+        from hermes_cli.auth import suppress_credential_source
+
+        pool = self._pool()
+        index = next((i for i, e in enumerate(pool.entries(), 1) if e.id == str(account)), None)
+        removed = pool.remove_index(index) if index is not None else None
+        if removed is None:
+            raise ValueError("That account isn't here anymore")
+        step = find_removal_step(self.provider, removed.source or "")
+        if step is None:  # a row the pool alone holds: nothing outside it to clean up
+            return
+        try:
+            result = step.remove_fn(self.provider, removed)
+        except Exception:
+            log.warning("portal: cleanup after removing a %s account failed", self.provider, exc_info=True)
+            result = None
+        if result is None or result.suppress:
+            suppress_credential_source(self.provider, removed.source)
 
     def start(self, target, scope):
         import httpx
@@ -142,13 +173,15 @@ class CodexAccounts:
         entries = pool.entries()
         identity = _codex_principal_identity(tokens["access_token"])
         email, plan = _codex_who(tokens["access_token"])
+        same = [e for e in entries if identity is not None and _codex_principal_identity(e.access_token) == identity]
         match = None
         if target:
+            # A row takes its own account back; an empty one only an account that isn't here yet.
             row = next((e for e in entries if e.id == target), None)
-            if row is not None and _codex_principal_identity(row.access_token) in (None, identity):
+            if row is not None and (row in same or (_codex_principal_identity(row.access_token) is None and not same)):
                 match = row
-        if match is None and identity is not None:
-            match = next((e for e in entries if _codex_principal_identity(e.access_token) == identity), None)
+        if match is None and same:
+            match = same[0]
         if match is not None:
             if match.source == "device_code":
                 # The row Hermes seeds from its own Codex login: refresh it where Hermes keeps it.

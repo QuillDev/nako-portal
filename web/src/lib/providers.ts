@@ -20,7 +20,7 @@ export type Provider = {
   login?: "paste" | "code"
 }
 
-export type Account = { id: string; label: string; email: string; plan: string; signed_in: boolean }
+export type Account = { id: string; label: string; email: string; plan: string; signed_in: boolean; removable?: boolean }
 export type AccountSignIn = { attempt: string; mode: "paste" | "code"; url?: string; user_code?: string; verification_url?: string; poll_interval?: number }
 export type AccountResult = { outcome: "added" | "refreshed"; label: string; email: string; plan: string }
 export type AccountSignInStatus = { status: "pending" | "done" | "error" | "expired" | "cancelled"; result?: AccountResult; error?: string }
@@ -78,3 +78,6 @@ export const finishAccountSignIn = (slug: string, attempt: string, code: string)
 export const pollAccountSignIn = (slug: string, attempt: string) => api<AccountSignInStatus>(attemptPath(slug, attempt))
 
 export const cancelAccountSignIn = (slug: string, attempt: string) => api(`${attemptPath(slug, attempt)}/cancel`, { method: "POST" })
+
+export const removeAccount = (slug: string, account: string) =>
+  api(`${providerPath(slug)}/accounts/${encodeURIComponent(account)}/remove`, { method: "POST" })
