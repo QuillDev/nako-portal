@@ -199,6 +199,10 @@ async def main(port):
             ("assistant", "the review approved it. only a test-name nit is left, so it's fine to merge."),
         ],
     )
+    # Times as a real chat has them: it started yesterday evening and picked back up this morning.
+    now = time.time()
+    for n, row in enumerate(hermes.sessions["20261024_094000_f00001"]["rows"]):
+        row["timestamp"] = now - 20 * 3600 + n * 240 if n < 2 else now - 600 + n * 120
     hermes._row("20261024_091500_r00001", "user", from_thread_line("20261024_094000_f00001", "Shop refunds") + "when you're done, also hand the report back to me.", display_kind="steer")
     hermes._row("20261024_091500_r00001", "assistant", "will do.")
     hermes.add_session("20261023_070000_cccccc", "Write the release notes")

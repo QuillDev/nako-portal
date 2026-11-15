@@ -380,7 +380,7 @@ export function usePortal() {
         const open = currentRef.current
         if (open) {
           await api(sessionPath(open.session, "/messages"), { method: "POST", form })
-          setCurrent(c => c && { ...c, running: true, messages: [...c.messages, { role: "user", text, row_id: `pending-${Date.now()}`, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }] })
+          setCurrent(c => c && { ...c, running: true, messages: [...c.messages, { role: "user", text, row_id: `pending-${Date.now()}`, timestamp: Date.now() / 1000, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }] })
           setLive(l => l || emptyLive())
         } else {
           const created = z.object({ session: z.string(), confirmation: z.string().optional(), message: z.string().optional() }).parse(await api<unknown>("/api/sessions", { method: "POST", form }))

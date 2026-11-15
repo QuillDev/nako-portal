@@ -1,11 +1,12 @@
 import { CheckIcon, CornerDownLeftIcon, FileIcon, ForwardIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
-import { createContext, memo, useContext, useMemo, useRef, useState } from "react"
+import { createContext, memo, type ReactNode, useContext, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { downloadUrl, fileUrl } from "@/lib/api"
 import { ImageViewer } from "./image-viewer"
 import { SharedSecret } from "./secrets"
@@ -13,13 +14,15 @@ import { markdownComponents } from "./markdown-link"
 import { isImage, splitReply, splitUserTurn } from "@/lib/media"
 import { type ReplyPart, splitSecrets } from "@/lib/secrets"
 import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
+import { dayLabel, dayOf, fullTime, timeOf } from "@/lib/times"
 import type { HistoryMessage, Live, Sender } from "@/lib/types"
 
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
 
 type Block =
-  | { kind: "user"; key: string; text: string; images?: string[]; steered?: boolean }
-  | { kind: "assistant"; key: string; text: string; reasoning?: string; label?: string; sender?: Sender; steered?: boolean }
+  | { kind: "user"; key: string; text: string; at?: number; images?: string[]; steered?: boolean }
+  | { kind: "assistant"; key: string; text: string; at?: number; reasoning?: string; label?: string; sender?: Sender; steered?: boolean }
+  | { kind: "day"; key: string; at: number }
   | { kind: "tools"; key: string; steps: Step[] }
   | { kind: "note"; key: string; text: string }
 
@@ -47,6 +50,7 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
   const out: Block[] = []
   const ends = quiet ? turnEnds(messages) : []
   let steps: Step[] = []
+  let day: number | undefined
   const flush = () => {
     if (steps.length) out.push({ kind: "tools", key: `tools-${out.length}`, steps })
     steps = []
@@ -68,9 +72,15 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
     if (quiet && m.role === "assistant" && (!m.text.trim() || (!m.label && !m.post && !m.ended && !ends[i]))) return
     flush()
     const key = String(m.row_id ?? i)
+    const at = m.timestamp
+    // A line where a new day starts.
+    if (at !== undefined && dayOf(at) !== day) {
+      day = dayOf(at)
+      out.push({ kind: "day", key: `day-${key}`, at })
+    }
     // Another thread's message is Nako's own words, so it reads as hers, under that thread's name.
-    if (m.role === "user" && m.sender) out.push({ kind: "assistant", key, text: m.text, sender: m.sender, steered: m.steered })
-    else out.push(m.role === "user" ? { kind: "user", key, text: m.text, images: m.images, steered: m.steered } : { kind: "assistant", key, text: m.text, reasoning: quiet ? undefined : m.reasoning, label: m.label })
+    if (m.role === "user" && m.sender) out.push({ kind: "assistant", key, text: m.text, at, sender: m.sender, steered: m.steered })
+    else out.push(m.role === "user" ? { kind: "user", key, text: m.text, at, images: m.images, steered: m.steered } : { kind: "assistant", key, text: m.text, at, reasoning: quiet ? undefined : m.reasoning, label: m.label })
   })
   notesAt(messages.length)
   flush()
@@ -192,7 +202,39 @@ const named = (path: string) => path.split(/[\\/]/).pop() || path
 
 const sessionFile = (session: string, path: string): Item => ({ url: fileUrl(session, path), name: named(path), path, download: downloadUrl(session, path) })
 
-const User = memo(function User({ session, text, images, steered }: { session: string; text: string; images?: string[]; steered?: boolean }) {
+// The time under a message; hovering (or tapping, on a phone) shows the day too, beside it so
+// it covers no text.
+function Stamp({ at, children }: { at: number; children?: ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip onOpenChange={setOpen} open={open}>
+        <TooltipTrigger asChild>
+          <button
+            className="flex w-fit items-center gap-1 text-muted-foreground text-xs group-[.is-user]:ml-auto"
+            onClick={e => {
+              e.preventDefault()
+              setOpen(o => !o)
+            }}
+            type="button"
+          >
+            {children}
+            {timeOf(at)}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right" sideOffset={6}>{fullTime(at)}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+function Day({ at }: { at: number }) {
+  return (
+    <p className="flex items-center gap-3 text-muted-foreground text-xs before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">{dayLabel(at)}</p>
+  )
+}
+
+const User = memo(function User({ session, text, at, images, steered }: { session: string; text: string; at?: number; images?: string[]; steered?: boolean }) {
   const turn = splitUserTurn(text)
   const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => sessionFile(session, path))]
   return (
@@ -201,11 +243,22 @@ const User = memo(function User({ session, text, images, steered }: { session: s
         <Files urls={shown} />
         {turn.body}
       </MessageContent>
-      {steered && (
-        <p className="text-muted-foreground ml-auto flex items-center gap-1 text-xs">
-          <CornerDownLeftIcon aria-hidden className="size-3" />
-          steered
-        </p>
+      {at !== undefined ? (
+        <Stamp at={at}>
+          {steered && (
+            <>
+              <CornerDownLeftIcon aria-hidden className="size-3" />
+              steered ·
+            </>
+          )}
+        </Stamp>
+      ) : (
+        steered && (
+          <p className="text-muted-foreground ml-auto flex items-center gap-1 text-xs">
+            <CornerDownLeftIcon aria-hidden className="size-3" />
+            steered
+          </p>
+        )
       )}
     </Message>
   )
@@ -231,12 +284,13 @@ function From({ sender, steered }: { sender: Sender; steered?: boolean }) {
 const Assistant = memo(function Assistant({
   session,
   text,
+  at,
   reasoning,
   label,
   sender,
   steered,
   streaming,
-}: { session: string; text: string; reasoning?: string; label?: string; sender?: Sender; steered?: boolean; streaming?: boolean }) {
+}: { session: string; text: string; at?: number; reasoning?: string; label?: string; sender?: Sender; steered?: boolean; streaming?: boolean }) {
   const { body: raw, files } = splitReply(text)
   // A shared secret's card sits where its SECRET: line was, between the text around it.
   const parts = useMemo(() => splitSecrets(raw, streaming).map((p): ReplyPart => (p.text === undefined ? p : { text: linkSessionRefs(p.text) })), [raw, streaming])
@@ -274,6 +328,7 @@ const Assistant = memo(function Assistant({
           <Files urls={files.map(path => sessionFile(session, path))} />
         </div>
       </MessageContent>
+      {at !== undefined && <Stamp at={at} />}
     </Message>
   )
 })
@@ -303,9 +358,11 @@ export function Transcript({
     <StopScroll.Provider value={stop}>
       {shown.map(b =>
         b.kind === "user" ? (
-          <User images={b.images} key={b.key} session={session} steered={b.steered} text={b.text} />
+          <User at={b.at} images={b.images} key={b.key} session={session} steered={b.steered} text={b.text} />
+        ) : b.kind === "day" ? (
+          <Day at={b.at} key={b.key} />
         ) : b.kind === "assistant" ? (
-          <Assistant key={b.key} label={b.label} reasoning={b.reasoning} sender={b.sender} session={session} steered={b.steered} text={b.text} />
+          <Assistant at={b.at} key={b.key} label={b.label} reasoning={b.reasoning} sender={b.sender} session={session} steered={b.steered} text={b.text} />
         ) : b.kind === "note" ? (
           <CommandNote key={b.key} text={b.text} />
         ) : (
