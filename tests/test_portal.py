@@ -449,10 +449,11 @@ async def test_a_chat_page_carries_only_what_the_app_draws(world):
     world.hermes._row(sid, "assistant", "written", reasoning="it needed a summary", reasoning_details=[{"signature": "z" * 40_000}])
     await world.sign_up()
     opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()
+    rows = world.hermes.sessions[sid]["rows"]
     assert [{k: v for k, v in m.items() if k != "row_id"} for m in opened["messages"]] == [
-        {"role": "user", "text": "write the report"},
+        {"role": "user", "text": "write the report", "timestamp": rows[0]["timestamp"]},
         {"role": "tool", "text": "", "name": "write_file", "context": "report.md", "tool_call_id": "w1"},
-        {"role": "assistant", "text": "written", "reasoning": "it needed a summary", "ended": True},
+        {"role": "assistant", "text": "written", "timestamp": rows[2]["timestamp"], "reasoning": "it needed a summary", "ended": True},
     ]
     assert all(isinstance(m["row_id"], int) for m in opened["messages"])
 

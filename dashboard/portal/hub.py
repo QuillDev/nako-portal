@@ -83,7 +83,7 @@ SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 PAGE_MESSAGES = 30
 # What the app draws from a transcript row. Hermes's rows also carry reasoning signatures, full
 # tool arguments and display metadata, which made a page of a long chat ~170 KB instead of ~10 KB.
-SHOWN_FIELDS = ("role", "text", "row_id", "reasoning", "label", "post", "ended", "steered", "sender", "name", "context", "tool_call_id")
+SHOWN_FIELDS = ("role", "text", "row_id", "timestamp", "reasoning", "label", "post", "ended", "steered", "sender", "name", "context", "tool_call_id")
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
 # A reply that mentions the tag in prose (`<signoff>`) isn't one: a tag holds no other tag.
@@ -705,8 +705,8 @@ def page(messages, *, before=None, since=None, limit=PAGE_MESSAGES):
 
 
 def for_app(message):
-    """A transcript row with only what the app draws."""
-    return {key: message[key] for key in SHOWN_FIELDS if key in message}
+    """A transcript row with only what the app draws. Tool calls show no time."""
+    return {key: message[key] for key in SHOWN_FIELDS if key in message and not (key == "timestamp" and message.get("role") == "tool")}
 
 
 def _is_shown(message):

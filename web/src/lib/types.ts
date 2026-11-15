@@ -74,11 +74,12 @@ export type HistoryMessage =
   // images: local previews for a turn that is still being sent
   // steered: sent while a turn was running, so Hermes fed it into that turn
   // sender: the thread that sent it in (a report back, a brief), when it isn't the person's own
-  | { role: "user"; text: string; row_id?: string | number; images?: string[]; steered?: boolean; sender?: Sender }
+  // timestamp: when it was written, Unix seconds
+  | { role: "user"; text: string; row_id?: string | number; timestamp?: number; images?: string[]; steered?: boolean; sender?: Sender }
   // label: the cron job that posted it, when it's a cron post
   // post: a message no prompt asked for, in a chat posts land in (a review's status)
   // ended: the reply that ended its turn, counting turns the app never sees start
-  | { role: "assistant"; text: string; reasoning?: string; label?: string; post?: boolean; ended?: boolean; row_id?: string | number }
+  | { role: "assistant"; text: string; timestamp?: number; reasoning?: string; label?: string; post?: boolean; ended?: boolean; row_id?: string | number }
   | { role: "tool"; name: string; context?: string; tool_call_id?: string }
 
 export type PortalRequest = {
