@@ -8,12 +8,12 @@ import { reloadMcp } from "@/lib/mcp"
 import { reloadProviders } from "@/lib/providers"
 import { reloadSecrets } from "@/lib/secrets"
 import { rememberTitles } from "@/lib/session-refs"
-import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type HistoryMessage, type Live, type Me, type OpenSession, type SessionRow } from "@/lib/types"
+import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type HistoryMessage, type Live, type Me, type OpenSession, type Outside, type SessionRow } from "@/lib/types"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null } | { view: "chat"; session: string } | { view: "desktop"; query: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null } | { view: "chat"; session: string } | { view: "outside" } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -21,6 +21,7 @@ function parseRoute(hash: string): Route {
   const chat = hash.match(/^#\/c\/([\w.-]+)/)
   if (chat) return { view: "chat", session: chat[1] }
   if (hash === "#/new") return { view: "new" }
+  if (hash === "#/elsewhere") return { view: "outside" }
   const settings = hash.match(/^#\/settings(?:\/([\w-]+))?$/)
   if (settings) return { view: "settings", page: settings[1] ?? null }
   // Mesh and environments had their own pages before they moved into Settings.
@@ -35,6 +36,10 @@ export function navigate(hash: string) {
 }
 
 const emptyLive = (): Live => ({ messages: [], tools: [] })
+
+// How often a session from elsewhere that's running a turn is reread while it's open: those turns
+// stream nothing to the portal, so their saved rows are all there is to show.
+const OUTSIDE_POLL_MS = 4000
 
 // Chats opened or hovered lately, kept so going back to one shows it at once while it rereads.
 const CACHED_CHATS = 24
@@ -98,6 +103,8 @@ export function usePortal() {
   const [notes, setNotes] = useState<CommandNote[]>([])
   // Nako's line about the open chat's last finished turn.
   const [signOff, setSignOff] = useState<{ session: string; text: string } | null>(null)
+  // Sessions from other ways in (Slack, cron...): which ways there are and which run now.
+  const [outside, setOutside] = useState<Outside>({ sources: [], running: [] })
 
   const currentRef = useRef(current)
   currentRef.current = current
@@ -195,6 +202,11 @@ export function usePortal() {
         case "status":
           setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status, finished: Boolean(frame.unread) } : r)))
           return
+        case "outside": {
+          const next = { sources: frame.sources, running: frame.running }
+          setOutside(shown => (JSON.stringify(shown) === JSON.stringify(next) ? shown : next))
+          return
+        }
         case "alert":
         case "status.synced":
         case "sticker":
@@ -365,6 +377,18 @@ export function usePortal() {
     // sessions is only read for a placeholder title
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routedSession, me?.signed_in, refresh])
+
+  // An open session from elsewhere has no live view: reread it while it runs, and once more when it stops.
+  const watchedSession = current && current.source && current.source !== "portal" ? current.session : null
+  const watchedRunning = Boolean(watchedSession && outside.running.includes(watchedSession))
+  useEffect(() => {
+    if (!watchedSession || !watchedRunning) return
+    const timer = setInterval(() => refresh(watchedSession), OUTSIDE_POLL_MS)
+    return () => {
+      clearInterval(timer)
+      if (currentRef.current?.session === watchedSession) refresh(watchedSession)
+    }
+  }, [watchedSession, watchedRunning, refresh])
 
   const send = useCallback(
     async (text: string, attachments: Attachment[], model?: ModelSelection) => {
@@ -537,7 +561,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
+  return { me, setName, boot, sessions, outside, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

@@ -5,9 +5,10 @@ import { Conversation, ConversationContent, ConversationScrollButton } from "@/c
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { Portal } from "@/hooks/use-portal"
+import { navigate, type Portal } from "@/hooks/use-portal"
 import { toggleAppBrowser, useAppBrowser } from "@/lib/desktop-browser"
 import { useMarkdown } from "@/lib/markdown"
+import { sourceName } from "@/lib/outside"
 import { inBubble } from "@/lib/bubble"
 import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
@@ -223,7 +224,51 @@ function NewChat({ portal }: { portal: Portal }) {
   )
 }
 
+// A session that came in another way (Slack, cron...): its transcript, no composer and no chat
+// controls. The portal only watches it; turns there stream nothing here, so it rereads instead.
+function ReadOnlyChat({ portal, source }: { portal: Portal; source: string }) {
+  const c = portal.current!
+  const renderer = useMarkdown()
+  const loading = c.loading || !renderer
+  const running = portal.outside.running.includes(c.session)
+  const name = sourceName(source)
+  return (
+    <>
+      <PageHeader
+        back={() => navigate("#/elsewhere")}
+        title={
+          <>
+            {c.title || "untitled"}
+            <span className="ml-2 font-normal text-muted-foreground text-xs">{name}</span>
+          </>
+        }
+      />
+      <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>
+        <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
+          {loading && <TurnSkeletons count={3} />}
+          {!loading && <OlderTurns portal={portal} />}
+          {!loading && <KeepBottom dock={0} />}
+          {!loading && <Transcript live={null} messages={c.messages} notes={NO_NOTES} quiet={false} running={running} session={c.session} />}
+          {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
+      <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <p className="rounded-3xl border bg-card px-4 py-3 text-center text-muted-foreground text-sm">Read-only, from {name}</p>
+      </div>
+    </>
+  )
+}
+
+const NO_NOTES: never[] = []
+
 export function Chat({ portal }: { portal: Portal }) {
+  const source = portal.current?.source
+  if (source && source !== "portal") return <ReadOnlyChat portal={portal} source={source} />
+  return <PortalChat portal={portal} />
+}
+
+function PortalChat({ portal }: { portal: Portal }) {
   const c = portal.current
   const presence = usePresence()
   // Held on the skeleton until the renderer is in too, so the chat mounts once, at its bottom.

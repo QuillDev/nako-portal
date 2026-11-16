@@ -129,6 +129,10 @@ class Hub:
         self.elsewhere = lambda: ()
         # The last sticker frame sent, so one goes out only when what she shows changes.
         self.shown_sticker = None
+        # Sessions that came in another way (Slack, cron...), as the gateway last said: which ways
+        # in there are and which of those sessions run a turn now. The app only watches them, so
+        # they stay out of `status`: no alerts, no unread marks, nothing on the sticker.
+        self.outside_now = {"sources": [], "running": []}
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -278,6 +282,28 @@ class Hub:
         self.inboxes = inboxes
         return rows
 
+    def outside_frame(self):
+        return {"kind": "outside", **self.outside_now}
+
+    async def outside(self, state):
+        """The gateway's word on sessions from other ways in (`outside_now`)."""
+        state = {"sources": [str(s) for s in state.get("sources") or []], "running": [str(s) for s in state.get("running") or []]}
+        if state == self.outside_now:
+            return
+        self.outside_now = state
+        await self.broadcast(self.outside_frame())
+
+    async def outside_sessions(self, source=None, offset=0):
+        """A page of sessions from other ways in, latest first, each saying whether it runs now."""
+        rows = await asyncio.to_thread(self.backend.outside_sessions, source, offset)
+        running = set(self.outside_now["running"])
+        return [{**row, "running": row["id"] in running} for row in rows]
+
+    async def _portal_only(self, session):
+        """Changing a chat is for portal threads; a session from elsewhere is only read here."""
+        if await asyncio.to_thread(self.backend.chat_of, session) is None:
+            raise ValueError("This chat isn't a portal thread, so it can only be read here")
+
     async def archived(self):
         rows = await asyncio.to_thread(self.backend.archived_sessions)
         return [
@@ -313,6 +339,8 @@ class Hub:
             await self.broadcast({"kind": "sessions.changed"})
         return {
             "session": session,
+            # Where it came in; anything but the portal opens read-only.
+            "source": thread.get("source") or "portal",
             "title": self.titles[session],
             "messages": _without_restated([_without_sign_off(_as_notification(_from_thread(_without_steer_origin(m)))) for m in messages if _is_shown(m)]),
             "running": session in self.running,
@@ -500,6 +528,7 @@ class Hub:
         await self.broadcast({"kind": "mcp.changed"})
 
     async def archive(self, session, archived=True):
+        await self._portal_only(session)
         chat = await asyncio.to_thread(self.backend.chat_of, session) if archived else None
         if chat == INBOX:
             raise ValueError("The Notifications chat can't be archived")
@@ -515,12 +544,14 @@ class Hub:
         return {"ok": True}
 
     async def rename(self, session, title):
+        await self._portal_only(session)
         await asyncio.to_thread(self.backend.set_title, session, title)
         self.titles[session] = title
         await self.broadcast({"kind": "sessions.changed"})
         return {"ok": True}
 
     async def pin(self, session, pinned):
+        await self._portal_only(session)
         await asyncio.to_thread(self.backend.set_pinned, session, pinned)
         await self.broadcast({"kind": "sessions.changed"})
 

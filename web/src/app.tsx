@@ -2,6 +2,7 @@ import { type ComponentType, lazy, Suspense, useEffect } from "react"
 import { Chat } from "@/components/portal/chat"
 import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
+import { Elsewhere } from "@/components/portal/elsewhere"
 import { Sidebar } from "@/components/portal/sidebar"
 import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -54,7 +55,7 @@ export function App() {
   return (
     <TooltipProvider>
       <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>
-        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings page={portal.route.page} portal={portal} /> : <Chat portal={portal} />}</main>
+        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings page={portal.route.page} portal={portal} /> : portal.route.view === "outside" ? <Elsewhere portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
       <ChatSearch sessions={portal.sessions} unarchive={portal.unarchive} />
       <UpdatingScreen />

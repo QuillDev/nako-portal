@@ -297,8 +297,35 @@ async def main(port):
         for sid in sids:
             store.set_chat_group(hermes.sessions[sid]["chat"], group["id"])
     store.create_group("Garden", "orange")
+    # Sessions that came in other ways (Slack, Discord, cron, the CLI): Elsewhere lists them and opens them read-only.
+    hour = 3600
+    for sid, title, source, ago, rows in (
+        ("20261024_094100_s00001", "Can you check the shipping export?", "slack", 0.1, [
+            ("user", "[Sam] can you check the shipping export? last night's file looks short, i think a few orders are missing."),
+            ("assistant", "on it. pulling last night's export and comparing it to the orders list."),
+            ("tool", "terminal"),
+            ("assistant", "found it: 4 orders were marked shipped after the export ran, so they'll be in tonight's file. nothing is lost. want me to rerun it now?"),
+            ("user", "[Sam] yes please, rerun it."),
+        ]),
+        ("local-c00000000000000000000001", "Morning digest", "cron", 1.5, [("user", "[cron] morning digest"), ("assistant", "five links today, starting with a new sorting paper.")]),
+        ("local-c00000000000000000000002", "Price watch: desk lamp", "cron", 2.2, [("user", "[cron] price watch"), ("assistant", "the desk lamp is still $64, above the $50 target.")]),
+        ("20261024_081200_d00001", "Help with the release notes", "discord", 3, [("user", "can you tidy these release notes?"), ("assistant", "tidied: grouped by area and cut the duplicate fixes.")]),
+        ("20261023_160000_c00001", "Rename the test fixtures", "cli", 20, [("user", "rename the fixtures to match the new models"), ("assistant", "renamed 12 fixtures and updated their imports.")]),
+        ("20261023_120000_s00002", "Question about the invoice page", "slack", 26, [("user", "[Kai] why does the invoice page show two totals?"), ("assistant", "one is before tax and one after; the label was missing, so i added it.")]),
+        ("local-c00000000000000000000003", "Morning digest", "cron", 25.5, [("user", "[cron] morning digest"), ("assistant", "three links today.")]),
+        ("20261021_190000_d00002", "Book club picks", "discord", 74, [("user", "pick three books for next month"), ("assistant", "three picks, all under 300 pages.")]),
+    ):
+        hermes.add_session(sid, title, source=source, last_active=now - ago * hour)
+        for n, (role, text) in enumerate(rows):
+            stamp = now - ago * hour - (len(rows) - n) * 90
+            if role == "tool":
+                hermes._row(sid, "tool", "", name=text, context="python3 export_check.py --since yesterday", tool_call_id=f"o{sid[-3:]}{n}", timestamp=stamp)
+            else:
+                hermes._row(sid, role, text, timestamp=stamp)
     hub = Hub(Backend(hermes))
     hermes.hub = hub
+    # The Slack session is mid-turn; DEMO_OUTSIDE_IDLE=1 shows Elsewhere with nothing running.
+    hub.outside_now = {"sources": ["cli", "cron", "discord", "slack"], "running": [] if os.environ.get("DEMO_OUTSIDE_IDLE") else ["20261024_094100_s00001"]}
     # Turns that ended while nobody was looking: the sidebar marks them until they're opened.
     for sid in ("20261024_085000_dddddd", "20261023_070000_cccccc"):
         hub.status[sid] = "done"

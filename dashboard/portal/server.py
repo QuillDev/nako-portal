@@ -143,6 +143,8 @@ class Portal:
         self.hub.connected = False
         self.hub.running.clear()
         self.hub.requests.clear()
+        # Nothing says what runs elsewhere without a gateway; it says again once one is back.
+        await self.hub.outside({"sources": self.hub.outside_now["sources"], "running": []})
         for session, status in list(self.hub.status.items()):
             if status in (WORKING, NEEDS_YOU):
                 del self.hub.status[session]
@@ -174,6 +176,7 @@ class Portal:
         r.add_get("/api/sessions", self.sessions)
         r.add_post("/api/sessions", self.create)
         r.add_get("/api/sessions/{session}", self.open)
+        r.add_get("/api/outside", self.outside)
         r.add_get("/api/sessions/{session}/model", self.session_model)
         r.add_post("/api/sessions/{session}/model", self.set_session_model)
         r.add_post("/api/sessions/{session}/messages", self.send)
@@ -751,6 +754,15 @@ class Portal:
         if self.mesh is not None:
             rows += await self.mesh.sessions()
         return web.json_response(rows)
+
+    async def outside(self, request):
+        """Sessions that came in another way (Slack, cron, the CLI...), a page at a time, latest
+        first; `source` keeps one way in, `offset` skips the pages already shown."""
+        self._require(request)
+        hub = await self._hub()
+        query = request.query
+        offset = _index(query.get("offset", "0"))
+        return web.json_response(await hub.outside_sessions(query.get("source") or None, offset))
 
     async def open(self, request):
         self._require(request)
@@ -1380,6 +1392,8 @@ class Portal:
             # That's all of them: apps from before the sticker frame drop anything else they hold.
             await ws.send_json({"kind": "status.synced"})
             await ws.send_json(self.hub.sticker())
+            # What runs elsewhere (Slack, cron...), which the app only watches.
+            await ws.send_json(self.hub.outside_frame())
             async for message in ws:
                 if message.type != WSMsgType.TEXT:
                     continue

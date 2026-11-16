@@ -63,6 +63,15 @@ TURN_OUTCOMES = {"completed": "success", "failed": "failure"}
 CHANNEL_WAIT = 4 * INBOX_POLL + 2
 # Transcripts kept projected for chats read lately; a long one holds a few MB.
 CACHED_THREADS = 8
+# Sessions that came in another way (Slack, cron, the CLI...): the portal lists them a page at a
+# time and only reads them. Tool sessions are a turn's helpers, not something anyone started.
+OUTSIDE_PAGE = 50
+NOT_OUTSIDE = ("portal", "tool")
+# How often the sweep rereads which other ways in have sessions (it reads what's running every time).
+OUTSIDE_SOURCES_EVERY = 15
+# How often the sweep repeats what's running elsewhere even when nothing changed, for a server
+# that started since it last said.
+OUTSIDE_REPEAT_EVERY = 15
 ROOT = Path(__file__).parent
 SERVER = ROOT / "dashboard" / "serve.py"
 # The server's code: a change here means the running server is stale and gets replaced.
@@ -458,11 +467,68 @@ class HermesBackend:
         )
         return [row for row in rows if row["id"] in open_]
 
+    def outside_sessions(self, source=None, offset=0):
+        """Sessions that came in some other way than the portal (Slack, Discord, cron, the CLI...),
+        latest activity first, a page at a time. `source` keeps one way in."""
+        rows = self._scoped(
+            lambda: self.db.list_sessions_rich(
+                source=source or None,
+                exclude_sources=list(NOT_OUTSIDE),
+                min_message_count=1,
+                # Archived in another client is still something that happened.
+                include_archived=True,
+                order_by_last_active=True,
+                compact_rows=True,
+                limit=OUTSIDE_PAGE,
+                offset=max(0, int(offset or 0)),
+            )
+        )
+        return [
+            {
+                "id": row["id"],
+                "title": row.get("title") or row.get("preview") or "untitled",
+                "source": row.get("source") or "",
+                "last_active": row.get("last_active") or row.get("started_at") or 0,
+            }
+            for row in rows
+            if row.get("source") not in NOT_OUTSIDE
+        ]
+
+    def outside_sources(self):
+        """The other ways in this profile has sessions from, by Hermes's source name."""
+        try:
+            rows = self._read(
+                "SELECT DISTINCT source FROM sessions WHERE source IS NOT NULL AND source NOT IN (?, ?) "
+                "AND message_count > 0 AND COALESCE(hidden, 0)=0 ORDER BY source",
+                NOT_OUTSIDE,
+            )
+        except sqlite3.OperationalError:  # a Hermes from before hidden sessions
+            rows = self._read(
+                "SELECT DISTINCT source FROM sessions WHERE source IS NOT NULL AND source NOT IN (?, ?) AND message_count > 0 ORDER BY source",
+                NOT_OUTSIDE,
+            )
+        return [source for (source,) in rows]
+
+    def outside_running(self):
+        """Those sessions with a turn Hermes is running right now, by the admission it runs."""
+        try:
+            rows = self._read(
+                "SELECT DISTINCT s.id FROM sessions s JOIN session_admissions a ON a.target_session_id = s.id "
+                "WHERE a.status='started' AND s.source NOT IN (?, ?)",
+                NOT_OUTSIDE,
+            )
+        except sqlite3.OperationalError:  # a Hermes from before the durable queue
+            return []
+        return sorted(sid for (sid,) in rows)
+
     def thread(self, session):
         from tui_gateway.server import _history_to_messages  # bound copy; the session_history original lacks server globals
 
-        if not self._read("SELECT 1 FROM sessions WHERE id=? AND source='portal'", (session,)):
+        found = self._read("SELECT source FROM sessions WHERE id=?", (session,))
+        # Any session reads (one from Slack or cron opens read-only); a turn's tool sessions don't.
+        if not found or found[0][0] == "tool":
             return None
+        source = found[0][0] or "portal"
         home = self._home()
 
         def read():
@@ -491,7 +557,7 @@ class HermesBackend:
                         self.threads[key] = (revision, messages)
                         while len(self.threads) > CACHED_THREADS:
                             self.threads.pop(next(iter(self.threads)))
-            return {"title": db.get_session_title(session) or "", "messages": list(messages)}
+            return {"title": db.get_session_title(session) or "", "messages": list(messages), "source": source}
 
         return self._scoped(read)
 
@@ -1852,11 +1918,14 @@ def _adapter(config):
             reply and a ping like any other turn. A turn is announced once it has run a whole sweep,
             and never for a turn the hooks already reported, whose record may settle a moment after it ends."""
             seen, hooked = {}, set()
+            sweeps, outside = 0, None
             while True:
                 await asyncio.sleep(TURN_SWEEP)
                 backend = self.backend
                 if backend is None:
                     continue
+                outside = await self._sweep_outside(backend, sweeps, outside)
+                sweeps += 1
                 try:
                     running = await asyncio.to_thread(backend.running_turns)
                 except Exception:
@@ -1876,6 +1945,20 @@ def _adapter(config):
                         self._swept[chat] = admission
                         await self._hub("turn_started", chat)
                 seen, hooked = running, hooked & set(running.values())
+
+        async def _sweep_outside(self, backend, sweeps, last):
+            """Tell the hub which sessions from other ways in are running a turn (and which ways in
+            there are), when that changes and every so often anyway. Returns what it last sent."""
+            try:
+                sources = last["sources"] if last and sweeps % OUTSIDE_SOURCES_EVERY else await asyncio.to_thread(backend.outside_sources)
+                now = {"sources": sources, "running": await asyncio.to_thread(backend.outside_running)}
+            except Exception:
+                log.warning("portal: could not read sessions from other platforms", exc_info=True)
+                return last
+            if now != last or sweeps % OUTSIDE_REPEAT_EVERY == 0:
+                if not await self._hub("outside", now):
+                    return None
+            return now
 
         async def _send_exec_approval_prompt(self, prompt):
             if (primary := self._primary()) is not None:
