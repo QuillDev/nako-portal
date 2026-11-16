@@ -8,6 +8,7 @@ import {
   type LucideIcon,
   PinIcon,
   PlusIcon,
+  RadioTowerIcon,
   PencilIcon,
   SearchIcon,
   SettingsIcon,
@@ -41,7 +42,7 @@ import {
   useRenameDialog,
 } from "./session-actions";
 
-function age(seconds: number) {
+export function age(seconds: number) {
   const days = (Date.now() / 1000 - seconds) / 86400;
   if (days < 1) return "today";
   if (days < 2) return "yesterday";
@@ -507,6 +508,23 @@ export function Sidebar({
             open={open}
             row={reviews}
           />
+        )}
+        {/* Sessions from Slack, cron and other ways in; only when there are some. */}
+        {portal.outside.sources.length > 0 && (
+          <button
+            className={cn(
+              "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+              (portal.route.view === "outside" || (portal.current?.source && portal.current.source !== "portal")) && "bg-accent",
+            )}
+            onClick={() => go("#/elsewhere")}
+            type="button"
+          >
+            <RadioTowerIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">Elsewhere</span>
+            {portal.outside.running.length > 0 && (
+              <span className={cn("size-2 shrink-0 rounded-full", DOT.working)} title="working" />
+            )}
+          </button>
         )}
         {listed.length === 0 && (
           <p className="px-2 py-1 text-muted-foreground text-xs">

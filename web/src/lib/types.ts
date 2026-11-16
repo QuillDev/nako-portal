@@ -100,6 +100,8 @@ export type PortalRequest = {
 
 export type OpenSession = {
   session: string
+  // Where it came in: "portal", or another way in (slack, cron...), which opens read-only.
+  source?: string
   title: string
   messages: HistoryMessage[]
   // Where messages[0] sits in the whole transcript; above 0, older pages are left to load.
@@ -124,6 +126,13 @@ export type Live = { messages: LiveMessage[]; tools: LiveTool[] }
 
 export type Passkey = { id: string; label: string; current?: boolean }
 
+// A session that came in another way (Slack, Discord, cron, the CLI), from `/api/outside`.
+// source: Hermes's name for the way in; last_active: Unix seconds.
+export type OutsideRow = { id: string; title: string; source: string; last_active: number; running: boolean }
+
+// The ways in other than the portal that have sessions, and which of those sessions run a turn now.
+export type Outside = { sources: string[]; running: string[] }
+
 export type Frame =
   | { kind: "hub.connected" | "hub.disconnected" | "sessions.changed" | "status.synced" }
   | { kind: "status"; session: string; status: Status | null; unread?: boolean }
@@ -132,6 +141,7 @@ export type Frame =
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }
   | { kind: "profile.changed"; profile: string }
+  | ({ kind: "outside" } & Outside)
   | { kind: "machines.changed" }
   | { kind: "secrets.changed" }
   | { kind: "providers.changed" }

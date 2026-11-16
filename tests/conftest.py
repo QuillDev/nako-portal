@@ -181,11 +181,14 @@ class FakeGateway:
         self.mcp_flows = {}
         self.mcp_tokens = set()
 
-    def add_session(self, sid, title, chat=None, messages=(), profile=None):
+    def add_session(self, sid, title, chat=None, messages=(), profile=None, source="portal", last_active=None):
+        """A session; `source` other than portal is one that came in another way (Slack, cron...)."""
         self.sessions[sid] = {
             "id": sid,
             "title": title,
-            "chat": chat or f"chat-{sid}",
+            "source": source,
+            "last_active": last_active if last_active is not None else time.time(),
+            "chat": (chat or f"chat-{sid}") if source == "portal" else None,
             "rows": [],
             "started_at": time.time(),
             "pinned": False,
@@ -216,14 +219,21 @@ class FakeGateway:
         return [
             {"id": s["id"], "title": s["title"], "preview": _preview(s), "started_at": s["started_at"], "message_count": len(s["rows"]), "pinned": s["pinned"], "chat_id": s["chat"]}
             for s in self.sessions.values()
-            if not s["archived"] and s["profile"] == self.profile
+            if not s["archived"] and s["profile"] == self.profile and s.get("source", "portal") == "portal"
         ]
+
+    def outside_sessions(self, source=None, offset=0, page=50):
+        rows = sorted(
+            (s for s in self.sessions.values() if s.get("source", "portal") not in ("portal", "tool") and s["profile"] == self.profile and s["rows"] and (not source or s.get("source") == source)),
+            key=lambda s: -s.get("last_active", 0),
+        )
+        return [{"id": s["id"], "title": s["title"], "source": s["source"], "last_active": s.get("last_active", 0)} for s in rows[offset : offset + page]]
 
     def archived_sessions(self):
         return [
             {"id": s["id"], "title": s["title"], "preview": _preview(s), "started_at": s["started_at"], "message_count": len(s["rows"]), "pinned": s["pinned"], "chat_id": s["chat"]}
             for s in self.sessions.values()
-            if s["archived"] and s["profile"] == self.profile
+            if s["archived"] and s["profile"] == self.profile and s.get("source", "portal") == "portal"
         ]
 
     def _shown(self, sid):
@@ -232,7 +242,7 @@ class FakeGateway:
 
     def thread(self, sid):
         s = self._shown(sid)
-        return None if s is None else {"title": s["title"], "messages": list(s["rows"])}
+        return None if s is None or s.get("source") == "tool" else {"title": s["title"], "messages": list(s["rows"]), "source": s.get("source", "portal")}
 
     def title_of(self, sid):
         s = self.sessions.get(sid) or self.elsewhere.get(sid)

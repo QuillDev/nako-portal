@@ -30,6 +30,7 @@ HEARTBEAT = 20
 # The hub's backend, as calls over the link. These block (the hub runs them in a thread).
 BACKEND_SYNC = (
     "sessions",
+    "outside_sessions",
     "archived_sessions",
     "thread",
     "chat_of",
@@ -86,7 +87,7 @@ BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve", "set_session_model
 # Reads the server answers itself from the session store while no gateway is connected.
 OFFLINE_READS = ("thread", "chat_of", "title_of")
 # What the gateway tells the hub.
-HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "sessions_changed", "secrets_changed", "providers_changed", "mcp_changed")
+HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "outside", "sessions_changed", "secrets_changed", "providers_changed", "mcp_changed")
 
 
 def _error(frame):
