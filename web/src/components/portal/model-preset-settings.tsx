@@ -1,3 +1,4 @@
+import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { nanoid } from "nanoid"
 import { useState } from "react"
 import { EllipsisIcon, PlusIcon } from "lucide-react"
@@ -8,7 +9,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { type ModelPreset, presetDetails, presetMatches, putModelPreset, removeModelPreset, useModelPresets } from "@/lib/model-presets"
 import { type ModelChoice, PresetIcon } from "./model-picker"
 import { PresetEmoji } from "./preset-emoji"
-const field = "h-9 w-full rounded-lg border border-input bg-background px-2 text-sm"
 
 export function ModelPresetSettings({ value }: { value: ModelChoice }) {
   const presets = useModelPresets()
@@ -64,11 +64,15 @@ function PresetForm({ value, preset, error, onCancel, onSave }: { value: ModelCh
   const available = routes.some(item => route(item.provider, item.model) === selected)
   const current = pick.provider === value.provider && pick.model === value.model
   const options = (known: string[] | undefined, saved: string) => [...new Set([...(current ? known ?? [] : []), ...(saved ? [saved] : [])])]
-  const tuning = (fieldName: "effort" | "speed", values: string[]) => <label className="grid gap-1.5 capitalize">{fieldName}
-    <select className={field} value={pick[fieldName]} onChange={e => setDraft({ ...draft, pick: { ...pick, [fieldName]: e.target.value } })}>
-      <option value="">Default</option>{values.map(option => <option key={option} value={option}>{option}</option>)}
-    </select>
-  </label>
+  const tuning = (fieldName: "effort" | "speed", values: string[]) => {
+    const label = fieldName === "effort" ? "Effort" : "Speed"
+    return <div className="grid min-w-0 gap-1.5">
+      <span>{label}</span>
+      <SearchableDropdown label={label} value={pick[fieldName]} className="h-9 w-full"
+        options={[{ value: "", label: "Default" }, ...values.map(value => ({ value, label: value }))]}
+        onPick={value => setDraft({ ...draft, pick: { ...pick, [fieldName]: value } })} />
+    </div>
+  }
   return <form className="grid gap-3 text-sm" onSubmit={e => { e.preventDefault(); if (draft.name.trim() && available) onSave(draft) }}>
     <div className="grid gap-1.5">
       <label htmlFor="preset-name">Name</label>
@@ -77,13 +81,16 @@ function PresetForm({ value, preset, error, onCancel, onSave }: { value: ModelCh
         <Input id="preset-name" value={draft.name} required maxLength={40} placeholder="Quick replies" onChange={e => setDraft({ ...draft, name: e.target.value })} />
       </div>
     </div>
-    <label className="grid gap-1.5">Model<select className={field} value={selected} onChange={e => {
-      const next = routes.find(item => route(item.provider, item.model) === e.target.value)
-      if (next) setDraft({ ...draft, pick: { provider: next.provider, model: next.model, effort: "", speed: "" } })
-    }}>
-      {!available && <option value={selected} disabled>Choose an available model</option>}
-      {routes.map(({ provider, model, label }) => <option key={route(provider, model)} value={route(provider, model)}>{model} · {label}</option>)}
-    </select></label>
+    <div className="grid min-w-0 gap-1.5">
+      <span>Model</span>
+      <SearchableDropdown label="Model" value={selected} placeholder="Choose an available model" className="h-9 w-full"
+        options={routes.map(({ provider, model, label }) => ({ value: route(provider, model), label: model, detail: label }))}
+        onPick={choice => {
+          if (choice === selected) return
+          const next = routes.find(item => route(item.provider, item.model) === choice)
+          if (next) setDraft({ ...draft, pick: { provider: next.provider, model: next.model, effort: "", speed: "" } })
+        }} />
+    </div>
     <div className="grid grid-cols-2 gap-3">{tuning("effort", options(value.efforts, pick.effort))}{tuning("speed", options(value.speeds, pick.speed))}</div>
     {error && <p role="alert" className="text-destructive">{error}</p>}
     <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={!draft.name.trim() || !available}>Save preset</Button></div>

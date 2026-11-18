@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import { BellIcon, BoxesIcon, ChartLineIcon, ChevronRightIcon, KeyRoundIcon, type LucideIcon, BlocksIcon, NetworkIcon, PlugIcon, SlidersHorizontalIcon, SparklesIcon, UserIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { Switch } from "@/components/ui/switch"
 import { navigate, type Portal } from "@/hooks/use-portal"
 import { api, ApiError } from "@/lib/api"
@@ -95,19 +95,8 @@ function ProfileRows({ onError }: { onError: (message: string) => void }) {
 function ProfileRow({ state, onPick: pick }: { state: Profiles; onPick: (profile: string) => void }) {
   return (
     <Row label="Profile">
-      <Select onValueChange={pick} value={state.profile}>
-        <SelectTrigger aria-label="Profile" className="w-40" size="sm">
-          <SelectValue />
-        </SelectTrigger>
-        {/* Radix refocuses the trigger on close, which Chrome paints as a keyboard focus ring. */}
-        <SelectContent onCloseAutoFocus={e => e.preventDefault()}>
-          {state.profiles.map(profile => (
-            <SelectItem key={profile} value={profile}>
-              {profile}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableDropdown label="Profile" value={state.profile} onPick={pick} className="w-40" align="end"
+        options={state.profiles.map(profile => ({ value: profile, label: profile }))} />
     </Row>
   )
 }
@@ -118,18 +107,8 @@ function SearchEngineRow() {
   if (!canPickSearch()) return null
   return (
     <Row label="Search engine">
-      <Select onValueChange={value => setSearchEngine(value as SearchEngine)} value={engine}>
-        <SelectTrigger aria-label="Search engine" className="w-40" size="sm">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent onCloseAutoFocus={e => e.preventDefault()}>
-          {Object.entries(SEARCH_ENGINES).map(([id, name]) => (
-            <SelectItem key={id} value={id}>
-              {name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableDropdown label="Search engine" value={engine} onPick={setSearchEngine} className="w-40" align="end"
+        options={(Object.keys(SEARCH_ENGINES) as SearchEngine[]).map(value => ({ value, label: SEARCH_ENGINES[value] }))} />
     </Row>
   )
 }
