@@ -36,6 +36,7 @@ import time
 import uuid
 from contextlib import closing
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger("hermes.portal")
 PLUGIN = "nako-portal"
@@ -1062,8 +1063,15 @@ class HermesBackend:
         with self.mcp_lock:
             if any(f.server_name == name and f.hermes_home == home and not f.worker_done for f in self.mcp_flows.values()):
                 raise ValueError(f"A sign-in for {name} is already open")
-            flow = DashboardOAuthFlow(flow_id=secrets.token_urlsafe(24), server_name=name, profile=None, hermes_home=home,
-                redirect_uri=(cfg.get("oauth") or {}).get("redirect_uri") or redirect_uri, reconnect_live=False)
+            # Older Hermes builds still require profile even though hermes_home carries the scope.
+            legacy: dict[str, Any] = {}
+            if any(f.name == "profile" for f in dataclasses.fields(DashboardOAuthFlow)):
+                legacy["profile"] = None
+            flow = DashboardOAuthFlow(
+                flow_id=secrets.token_urlsafe(24), server_name=name, hermes_home=home,
+                redirect_uri=(cfg.get("oauth") or {}).get("redirect_uri") or redirect_uri,
+                reconnect_live=False, **legacy,
+            )
             self.mcp_flows[flow.flow_id] = flow
         threading.Thread(target=_run_dashboard_mcp_oauth, args=(flow, cfg), daemon=True, name=f"portal-mcp-oauth-{name}").start()
         try:

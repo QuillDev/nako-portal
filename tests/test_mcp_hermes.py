@@ -4,6 +4,7 @@ would have written, and nothing secret comes back.
 Needs a real Hermes to import, so CI skips it; run it with Hermes's own interpreter.
 """
 
+import asyncio
 import importlib.util
 import json
 import types
@@ -86,6 +87,24 @@ def test_the_page_adds_switches_picks_tools_and_removes_like_the_cli(home, monke
     assert "files" not in _servers(home)
     with pytest.raises(ValueError):
         backend.mcp_remove("files")
+
+
+def test_browser_sign_in_returns_an_authorization_url(home, monkeypatch):
+    from hermes_cli import web_server_mcp
+
+    url = "https://docs.example.test/authorize?state=demo"
+
+    def authorize(flow, _config):
+        asyncio.run(flow.publish_authorization_url(url))
+        flow.mark_worker_done()
+
+    monkeypatch.setattr(web_server_mcp, "_run_dashboard_mcp_oauth", authorize)
+    backend = _backend(home, monkeypatch)
+
+    result = backend.mcp_start_signin("docs", "https://portal.example.test/oauth/callback/docs")
+
+    assert result["status"] == "authorization_required"
+    assert result["authorization_url"] == url
 
 
 def test_a_catalog_server_that_needs_a_key_is_refused_without_it(home, monkeypatch):
