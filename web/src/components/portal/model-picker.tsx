@@ -1,4 +1,4 @@
-import { BrainIcon, CheckIcon, ChevronDownIcon, StarIcon, ZapIcon } from "lucide-react"
+import { BrainIcon, CheckIcon, ChevronDownIcon, GaugeIcon, RabbitIcon, RocketIcon, StarIcon, TurtleIcon } from "lucide-react"
 import { Popover } from "radix-ui"
 import { useEffect, useRef, useState } from "react"
 import { z } from "zod"
@@ -27,22 +27,32 @@ export function NewChatModel({ selection, onPick }: { selection: ModelSelection;
   }, [])
   if (!defaults) return null
   const otherRoute = selection.model !== undefined && (selection.model !== defaults.model || selection.provider !== defaults.provider)
-  return <ModelPicker label="this chat" session canSavePreset={!otherRoute} value={{ ...defaults, ...selection, overridden: Object.keys(selection).length > 0 }} onPick={async pick => {
+  return <ModelPicker label="this chat" session chips canSavePreset={!otherRoute} value={{ ...defaults, ...selection, overridden: Object.keys(selection).length > 0 }} onPick={async pick => {
     if (pick.reset) onPick({})
     else if (pick.model !== undefined) onPick(pick)
     else onPick({ ...selection, ...pick })
   }} />
 }
 
-function Option({ label, value, values, onPick }: { label: string; value: string; values: string[]; onPick: (value: string) => void }) {
-  const Icon = label === "effort" ? BrainIcon : ZapIcon
-  return <div className="min-w-0 flex-1">
+// Speed tiers read as animals; a tier with no animal keeps a plain gauge.
+const SPEED_ICONS: Record<string, typeof GaugeIcon> = { normal: TurtleIcon, fast: RabbitIcon, ultrafast: RocketIcon }
+const optionIcon = (label: string, value: string) => label === "effort" ? BrainIcon : SPEED_ICONS[value] ?? GaugeIcon
+
+function Option({ label, value, values, onPick, chip = false }: {
+  label: string; value: string; values: string[]; onPick: (value: string) => void; chip?: boolean;
+}) {
+  const Icon = optionIcon(label, value)
+  const trigger = <SelectTrigger aria-label={label} title={label} className={chip
+    ? "h-8 w-auto gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:hidden"
+    : "h-9 w-full gap-2 rounded-lg border-0 bg-transparent px-2 text-xs shadow-none hover:bg-accent focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent"}>
+    <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+    <span className={chip ? "" : "flex-1 text-left"}><SelectValue /></span>
+  </SelectTrigger>
+  return <div className={chip ? "shrink-0 data-[fit=out]:invisible data-[fit=out]:absolute data-[fit=out]:top-0 data-[fit=out]:left-0" : "min-w-0 flex-1"} data-tune={chip ? "" : undefined}>
     <Select value={value || "inherit"} onValueChange={v => onPick(v === "inherit" ? "" : v)}>
-      <SelectTrigger aria-label={label} title={label} className="h-9 w-full gap-2 rounded-lg border-0 bg-transparent px-2 text-xs shadow-none hover:bg-accent focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent">
-        <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-        <span className="flex-1 text-left"><SelectValue /></span>
-      </SelectTrigger>
-      <SelectContent onCloseAutoFocus={e => e.preventDefault()}>
+      {trigger}
+      {/* A chip's list opens above it, like the model picker, instead of over the composer. */}
+      <SelectContent onCloseAutoFocus={e => e.preventDefault()} {...chip && { position: "popper", side: "top", align: "start", sideOffset: 4 } as const}>
         <div className="px-2 py-1.5 text-xs text-muted-foreground">{label}</div>
         <SelectItem value="inherit">default</SelectItem>
         {values.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
@@ -50,8 +60,10 @@ function Option({ label, value, values, onPick }: { label: string; value: string
     </Select></div>
 }
 
-export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false, canSavePreset = true }: {
+export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false, canSavePreset = true, chips = false }: {
   value: ModelChoice; onPick: (pick: Pick) => Promise<unknown>; label?: string; disabled?: boolean; session?: boolean; canSavePreset?: boolean;
+  // Effort and speed as their own buttons beside the model; the composer hides the ones that don't fit.
+  chips?: boolean;
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -86,9 +98,15 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const save = async (pick: Pick) => {
     setSaving(true)
     setError("")
-    try { await onPick(pick) } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    try { await onPick(pick) } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      // A chip has nowhere to say what went wrong; the picker does.
+      setOpen(true)
+    }
     finally { setSaving(false) }
   }
+  // A single speed is no choice, so neither the picker nor a chip offers it.
+  const speeds = value.speeds && value.speeds.length > 1 ? value.speeds : undefined
   const renderRow = (pick: ModelFavorite, description?: string) => {
     const id = favoriteId(pick)
     const active = pick.provider === value.provider && pick.model === value.model &&
@@ -114,7 +132,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
       </button>
     </div>
   }
-  return <Popover.Root open={open} onOpenChange={show}>
+  return <><Popover.Root open={open} onOpenChange={show}>
     <Popover.Trigger asChild><Button aria-label={label} disabled={disabled} className="max-w-48 justify-between gap-2 font-normal" size="sm" variant={session ? "ghost" : "outline"}>
       <span className="truncate">{value.model || "automatic"}</span><ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
     </Button></Popover.Trigger>
@@ -139,7 +157,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
       </Command>
       {supportsTuning && <fieldset disabled={saving} className="flex items-center gap-1 border-t p-1.5">
         {value.efforts && <Option label="effort" value={value.effort || ""} values={value.efforts} onPick={effort => void save({ effort })} />}
-        {value.speeds && value.speeds.length > 1 && <Option label="speed" value={value.speed || ""} values={value.speeds} onPick={speed => void save({ speed })} />}
+        {speeds && <Option label="speed" value={value.speed || ""} values={speeds} onPick={speed => void save({ speed })} />}
         {canSavePreset && (preset.effort || preset.speed) && catalog.get(preset.provider)?.models.includes(preset.model) &&
           <button type="button" aria-pressed={starred.has(favoriteId(preset))}
             className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent aria-pressed:text-primary max-sm:min-h-11"
@@ -148,6 +166,11 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
       {error && <p role="alert" className="px-3 pb-3 text-xs text-destructive">{error}</p>}
     </Popover.Content></Popover.Portal>
   </Popover.Root>
+  {chips && <fieldset disabled={disabled || saving} className="contents">
+    {value.efforts && <Option chip label="effort" value={value.effort || ""} values={value.efforts} onPick={effort => void save({ effort })} />}
+    {speeds && <Option chip label="speed" value={value.speed || ""} values={speeds} onPick={speed => void save({ speed })} />}
+  </fieldset>}
+  </>
 }
 
 export function SessionModel({ session, running }: { session: string; running: boolean }) {
@@ -163,7 +186,7 @@ export function SessionModel({ session, running }: { session: string; running: b
     return () => { active = false; clearInterval(timer) }
   }, [path, running])
   if (!value) return null
-  return <ModelPicker label="this chat" session disabled={running} value={value} onPick={async body => {
+  return <ModelPicker label="this chat" session chips disabled={running} value={value} onPick={async body => {
     let raw = await api<unknown>(path, { method: "POST", body })
     const warning = z.object({ confirmation: z.string(), message: z.string() }).safeParse(raw)
     if (warning.success) {
