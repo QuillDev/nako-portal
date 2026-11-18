@@ -26,9 +26,25 @@ function preloadFirstPaint(): Plugin {
   }
 }
 
+// Keep one record per line in the shipped emoji dictionary so build and install
+// diagnostics can distinguish unrelated words in different records.
+function formatEmojiData(): Plugin {
+  return {
+    name: "format-emoji-data",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      for (const asset of Object.values(bundle)) {
+        if (asset.type !== "asset" || !asset.originalFileNames.some(name => name.endsWith("emoji-picker-element-data/en/emojibase/data.json"))) continue
+        const records: unknown[] = JSON.parse(typeof asset.source === "string" ? asset.source : new TextDecoder().decode(asset.source))
+        asset.source = `[\n${records.map(record => JSON.stringify(record)).join(",\n")}\n]\n`
+      }
+    },
+  }
+}
+
 // The build lands in dashboard/web, which the portal serves as-is.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), preloadFirstPaint()],
+  plugins: [react(), tailwindcss(), preloadFirstPaint(), formatEmojiData()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     outDir: fileURLToPath(new URL("../dashboard/web", import.meta.url)),
