@@ -1,5 +1,5 @@
 import { PaperclipIcon, SquareIcon } from "lucide-react"
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import {
   PromptInput,
@@ -93,6 +93,39 @@ const TALL = {
   end: "col-start-3 row-start-2 p-0 has-[>button]:mr-0",
 }
 
+// The effort and speed buttons beside the model show only while the bottom row has room for them,
+// speed going first. Hidden ones stay laid out off to the side, so their width is still known.
+function useTuneFit(box: RefObject<HTMLDivElement | null>) {
+  useLayoutEffect(() => {
+    const root = box.current
+    const group = root?.querySelector<HTMLElement>("[data-slot=input-group]")
+    const start = root?.querySelector<HTMLElement>("[data-align=inline-start]")
+    const end = root?.querySelector<HTMLElement>("[data-align=inline-end]")
+    if (!group || !start || !end) return
+    const fit = () => {
+      const items = [...start.children].flatMap(c => getComputedStyle(c).display === "contents" ? [...c.children] : [c]) as HTMLElement[]
+      const gap = parseFloat(getComputedStyle(start).columnGap) || 0
+      const pad = getComputedStyle(group)
+      const room = group.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight) - end.offsetWidth - 4
+      let used = items.filter(i => !i.hasAttribute("data-tune")).reduce((sum, i, n) => sum + i.offsetWidth + (n ? gap : 0), 0)
+      let fits = true
+      for (const chip of items.filter(i => i.hasAttribute("data-tune"))) {
+        used += gap + chip.offsetWidth
+        fits &&= used <= room
+        const next = fits ? "in" : "out"
+        if (chip.dataset.fit !== next) chip.dataset.fit = next
+      }
+    }
+    fit()
+    const sizes = new ResizeObserver(fit)
+    for (const el of [group, start, end]) sizes.observe(el)
+    // The chips arrive once the chat's model loads, and change width with their value.
+    const changes = new MutationObserver(fit)
+    changes.observe(start, { childList: true, subtree: true, characterData: true })
+    return () => { sizes.disconnect(); changes.disconnect() }
+  }, [box])
+}
+
 // inChat: a chat is open, so slash commands run in it. Only what the composer uses comes in, and
 // every function keeps its identity, so a streaming reply doesn't redraw the composer.
 type ComposerProps = Pick<Portal, "send" | "command" | "stop" | "setError" | "commands"> & {
@@ -119,6 +152,7 @@ function ComposerBody({ draftKey, session, placeholder, running, inChat, command
   const box = useRef<HTMLDivElement>(null)
   const { textInput } = usePromptInputController()
   const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
+  useTuneFit(box)
 
   return (
     <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" ref={box}>
@@ -156,7 +190,7 @@ function ComposerBody({ draftKey, session, placeholder, running, inChat, command
           }
         }}
       >
-        <InputGroupAddon align="inline-start" className={`self-end pb-1.5 ${TALL.start}`}>
+        <InputGroupAddon align="inline-start" className={`relative self-end pb-1.5 ${TALL.start}`}>
           <AttachButton />
           {!inChat && <NewChatModel selection={model} onPick={setModel} />}
           {session && <SessionModel key={session} session={session} running={running} />}
