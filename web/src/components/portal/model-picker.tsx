@@ -1,11 +1,12 @@
-import { BrainIcon, CheckIcon, ChevronDownIcon, ZapIcon } from "lucide-react"
+import { BrainIcon, CheckIcon, ChevronDownIcon, StarIcon, ZapIcon } from "lucide-react"
 import { Popover } from "radix-ui"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { z } from "zod"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api, ApiError } from "@/lib/api"
+import { favoriteId, type ModelFavorite, readModelFavorites, toggleModelFavorite } from "@/lib/model-favorites"
 
 export const modelChoice = z.object({
   provider: z.string(), model: z.string(),
@@ -25,8 +26,11 @@ export function NewChatModel({ selection, onPick }: { selection: ModelSelection;
     return () => { active = false }
   }, [])
   if (!defaults) return null
-  return <ModelPicker label="this chat" session value={{ ...defaults, ...selection, overridden: Object.keys(selection).length > 0 }} onPick={async pick => {
-    onPick(pick.reset ? {} : { ...selection, ...pick })
+  const otherRoute = selection.model !== undefined && (selection.model !== defaults.model || selection.provider !== defaults.provider)
+  return <ModelPicker label="this chat" session canSavePreset={!otherRoute} value={{ ...defaults, ...selection, overridden: Object.keys(selection).length > 0 }} onPick={async pick => {
+    if (pick.reset) onPick({})
+    else if (pick.model !== undefined) onPick(pick)
+    else onPick({ ...selection, ...pick })
   }} />
 }
 
@@ -46,20 +50,71 @@ function Option({ label, value, values, onPick }: { label: string; value: string
     </Select></div>
 }
 
-export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false }: {
-  value: ModelChoice; onPick: (pick: Pick) => Promise<unknown>; label?: string; disabled?: boolean; session?: boolean;
+export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false, canSavePreset = true }: {
+  value: ModelChoice; onPick: (pick: Pick) => Promise<unknown>; label?: string; disabled?: boolean; session?: boolean; canSavePreset?: boolean;
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [favorites, setFavorites] = useState(readModelFavorites)
+  const search = useRef<HTMLInputElement>(null)
+  const catalog = new Map(value.providers.map(provider => [provider.provider, provider]))
+  const supportsTuning = value.efforts !== undefined || value.speeds !== undefined
+  const preset = {
+    provider: value.provider, model: value.model,
+    effort: value.efforts?.includes(value.effort ?? "") ? value.effort ?? "" : "",
+    speed: value.speeds?.includes(value.speed ?? "") ? value.speed ?? "" : "",
+  }
+  const starred = new Set(favorites.map(favoriteId))
+  const filter = query.trim().toLowerCase()
+  const matches = (model: string, provider: string, tuning = "") => `${provider} ${model} ${tuning}`.toLowerCase().includes(filter)
+  const details = (favorite: ModelFavorite) => "effort" in favorite ? [favorite.effort, favorite.speed].filter(Boolean).join(" · ") : ""
+  const shownFavorites = favorites.filter(favorite => {
+    const provider = catalog.get(favorite.provider)
+    return provider?.models.includes(favorite.model) && (supportsTuning || !("effort" in favorite)) && matches(favorite.model, provider.label, details(favorite))
+  })
+  const toggle = (favorite: ModelFavorite) => {
+    setError("")
+    try { setFavorites(toggleModelFavorite(favorite)) }
+    catch { setError("Couldn't save favorites on this device.") }
+  }
+  const show = (next: boolean) => {
+    if (next) setFavorites(readModelFavorites())
+    setOpen(next)
+  }
   const save = async (pick: Pick) => {
     setSaving(true)
     setError("")
     try { await onPick(pick) } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
     finally { setSaving(false) }
   }
-  return <Popover.Root open={open} onOpenChange={setOpen}>
+  const renderRow = (pick: ModelFavorite, description?: string) => {
+    const id = favoriteId(pick)
+    const active = pick.provider === value.provider && pick.model === value.model &&
+      (!("effort" in pick) || (pick.effort === preset.effort && pick.speed === preset.speed))
+    const name = `${pick.model} on ${catalog.get(pick.provider)?.label}${description ? `, ${description}` : ""}`
+    return <div key={id} className="flex items-stretch rounded-sm hover:bg-accent focus-within:bg-accent">
+      <CommandItem className="min-h-9 min-w-0 flex-1 max-sm:min-h-11" disabled={saving} value={id} onSelect={() => void save(pick)}>
+        <span className="min-w-0">
+          <span className="block truncate">{pick.model}</span>
+          {description && <span className="block truncate text-xs text-muted-foreground">{description}</span>}
+        </span>
+        {active && <CheckIcon className="ml-auto size-4 shrink-0" />}
+      </CommandItem>
+      <button type="button" aria-label={`Favorite ${name}`} aria-pressed={starred.has(id)} title={starred.has(id) ? "Remove favorite" : "Add favorite"}
+        className="grid w-9 shrink-0 place-items-center rounded-sm text-muted-foreground hover:text-foreground aria-pressed:text-primary max-sm:w-11"
+        onKeyDown={event => { if (event.key === "Enter" || event.key === " ") event.stopPropagation() }}
+        onClick={event => {
+          // The row moves between groups. Keep keyboard focus in the picker.
+          if (event.currentTarget === document.activeElement) search.current?.focus({ preventScroll: true })
+          toggle(pick)
+        }}>
+        <StarIcon className="size-4" fill={starred.has(id) ? "currentColor" : "none"} />
+      </button>
+    </div>
+  }
+  return <Popover.Root open={open} onOpenChange={show}>
     <Popover.Trigger asChild><Button aria-label={label} disabled={disabled} className="max-w-48 justify-between gap-2 font-normal" size="sm" variant={session ? "ghost" : "outline"}>
       <span className="truncate">{value.model || "automatic"}</span><ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
     </Button></Popover.Trigger>
@@ -69,21 +124,26 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
         {session && <button disabled={saving || !value.overridden} className="disabled:opacity-40 hover:text-foreground" onClick={() => void save({ reset: true })}>use default</button>}
       </div>
       <Command shouldFilter={false} className="bg-transparent">
-        <CommandInput onValueChange={setQuery} placeholder="Search models" value={query} />
-        <CommandList className="max-h-[min(36vh,18rem)]">
+        <CommandInput ref={search} onValueChange={setQuery} placeholder="Search models" value={query} />
+        <CommandList className="max-h-[min(46vh,20rem)]">
           <CommandEmpty>No model matches.</CommandEmpty>
+          {shownFavorites.length > 0 && <CommandGroup heading="Favorites" className="mb-1 border-b pb-2">
+            {shownFavorites.map(pick => renderRow(pick, [catalog.get(pick.provider)?.label, details(pick)].filter(Boolean).join(" · ")))}
+          </CommandGroup>}
           {value.providers.map(p => {
-            const shown = p.models.filter(m => `${p.label} ${m}`.toLowerCase().includes(query.trim().toLowerCase()))
-            return shown.length ? <CommandGroup heading={p.label} key={p.provider}>{shown.map(m => <CommandItem disabled={saving} key={m} value={`${p.provider}/${m}`}
-              onSelect={() => void save({ provider: p.provider, model: m })}>
-              <span className="truncate">{m}</span>{p.provider === value.provider && m === value.model && <CheckIcon className="ml-auto shrink-0 size-4" />}
-            </CommandItem>)}</CommandGroup> : null
+            const shown = p.models.map(model => ({ provider: p.provider, model }))
+              .filter(pick => !starred.has(favoriteId(pick)) && matches(pick.model, p.label))
+            return shown.length ? <CommandGroup heading={p.label} key={p.provider}>{shown.map(pick => renderRow(pick))}</CommandGroup> : null
           })}
         </CommandList>
       </Command>
-      {(value.efforts || value.speeds) && <fieldset disabled={saving} className="flex items-center gap-1 border-t p-1.5">
+      {supportsTuning && <fieldset disabled={saving} className="flex items-center gap-1 border-t p-1.5">
         {value.efforts && <Option label="effort" value={value.effort || ""} values={value.efforts} onPick={effort => void save({ effort })} />}
         {value.speeds && value.speeds.length > 1 && <Option label="speed" value={value.speed || ""} values={value.speeds} onPick={speed => void save({ speed })} />}
+        {canSavePreset && (preset.effort || preset.speed) && catalog.get(preset.provider)?.models.includes(preset.model) &&
+          <button type="button" aria-pressed={starred.has(favoriteId(preset))}
+            className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent aria-pressed:text-primary max-sm:min-h-11"
+            onClick={() => toggle(preset)}><StarIcon className="size-3.5" fill={starred.has(favoriteId(preset)) ? "currentColor" : "none"} /> {starred.has(favoriteId(preset)) ? "Preset saved" : "Save preset"}</button>}
       </fieldset>}
       {error && <p role="alert" className="px-3 pb-3 text-xs text-destructive">{error}</p>}
     </Popover.Content></Popover.Portal>
