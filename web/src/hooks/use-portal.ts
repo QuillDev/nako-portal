@@ -94,6 +94,7 @@ export function usePortal() {
   const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [connected, setConnected] = useState(true)
+  const [hermes, setHermes] = useState<import("@/lib/types").HermesBuild | null>(null)
   // Bumped when a machine in the mesh joins, leaves or starts work; Settings rereads the list.
   const [machinesSeen, setMachinesSeen] = useState(0)
   // Whether this page's socket to the portal is up; while it's down nothing live arrives.
@@ -189,10 +190,12 @@ export function usePortal() {
       switch (frame.kind) {
         case "hub.connected":
           setConnected(true)
+          setHermes(frame.hermes ?? null)
           loadSessions()
           if (currentRef.current) refresh(currentRef.current.session)
           return
         case "hub.disconnected":
+          setHermes(null)
           return setConnected(false)
         case "sessions.changed":
           loadSessions()
@@ -561,7 +564,7 @@ export function usePortal() {
     }
   }, [current])
 
-  return { me, setName, boot, sessions, outside, route, current, live, connected, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
+  return { me, setName, boot, sessions, outside, route, current, live, connected, hermes, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

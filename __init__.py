@@ -274,6 +274,33 @@ def _settings():
     return home, origin.rstrip("/"), port, contact, apps
 
 
+def _hermes_build():
+    """Identify the gateway's booted revision, not the checkout's current HEAD."""
+    try:
+        from hermes_cli.version_info import get_version_info
+    except ImportError:
+        return None
+    info = get_version_info()
+    if info.base_version == "unknown":
+        return None
+    full = info.derived_version
+    if info.commit and not info.dirty:
+        import hermes_cli
+
+        # Hermes's display version measures distance from stable, even on a tagged canary.
+        try:
+            tags = subprocess.run(
+                ["git", "tag", "--points-at", info.commit, "--list", f"v{info.base_version}+canary.*"],
+                cwd=Path(hermes_cli.__file__).resolve().parent,
+                capture_output=True, text=True, timeout=3,
+            ).stdout.splitlines()
+        except (OSError, subprocess.SubprocessError):
+            tags = []
+        if tags:
+            full = max(tags)[1:]
+    return {"version": info.base_version, "build": full}
+
+
 def _server_config(home, origin, port, contact, apps):
     """What the server runs with, written to a file it reads. `code` names this code and these
     settings, so a server started from anything else is replaced."""
@@ -1776,6 +1803,7 @@ def _adapter(config):
                     token,
                     config["code"],
                     self.backend,
+                    hermes_build=await asyncio.to_thread(_hermes_build),
                     on_missing=start_server,
                     on_stale=lambda: start_server(stale=True),
                 )

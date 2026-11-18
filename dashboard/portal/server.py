@@ -138,7 +138,7 @@ class Portal:
                 except Exception:
                     log.warning("portal: can't show saved profile %r; showing the default", saved, exc_info=True)
             self.hub.connected = True
-            await self.hub.broadcast({"kind": "hub.connected"})
+            await self.hub.broadcast(self._gateway_frame())
             return
         self.hub.connected = False
         self.hub.running.clear()
@@ -150,6 +150,11 @@ class Portal:
                 del self.hub.status[session]
                 await self.hub.broadcast({"kind": "status", "session": session, "status": None, "unread": False})
         await self.hub.broadcast({"kind": "hub.disconnected"})
+
+    def _gateway_frame(self):
+        if not self.hub.connected:
+            return {"kind": "hub.disconnected"}
+        return {"kind": "hub.connected", "hermes": self.hub.hermes_build}
 
     # Plumbing
 
@@ -1385,7 +1390,7 @@ class Portal:
         client = _Client(ws)
         self.hub.join(client)
         try:
-            await ws.send_json({"kind": "hub.connected" if self.hub.connected else "hub.disconnected"})
+            await ws.send_json(self._gateway_frame())
             # Where every chat stands now; a socket that joins mid-turn would otherwise wait for the next change.
             for frame in self.hub.status_frames() + (self.mesh.status_frames() if self.mesh is not None else []):
                 await ws.send_json(frame)
