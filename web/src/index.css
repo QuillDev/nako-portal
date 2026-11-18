@@ -101,6 +101,10 @@
 /* Mark keyboard focus without drawing a ring or changing the control's border. */
 :where(button, a[href], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
   outline: none;
+}
+
+/* Text entry already has a caret. Do not wash out its background on focus. */
+:where(button, a[href], select, [tabindex]:not([tabindex="-1"])):not(input, textarea, [contenteditable]):focus-visible {
   background-image: linear-gradient(var(--focus-fill), var(--focus-fill));
 }
 
