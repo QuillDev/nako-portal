@@ -408,7 +408,7 @@ export function SecretsSettings({ onError }: { onError: (m: string) => void }) {
   return (
     <>
       <div className="flex items-center gap-2 pb-1">
-        <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5 has-[input:focus-visible]:border-ring">
+        <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5">
           <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
           <input aria-label="Search secrets" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" onChange={e => setQuery(e.target.value)} enterKeyHint="search" placeholder="Search secrets" spellCheck={false} value={query} />
         </label>
@@ -419,7 +419,7 @@ export function SecretsSettings({ onError }: { onError: (m: string) => void }) {
       <div className="flex flex-col">
         {shown.map(s => (
           <button
-            className="-mx-2 flex items-center gap-3 rounded-md px-2 py-2 text-left outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="-mx-2 flex items-center gap-3 rounded-md px-2 py-2 text-left outline-none hover:bg-accent"
             data-secret-row={s.name}
             key={s.name}
             onClick={() => setOpen({ kind: "secret", name: s.name })}

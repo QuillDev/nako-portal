@@ -13,7 +13,7 @@ function Switch({
       aria-checked={checked}
       aria-label={label}
       className={cn(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full bg-input transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 data-[state=on]:bg-primary",
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full bg-input transition-colors outline-none disabled:opacity-50 data-[state=on]:bg-primary",
         className,
       )}
       data-slot="switch"

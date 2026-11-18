@@ -186,7 +186,7 @@ function AddMachine({ close, onError, ready }: { close: () => void; onError: (m:
         {PLATFORMS.map(p => (
           <button
             aria-checked={platform === p.id}
-            className="rounded-md py-1.5 text-muted-foreground text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-checked:bg-background aria-checked:text-foreground aria-checked:shadow-sm"
+            className="rounded-md py-1.5 text-muted-foreground text-xs outline-none aria-checked:bg-background aria-checked:text-foreground aria-checked:shadow-sm"
             key={p.id}
             onClick={() => pick(p.id)}
             role="radio"

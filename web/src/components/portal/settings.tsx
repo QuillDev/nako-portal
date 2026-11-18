@@ -27,6 +27,7 @@ import { EnvironmentsSettings } from "./environments"
 import { MeshSettings } from "./mesh"
 import { UsageSettings, useUsage } from "./usage-settings"
 import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
+import { ModelPresetSettings } from "./model-preset-settings"
 
 const THEMES: Theme[] = ["system", "light", "dark"]
 
@@ -48,7 +49,7 @@ function Segmented<T extends string>({ options, value, onPick }: { options: read
       {options.map(option => (
         <button
           aria-pressed={value === option}
-          className="rounded-md px-2.5 py-1 text-muted-foreground text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-accent aria-pressed:text-foreground"
+          className="rounded-md px-2.5 py-1 text-muted-foreground text-xs outline-none aria-pressed:bg-accent aria-pressed:text-foreground"
           key={option}
           onClick={() => onPick(option)}
           type="button"
@@ -83,7 +84,10 @@ function ProfileRows({ onError }: { onError: (message: string) => void }) {
   return (
     <>
       {state.profiles.length > 1 && <ProfileRow onPick={pick} state={state} />}
-      {model && <Row label="Default model"><ModelPicker label="default model" onPick={pickModel} value={model} /></Row>}
+      {model && <>
+        <Row label="Default model"><ModelPicker label="default model" named onPick={pickModel} value={model} /></Row>
+        <ModelPresetSettings value={model} />
+      </>}
     </>
   )
 }
@@ -144,7 +148,7 @@ function SettingsMenu({ buckets, current }: { buckets: Bucket[]; current: string
           {bucket.pages.map(page => (
             <button
               aria-current={page.id === current ? "page" : undefined}
-              className="flex select-none items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-muted-foreground text-sm outline-none hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 md:aria-[current=page]:bg-accent md:aria-[current=page]:text-foreground md:py-2"
+              className="flex select-none items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-muted-foreground text-sm outline-none hover:bg-accent hover:text-foreground md:aria-[current=page]:bg-accent md:aria-[current=page]:text-foreground md:py-2"
               key={page.id}
               onClick={() => navigate(`#/settings/${page.id}`)}
               type="button"
