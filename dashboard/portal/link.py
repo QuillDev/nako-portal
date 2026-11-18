@@ -229,6 +229,8 @@ class GatewayLink:
         await ws.prepare(request)
         peer = Peer(ws, self._methods())
         old, self.peer = self.peer, peer
+        version, build = request.query.get("hermes_version"), request.query.get("hermes_build")
+        self.hub.hermes_build = {"version": version, "build": build} if version and build else None
         if old is not None:
             await old.ws.close()
         log.info("portal: gateway connected")
@@ -239,6 +241,7 @@ class GatewayLink:
             changed.cancel()
             if self.peer is peer:
                 self.peer = None
+                self.hub.hermes_build = None
                 log.info("portal: gateway went away")
                 await self._changed(False)
         return ws
@@ -298,11 +301,13 @@ class GatewayClient:
 
     RETRY = 1.0
 
-    def __init__(self, url, token, code, backend, *, on_missing=None, on_stale=None):
+    def __init__(self, url, token, code, backend, *, hermes_build=None, on_missing=None, on_stale=None):
         self.url = url
         self.token = token
-        self.code = code
         self.backend = backend
+        self.params = {"code": code}
+        if hermes_build:
+            self.params.update(hermes_version=hermes_build["version"], hermes_build=hermes_build["build"])
         self.on_missing = on_missing
         self.on_stale = on_stale
         self.peer = None
@@ -331,7 +336,7 @@ class GatewayClient:
             try:
                 ws = await http.ws_connect(
                     self.url,
-                    params={"code": self.code},
+                    params=self.params,
                     headers={"Authorization": f"Bearer {self.token}"},
                     heartbeat=HEARTBEAT,
                     max_msg_size=MAX_FRAME,

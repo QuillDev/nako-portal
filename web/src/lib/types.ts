@@ -132,9 +132,11 @@ export type OutsideRow = { id: string; title: string; source: string; last_activ
 
 // The ways in other than the portal that have sessions, and which of those sessions run a turn now.
 export type Outside = { sources: string[]; running: string[] }
+export type HermesBuild = { version: string; build: string }
 
 export type Frame =
-  | { kind: "hub.connected" | "hub.disconnected" | "sessions.changed" | "status.synced" }
+  | { kind: "hub.connected"; hermes?: HermesBuild | null }
+  | { kind: "hub.disconnected" | "sessions.changed" | "status.synced" }
   | { kind: "status"; session: string; status: Status | null; unread?: boolean }
   | { kind: "sticker"; mood: "idle" | "working" | "needs-you"; working: number; finished: number }
   | { kind: "request"; session: string; request: PortalRequest }

@@ -120,6 +120,7 @@ class Hub:
         self.progress = {}
         # Whether a gateway is there to run turns. The standalone server's link keeps this.
         self.connected = True
+        self.hermes_build = None
         # Whether a finished turn gets Nako's sign-off line (Settings; the server keeps it).
         self.sign_off_on = True
         # Callables that see every frame this hub sends its app, chat events included; a machine
