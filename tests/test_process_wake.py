@@ -35,7 +35,7 @@ async def gateway(tmp_path, monkeypatch):
     from gateway.run import GatewayRunner
     from gateway.session_authority import SessionAuthority, initialize_session_authority
     from gateway.session_ingress_context import register_transport_home
-    from hermes_state import SessionDB
+    import inspect
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr(SessionAuthority, "_schedule", lambda self, ref: None)
@@ -45,10 +45,19 @@ async def gateway(tmp_path, monkeypatch):
     entry = {k: v for k, v in ctx.entry.items() if k in PlatformEntry.__dataclass_fields__}
     platform_registry.register(PlatformEntry(source="plugin", **entry))
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / "sessions"))
-    db = SessionDB(tmp_path / "state.db")
-    runner.session_store._db = db
-    runner._session_db = db
-    authority = await initialize_session_authority(runner, profile_id="default", instance_id="wake-test", db=db)
+    if "persistence" in inspect.signature(initialize_session_authority).parameters:
+        from persistence_assembly import open_persistence, profile_scope
+
+        store = open_persistence(profile_scope(home=tmp_path))
+        runner.session_store._db = store
+        authority = await initialize_session_authority(runner, profile_id="default", instance_id="wake-test", persistence=store)
+    else:
+        from hermes_state import SessionDB
+
+        db = SessionDB(tmp_path / "state.db")
+        runner.session_store._db = db
+        runner._session_db = db
+        authority = await initialize_session_authority(runner, profile_id="default", instance_id="wake-test", db=db)
     adapter = ctx.entry["adapter_factory"](PlatformConfig(enabled=True))
     runner.adapters = {Platform("portal"): adapter}
     runner._wire_adapter_handlers(adapter)
@@ -90,7 +99,7 @@ async def test_a_finished_background_process_wakes_a_thread_opened_before_its_fi
         await say(runner, authority, adapter, "thread1", "watch ci for me")
         assert (await wake(runner, authority, adapter, plugin, "thread1")).admission_id
     finally:
-        authority.db.close()
+        (getattr(authority, "persistence", None) or authority.db).close()
 
 
 @pytest.mark.asyncio
@@ -109,7 +118,7 @@ async def test_a_thread_stored_by_an_older_release_is_woken_after_the_portal_con
         runner.session_store._loaded = False
         assert (await wake(runner, authority, adapter, plugin, "old", "proc_2")).admission_id
     finally:
-        authority.db.close()
+        (getattr(authority, "persistence", None) or authority.db).close()
 
 
 class Heard:
@@ -136,7 +145,23 @@ async def test_a_turn_hermes_runs_from_its_queue_shows_working_then_done(tmp_pat
     from types import SimpleNamespace
 
     plugin, runner, authority, adapter = await gateway(tmp_path, monkeypatch)
-    from hermes_state_runtime import claim_session_input, settle_session_input
+    store = getattr(authority, "persistence", None)
+    if store is None:
+        from hermes_state_runtime import claim_session_input, settle_session_input
+
+    def claim(session):
+        if store is not None:
+            turn = store.admissions.claim(epoch=authority.epoch, session_id=session)
+            return turn.admission_id, turn.generation
+        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=session)
+        return turn["admission_id"], turn["generation"]
+
+    def settle(turn, outcome):
+        args = dict(epoch=authority.epoch, admission_id=turn[0], generation=turn[1], outcome=outcome)
+        if store is not None:
+            store.admissions.settle(**args)
+        else:
+            settle_session_input(authority.db, **args)
 
     monkeypatch.setattr(plugin, "TURN_SWEEP", 0.05)
     adapter.backend = plugin.HermesBackend(adapter, tmp_path)
@@ -147,31 +172,31 @@ async def test_a_turn_hermes_runs_from_its_queue_shows_working_then_done(tmp_pat
         # with no processing hook: the portal still hears the turn start and, once it ends, finish.
         queued = plugin._ensure_chat(runner.session_store, "queued", "queued")
         await say(runner, authority, adapter, "queued", "please continue")
-        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=queued)
+        turn = claim(queued)
         await heard.until("turn_started", "queued")
-        settle_session_input(authority.db, epoch=authority.epoch, admission_id=turn["admission_id"], generation=turn["generation"], outcome="completed")
+        settle(turn, "completed")
         await heard.until("turn_finished", "queued", "success")
 
         # A failed one finishes as a failure.
         heard.calls.clear()
         await say(runner, authority, adapter, "queued", "and the next one")
-        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=queued)
+        turn = claim(queued)
         await heard.until("turn_started", "queued")
-        settle_session_input(authority.db, epoch=authority.epoch, admission_id=turn["admission_id"], generation=turn["generation"], outcome="failed")
+        settle(turn, "failed")
         await heard.until("turn_finished", "queued", "failure")
 
         # A typed turn the hooks report is told once, also while its record outlives the hook.
         typed = plugin._ensure_chat(runner.session_store, "typed", "typed")
         await say(runner, authority, adapter, "typed", "hi")
-        turn = claim_session_input(authority.db, epoch=authority.epoch, session_id=typed)
+        turn = claim(typed)
         event = SimpleNamespace(source=plugin._source("typed"))
         await adapter.on_processing_start(event)
         await asyncio.sleep(0.3)
         await adapter.on_processing_complete(event, SimpleNamespace(value="success"))
         await asyncio.sleep(0.3)
-        settle_session_input(authority.db, epoch=authority.epoch, admission_id=turn["admission_id"], generation=turn["generation"], outcome="completed")
+        settle(turn, "completed")
         await asyncio.sleep(0.3)
         assert [c for c in heard.calls if c[1] == "typed"] == [("turn_started", "typed"), ("turn_finished", "typed", "success")]
     finally:
         sweep.cancel()
-        authority.db.close()
+        (getattr(authority, "persistence", None) or authority.db).close()

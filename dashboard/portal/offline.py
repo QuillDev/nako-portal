@@ -133,19 +133,42 @@ def raw_thread(home, session):
     return {"title": (title[0][0] or "") if title else "", "messages": with_results(messages, history)}
 
 
+def messages_from_store(home, session, store):
+    from persistence.conversation.messages import ConversationRequest, TranscriptView
+    from tui_gateway.server import _history_to_messages
+
+    request = ConversationRequest(view=TranscriptView.DISPLAY, include_lineage=True, include_row_ids=True)
+    history = [row.as_openai_message() for row in store.messages.read_conversation(session, request)]
+    messages = _history_to_messages(history, profile_home=Path(home))
+    return with_results(messages, history)
+
+
 def hermes_thread(home, session):
     """The transcript in Hermes's own display projection, as the gateway would read it."""
     os.environ["HERMES_HOME"] = str(home)
-    from hermes_state import SessionDB
     from tui_gateway.server import _history_to_messages
 
-    db = SessionDB(Path(home) / "state.db", read_only=True)
     try:
-        history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
-    except TypeError:  # a Hermes from before display reads
-        history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
+        from persistence_assembly import open_persistence_reader
+    except ImportError:  # Hermes before the storage interface
+        from hermes_state import SessionDB
+
+        db = SessionDB(Path(home) / "state.db", read_only=True)
+        try:
+            try:
+                history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
+            except TypeError:  # a Hermes from before display reads
+                history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
+            title = db.get_session_title(session)
+        finally:
+            db.close()
+    else:
+        with open_persistence_reader(Path(home)) as store:
+            record = store.sessions.get(session)
+            return {"title": (record.title or "") if record is not None else "",
+                    "messages": messages_from_store(home, session, store)}
     messages = _history_to_messages(history, profile_home=Path(home))
-    return {"title": db.get_session_title(session) or "", "messages": with_results(messages, history)}
+    return {"title": title or "", "messages": with_results(messages, history)}
 
 
 class Offline:

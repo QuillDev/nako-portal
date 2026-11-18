@@ -153,6 +153,17 @@ def _ensure_chat(session_store, chat=HOME_CHANNEL, title=CHAT_TITLE, profile=Non
     source = _source(chat, profile)
     entry = session_store.get_or_create_session(source, touch_activity=False)
     # The thread's own profile store, whichever profile the caller is scoped to.
+    owner = getattr(session_store, "_persistence_for_key", None)
+    if owner is not None:
+        store = owner(entry.session_key)
+        if store is not None:
+            record = store.sessions.get(entry.session_id)
+            if record is not None:
+                if title and not record.title:
+                    store.sessions.set_title(entry.session_id, title)
+                if chat in CHANNELS and record.archived:
+                    store.sessions.set_archived(entry.session_id, False)
+        return entry.session_id
     owner = getattr(session_store, "_db_for_key", None)
     db = owner(entry.session_key) if owner else getattr(session_store, "_db", None)
     if title and db is not None and not db.get_session_title(entry.session_id):
@@ -402,6 +413,32 @@ class HermesBackend:
     def db(self):
         return self.store._db
 
+    def _persistence(self):
+        resolve = getattr(self.store, "_scoped_persistence", None)
+        if resolve is None:
+            return None
+        store = resolve()
+        if store is None:
+            raise RuntimeError("Hermes session storage is temporarily unavailable")
+        return store
+
+    def _list_sessions(self, *, source=None, exclude_sources=(), limit, offset=0,
+                       min_message_count=0, archived_only=False, include_archived=False, include_pinned=False):
+        store = self._persistence()
+        if store is None:
+            return self.db.list_sessions_rich(
+                source=source, exclude_sources=list(exclude_sources), limit=limit, offset=offset,
+                min_message_count=min_message_count, archived_only=archived_only, include_archived=include_archived,
+                include_pinned=include_pinned, order_by_last_active=True, compact_rows=True)
+        from persistence.conversation.sessions import SessionOrder, SessionQuery, SessionWindow
+
+        query = SessionQuery(sources=(source,) if source else None, exclude_sources=tuple(exclude_sources),
+                             min_message_count=min_message_count, archived_only=archived_only,
+                             include_archived=include_archived, include_pinned=include_pinned,
+                             order=SessionOrder.LAST_ACTIVE)
+        return [row.as_list_row() for row in store.sessions.list_sessions(
+            query, SessionWindow(limit=limit, offset=offset), compact_rows=True)]
+
     # Profiles
 
     def homes(self):
@@ -475,7 +512,7 @@ class HermesBackend:
             )
         }
         rows = self._scoped(
-            lambda: self.db.list_sessions_rich(source="portal", limit=300, order_by_last_active=True, compact_rows=True, include_pinned=True)
+            lambda: self._list_sessions(source="portal", limit=300, include_pinned=True)
         )
         out = []
         for row in rows:
@@ -493,7 +530,7 @@ class HermesBackend:
             )
         }
         rows = self._scoped(
-            lambda: self.db.list_sessions_rich(source="portal", limit=300, order_by_last_active=True, compact_rows=True, archived_only=True)
+            lambda: self._list_sessions(source="portal", limit=300, archived_only=True)
         )
         return [row for row in rows if row["id"] in open_]
 
@@ -501,14 +538,12 @@ class HermesBackend:
         """Sessions that came in some other way than the portal (Slack, Discord, cron, the CLI...),
         latest activity first, a page at a time. `source` keeps one way in."""
         rows = self._scoped(
-            lambda: self.db.list_sessions_rich(
+            lambda: self._list_sessions(
                 source=source or None,
                 exclude_sources=list(NOT_OUTSIDE),
                 min_message_count=1,
                 # Archived in another client is still something that happened.
                 include_archived=True,
-                order_by_last_active=True,
-                compact_rows=True,
                 limit=OUTSIDE_PAGE,
                 offset=max(0, int(offset or 0)),
             )
@@ -562,32 +597,42 @@ class HermesBackend:
         home = self._home()
 
         def read():
-            db = self.db
+            store = self._persistence()
+            db = self.db if store is None else None
             # Reading and projecting a long transcript takes the better part of a second, and every
             # open, refresh and older page reads it again. Hermes's revision moves on any append,
             # undo, compaction or in-place rewrite, so the last projection stands while it holds.
-            revision = db.conversation_revision(session, include_ancestors=True) if hasattr(db, "conversation_revision") else None
+            if store is not None:
+                revision = store.messages.conversation_revision(session, include_lineage=True)
+            else:
+                revision = db.conversation_revision(session, include_ancestors=True) if hasattr(db, "conversation_revision") else None
             key = (str(home), session)
             with self.threads_lock:
                 cached = self.threads.get(key)
             if revision is not None and cached is not None and cached[0] == revision:
                 messages = cached[1]
             else:
-                # The display read, as Hermes's own clients do it: after a compaction the turns it
-                # summarised are still the person's conversation, not just the summary and the tail.
-                try:
-                    history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
-                except TypeError:  # a Hermes from before display reads
-                    history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
-                # Tool rows keep the start of their result, for agents following the chat (the app drops it).
-                messages = _portal("offline").with_results(_history_to_messages(history, profile_home=home), history)
+                if store is not None:
+                    messages = _portal("offline").messages_from_store(home, session, store)
+                else:
+                    # Display reads include the turns that compaction summarized.
+                    try:
+                        history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
+                    except TypeError:  # a Hermes from before display reads
+                        history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
+                    messages = _portal("offline").with_results(_history_to_messages(history, profile_home=home), history)
                 if revision is not None:
                     with self.threads_lock:
                         self.threads.pop(key, None)
                         self.threads[key] = (revision, messages)
                         while len(self.threads) > CACHED_THREADS:
                             self.threads.pop(next(iter(self.threads)))
-            return {"title": db.get_session_title(session) or "", "messages": list(messages), "source": source}
+            if store is not None:
+                record = store.sessions.get(session)
+                title = record.title if record is not None else None
+            else:
+                title = db.get_session_title(session)
+            return {"title": title or "", "messages": list(messages), "source": source}
 
         return self._scoped(read)
 
@@ -1185,18 +1230,27 @@ class HermesBackend:
             log.warning("portal: could not apply MCP changes live; the gateway picks them up on its next pass", exc_info=True)
         _hub_tell("mcp_changed")
 
+    def _set_session_value(self, name, session, value):
+        def write():
+            store = self._persistence()
+            if store is not None:
+                getattr(store.sessions, f"set_{name}")(session, value)
+            else:
+                getattr(self.db, f"set_session_{name}")(session, value)
+        self._scoped(write)
+
     def set_title(self, session, title):
-        self._scoped(lambda: self.db.set_session_title(session, title))
+        self._set_session_value("title", session, title)
 
     def set_archived(self, session, archived):
-        self._scoped(lambda: self.db.set_session_archived(session, archived))
+        self._set_session_value("archived", session, archived)
 
     def is_archived(self, session):
         rows = self._read("SELECT COALESCE(archived, 0) FROM sessions WHERE id=? AND source='portal'", (session,))
         return bool(rows and rows[0][0])
 
     def set_pinned(self, session, pinned):
-        self._scoped(lambda: self.db.set_session_pinned(session, pinned))
+        self._set_session_value("pinned", session, pinned)
 
     def sign_off(self, reply):
         """A few proud words about what the turn did, from a small fast model. The model is
