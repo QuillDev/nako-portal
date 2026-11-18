@@ -26,10 +26,10 @@ function zoomAt(view: View, factor: number, at: Point): View {
 }
 
 const corner =
-  "absolute top-3 grid size-9 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/60"
+  "absolute top-3 grid size-9 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80"
 
 const arrow =
-  "absolute top-1/2 hidden size-10 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80 focus-visible:ring-2 focus-visible:ring-white/60 md:grid"
+  "absolute top-1/2 hidden size-10 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white/90 outline-none hover:bg-black/80 md:grid"
 
 export function ImageViewer({
   src,

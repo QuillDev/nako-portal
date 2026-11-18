@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils"
 const PANEL =
   "gap-3 rounded-[22px] bg-card p-4 sm:max-w-[440px] max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(1.75rem,env(safe-area-inset-bottom))] max-sm:data-[state=open]:zoom-in-100 max-sm:data-[state=closed]:zoom-out-100 max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:slide-out-to-bottom"
 
-const FIELD = "h-10 w-full min-w-0 rounded-full border border-input bg-background px-3.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring"
+const FIELD = "h-10 w-full min-w-0 rounded-full border border-input bg-background px-3.5 text-sm outline-none placeholder:text-muted-foreground"
 
 const words = (text: string) => text.toLowerCase().replace(/[_\-./]+/g, " ").trim()
 
@@ -259,7 +259,7 @@ function Tabs<T extends string>({ value, options, onChange, label }: { value: T;
       {options.map(([id, text]) => (
         <button
           aria-selected={value === id}
-          className="flex-1 rounded-full py-1.5 font-medium text-[13px] text-muted-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-selected:bg-card aria-selected:text-foreground"
+          className="flex-1 rounded-full py-1.5 font-medium text-[13px] text-muted-foreground outline-none aria-selected:bg-card aria-selected:text-foreground"
           key={id}
           onClick={() => onChange(id)}
           role="tab"
@@ -275,7 +275,7 @@ function Tabs<T extends string>({ value, options, onChange, label }: { value: T;
 function KeyInput({ label, secret, value, onChange, saved }: { label: string; secret: boolean; value: string; onChange: (v: string) => void; saved?: boolean }) {
   const [shown, setShown] = useState(!secret)
   return (
-    <label className="flex h-10 items-center gap-1 rounded-full border border-input bg-background pr-1 pl-3.5 has-[input:focus-visible]:border-ring">
+    <label className="flex h-10 items-center gap-1 rounded-full border border-input bg-background pr-1 pl-3.5">
       <input
         aria-label={label}
         autoCapitalize="off"
@@ -364,7 +364,7 @@ function CatalogList({ onPick, onError }: { onPick: (entry: McpCatalogEntry) => 
   const shown = (entries ?? []).filter(e => !typed || words(`${e.name} ${e.description}`).includes(typed))
   return (
     <>
-      <label className="flex h-10 items-center gap-2 rounded-full border border-input bg-background px-3.5 has-[input:focus-visible]:border-ring">
+      <label className="flex h-10 items-center gap-2 rounded-full border border-input bg-background px-3.5">
         <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
         <input aria-label="Search catalog" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" onChange={e => setQuery(e.target.value)} placeholder="Search catalog" spellCheck={false} value={query} />
       </label>
@@ -441,7 +441,7 @@ function CustomForm({ onAdded, onError }: { onAdded: (name: string) => void; onE
           <textarea
             aria-label="Environment"
             autoCapitalize="off"
-            className="min-h-16 w-full resize-y rounded-[18px] border border-input bg-background px-3.5 py-2 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted-foreground focus-visible:border-ring"
+            className="min-h-16 w-full resize-y rounded-[18px] border border-input bg-background px-3.5 py-2 font-mono text-sm outline-none placeholder:font-sans placeholder:text-muted-foreground"
             onChange={e => setEnv(e.target.value)}
             placeholder="KEY=value, one per line"
             spellCheck={false}
@@ -496,7 +496,7 @@ export function McpSettings({ onError }: { onError: (m: string) => void }) {
   return (
     <>
       <div className="flex items-center gap-2 pb-1">
-        <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5 has-[input:focus-visible]:border-ring">
+        <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5">
           <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
           <input aria-label="Search servers" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" enterKeyHint="search" onChange={e => setQuery(e.target.value)} placeholder="Search servers" spellCheck={false} value={query} />
         </label>
@@ -507,7 +507,7 @@ export function McpSettings({ onError }: { onError: (m: string) => void }) {
       <div className="flex flex-col">
         {shown.map(s => (
           <div className="-mx-2 flex items-center gap-3 rounded-md px-2 hover:bg-accent" data-mcp-row={s.name} key={s.name}>
-            <button className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50" onClick={() => setOpen({ kind: "server", name: s.name })} type="button">
+            <button className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none" onClick={() => setOpen({ kind: "server", name: s.name })} type="button">
               <span className={cn("flex min-w-0 flex-1 flex-col", !s.enabled && !s.installing && s.status !== "failed" && "opacity-55")}>
                 <span className="truncate font-medium font-mono text-[13px] leading-5">{s.name}</span>
                 <Subline server={s} />

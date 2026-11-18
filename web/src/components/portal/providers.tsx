@@ -572,7 +572,7 @@ function AddPanel({ rows, onPick }: { rows: Provider[]; onPick: (provider: Provi
         <DialogTitle className="min-w-0 flex-1 font-medium text-sm leading-8">Add a provider</DialogTitle>
         <CloseButton />
       </DialogHeader>
-      <label className="flex h-10 items-center gap-2 rounded-full border border-input bg-background px-3.5 has-[input:focus-visible]:border-ring">
+      <label className="flex h-10 items-center gap-2 rounded-full border border-input bg-background px-3.5">
         <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
         <input
           aria-label="Search providers"

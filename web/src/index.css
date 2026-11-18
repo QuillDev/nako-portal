@@ -25,7 +25,7 @@
   --destructive: #f87171;
   --border: rgb(255 255 255 / 7%);
   --input: rgb(255 255 255 / 10%);
-  --ring: #f472b6;
+  --focus-fill: rgb(255 255 255 / 17%);
   --sidebar: #09090b;
 }
 
@@ -47,7 +47,7 @@
   --destructive: #dc2626;
   --border: rgb(0 0 0 / 8%);
   --input: rgb(0 0 0 / 12%);
-  --ring: #db2777;
+  --focus-fill: rgb(0 0 0 / 13%);
   --sidebar: #fbfbfc;
 }
 
@@ -75,13 +75,12 @@
   --color-destructive: var(--destructive);
   --color-border: var(--border);
   --color-input: var(--input);
-  --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   html,
   body,
@@ -96,6 +95,18 @@
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--input) transparent;
+  }
+}
+
+/* Mark keyboard focus without drawing a ring or changing the control's border. */
+:where(button, a[href], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: none;
+  background-image: linear-gradient(var(--focus-fill), var(--focus-fill));
+}
+
+@media (forced-colors: active) {
+  :where(button, a[href], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: 2px solid Highlight;
   }
 }
 

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { api, ApiError } from "@/lib/api"
+import { presetDetails, presetMatches, useModelPresets } from "@/lib/model-presets"
 import { favoriteId, type ModelFavorite, readModelFavorites, toggleModelFavorite } from "@/lib/model-favorites"
 
 export const modelChoice = z.object({
@@ -43,8 +44,8 @@ function Option({ label, value, values, onPick, chip = false }: {
 }) {
   const Icon = optionIcon(label, value)
   const trigger = <SelectTrigger aria-label={label} title={label} className={chip
-    ? "h-8 w-auto gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:hidden"
-    : "h-9 w-full gap-2 rounded-lg border-0 bg-transparent px-2 text-xs shadow-none hover:bg-accent focus-visible:ring-0 dark:bg-transparent dark:hover:bg-accent"}>
+    ? "h-8 w-auto gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:hidden"
+    : "h-9 w-full gap-2 rounded-lg border-0 bg-transparent px-2 text-xs shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent"}>
     <Icon className="size-3.5 shrink-0 text-muted-foreground" />
     <span className={chip ? "" : "flex-1 text-left"}><SelectValue /></span>
   </SelectTrigger>
@@ -60,8 +61,12 @@ function Option({ label, value, values, onPick, chip = false }: {
     </Select></div>
 }
 
-export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false, canSavePreset = true, chips = false }: {
-  value: ModelChoice; onPick: (pick: Pick) => Promise<unknown>; label?: string; disabled?: boolean; session?: boolean; canSavePreset?: boolean;
+export function PresetIcon({ icon }: { icon?: string }) {
+  return <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center overflow-hidden text-sm leading-none">{icon}</span>
+}
+
+export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false, canSavePreset = true, chips = false, named = session }: {
+  value: ModelChoice; onPick: (pick: Pick) => Promise<unknown>; label?: string; disabled?: boolean; session?: boolean; canSavePreset?: boolean; named?: boolean;
   // Effort and speed as their own buttons beside the model; the composer hides the ones that don't fit.
   chips?: boolean;
 }) {
@@ -72,6 +77,9 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const [favorites, setFavorites] = useState(readModelFavorites)
   const search = useRef<HTMLInputElement>(null)
   const catalog = new Map(value.providers.map(provider => [provider.provider, provider]))
+  const presets = useModelPresets()
+  const presetsOnly = named && presets.length > 0
+  const activePreset = presetsOnly ? presets.find(item => presetMatches(item, value)) : undefined
   const supportsTuning = value.efforts !== undefined || value.speeds !== undefined
   const preset = {
     provider: value.provider, model: value.model,
@@ -134,13 +142,29 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   }
   return <><Popover.Root open={open} onOpenChange={show}>
     <Popover.Trigger asChild><Button aria-label={label} disabled={disabled} className="max-w-48 justify-between gap-2 font-normal" size="sm" variant={session ? "ghost" : "outline"}>
-      <span className="truncate">{value.model || "automatic"}</span><ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+      {presetsOnly && <PresetIcon icon={activePreset?.icon} />}
+      <span className="truncate">{activePreset?.name || value.model || "automatic"}</span><ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
     </Button></Popover.Trigger>
     <Popover.Portal><Popover.Content align={session ? "start" : "end"} side={session ? "top" : "bottom"} collisionPadding={8} sideOffset={8} onCloseAutoFocus={e => e.preventDefault()}
       className="z-50 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg" aria-label={label}>
       <div className="flex items-center justify-between px-3 pt-3 text-xs text-muted-foreground"><span>{label}</span>
         {session && <button disabled={saving || !value.overridden} className="disabled:opacity-40 hover:text-foreground" onClick={() => void save({ reset: true })}>use default</button>}
       </div>
+      {presetsOnly ? <>
+        <div className="max-h-[min(46vh,20rem)] overflow-auto p-1">
+          {presets.map(item => {
+            const available = catalog.get(item.pick.provider)?.models.includes(item.pick.model)
+            return <Button key={item.id} type="button" variant="ghost" disabled={saving || !available}
+              className="flex h-auto min-h-11 w-full justify-start gap-2 px-2 text-left font-normal has-[>svg]:px-2" onClick={() => void save(item.pick)}>
+              <PresetIcon icon={item.icon} />
+              <span className="min-w-0 flex-1"><span className="block truncate">{item.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{available ? presetDetails(item) : "Model unavailable"}</span></span>
+              {activePreset?.id === item.id && <CheckIcon />}
+            </Button>
+          })}
+        </div>
+        {session && <a className="block border-t px-3 py-2 text-xs text-muted-foreground hover:text-foreground" href="#/settings/nako" onClick={() => setOpen(false)}>Manage presets</a>}
+      </> : <>
       <Command shouldFilter={false} className="bg-transparent">
         <CommandInput ref={search} onValueChange={setQuery} placeholder="Search models" value={query} />
         <CommandList className="max-h-[min(46vh,20rem)]">
@@ -163,6 +187,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
             className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent aria-pressed:text-primary max-sm:min-h-11"
             onClick={() => toggle(preset)}><StarIcon className="size-3.5" fill={starred.has(favoriteId(preset)) ? "currentColor" : "none"} /> {starred.has(favoriteId(preset)) ? "Preset saved" : "Save preset"}</button>}
       </fieldset>}
+      </>}
       {error && <p role="alert" className="px-3 pb-3 text-xs text-destructive">{error}</p>}
     </Popover.Content></Popover.Portal>
   </Popover.Root>
