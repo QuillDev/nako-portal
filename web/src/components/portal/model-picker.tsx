@@ -3,8 +3,8 @@ import { Popover } from "radix-ui"
 import { useEffect, useRef, useState } from "react"
 import { z } from "zod"
 import { Button } from "@/components/ui/button"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
+import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { api, ApiError } from "@/lib/api"
 import { presetDetails, presetMatches, useModelPresets } from "@/lib/model-presets"
 import { favoriteId, type ModelFavorite, readModelFavorites, toggleModelFavorite } from "@/lib/model-favorites"
@@ -43,26 +43,17 @@ function Option({ label, value, values, onPick, chip = false }: {
   label: string; value: string; values: string[]; onPick: (value: string) => void; chip?: boolean;
 }) {
   const Icon = optionIcon(label, value)
-  const trigger = <SelectTrigger aria-label={label} title={label} className={chip
-    ? "h-8 w-auto gap-1.5 rounded-md border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground dark:bg-transparent dark:hover:bg-accent [&>svg:last-child]:hidden"
-    : "h-9 w-full gap-2 rounded-lg border-0 bg-transparent px-2 text-xs shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent"}>
-    <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-    <span className={chip ? "" : "flex-1 text-left"}><SelectValue /></span>
-  </SelectTrigger>
   return <div className={chip ? "shrink-0 data-[fit=out]:invisible data-[fit=out]:absolute data-[fit=out]:top-0 data-[fit=out]:left-0" : "min-w-0 flex-1"} data-tune={chip ? "" : undefined}>
-    <Select value={value || "inherit"} onValueChange={v => onPick(v === "inherit" ? "" : v)}>
-      {trigger}
-      {/* A chip's list opens above it, like the model picker, instead of over the composer. */}
-      <SelectContent onCloseAutoFocus={e => e.preventDefault()} {...chip && { position: "popper", side: "top", align: "start", sideOffset: 4 } as const}>
-        <div className="px-2 py-1.5 text-xs text-muted-foreground">{label}</div>
-        <SelectItem value="inherit">default</SelectItem>
-        {values.map(v => <SelectItem key={v} value={v}>{v}</SelectItem>)}
-      </SelectContent>
-    </Select></div>
+    <SearchableDropdown label={label} value={value || "inherit"} compact={chip} side={chip ? "top" : "bottom"}
+      className={chip ? "gap-1.5 px-2 text-xs text-muted-foreground" : "w-full text-xs"}
+      icon={<Icon className="size-3.5 shrink-0 text-muted-foreground" />}
+      options={[{ value: "inherit", label: "default" }, ...values.map(value => ({ value, label: value }))]}
+      onPick={v => onPick(v === "inherit" ? "" : v)} />
+  </div>
 }
 
 export function PresetIcon({ icon }: { icon?: string }) {
-  return <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center overflow-hidden text-sm leading-none">{icon}</span>
+  return icon ? <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center overflow-hidden text-sm leading-none">{icon}</span> : null
 }
 
 export function ModelPicker({ value, onPick, label = "Model", disabled = false, session = false, canSavePreset = true, chips = false, named = session }: {
@@ -145,29 +136,32 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
       {presetsOnly && <PresetIcon icon={activePreset?.icon} />}
       <span className="truncate">{activePreset?.name || value.model || "automatic"}</span><ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
     </Button></Popover.Trigger>
-    <Popover.Portal><Popover.Content align={session ? "start" : "end"} side={session ? "top" : "bottom"} collisionPadding={8} sideOffset={8} onCloseAutoFocus={e => e.preventDefault()}
-      className="z-50 w-80 max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg" aria-label={label}>
+    <DropdownContent align={session ? "start" : "end"} side={session ? "top" : "bottom"} className="w-80" aria-label={label}>
       <div className="flex items-center justify-between px-3 pt-3 text-xs text-muted-foreground"><span>{label}</span>
         {session && <button disabled={saving || !value.overridden} className="disabled:opacity-40 hover:text-foreground" onClick={() => void save({ reset: true })}>use default</button>}
       </div>
       {presetsOnly ? <>
-        <div className="max-h-[min(46vh,20rem)] overflow-auto p-1">
-          {presets.map(item => {
-            const available = catalog.get(item.pick.provider)?.models.includes(item.pick.model)
-            return <Button key={item.id} type="button" variant="ghost" disabled={saving || !available}
-              className="flex h-auto min-h-11 w-full justify-start gap-2 px-2 text-left font-normal has-[>svg]:px-2" onClick={() => void save(item.pick)}>
-              <PresetIcon icon={item.icon} />
-              <span className="min-w-0 flex-1"><span className="block truncate">{item.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">{available ? presetDetails(item) : "Model unavailable"}</span></span>
-              {activePreset?.id === item.id && <CheckIcon />}
-            </Button>
-          })}
-        </div>
+        <Command label="Model presets" loop>
+          <CommandInput aria-label="Search presets" placeholder="Search presets…" />
+          <DropdownList className="p-1">
+            <CommandEmpty>No preset matches.</CommandEmpty>
+            {presets.map(item => {
+              const available = catalog.get(item.pick.provider)?.models.includes(item.pick.model)
+              return <CommandItem key={item.id} value={`${item.name} ${item.id}`} keywords={[presetDetails(item)]}
+                disabled={saving || !available} className="min-h-11" onSelect={() => void save(item.pick)}>
+                <PresetIcon icon={item.icon} />
+                <span className="min-w-0 flex-1"><span className="block truncate">{item.name}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{available ? presetDetails(item) : "Model unavailable"}</span></span>
+                {activePreset?.id === item.id && <CheckIcon />}
+              </CommandItem>
+            })}
+          </DropdownList>
+        </Command>
         {session && <a className="block border-t px-3 py-2 text-xs text-muted-foreground hover:text-foreground" href="#/settings/nako" onClick={() => setOpen(false)}>Manage presets</a>}
       </> : <>
       <Command shouldFilter={false} className="bg-transparent">
-        <CommandInput ref={search} onValueChange={setQuery} placeholder="Search models" value={query} />
-        <CommandList className="max-h-[min(46vh,20rem)]">
+        <CommandInput aria-label="Search models" ref={search} onValueChange={setQuery} placeholder="Search models" value={query} />
+        <DropdownList>
           <CommandEmpty>No model matches.</CommandEmpty>
           {shownFavorites.length > 0 && <CommandGroup heading="Favorites" className="mb-1 border-b pb-2">
             {shownFavorites.map(pick => renderRow(pick, [catalog.get(pick.provider)?.label, details(pick)].filter(Boolean).join(" · ")))}
@@ -177,7 +171,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
               .filter(pick => !starred.has(favoriteId(pick)) && matches(pick.model, p.label))
             return shown.length ? <CommandGroup heading={p.label} key={p.provider}>{shown.map(pick => renderRow(pick))}</CommandGroup> : null
           })}
-        </CommandList>
+        </DropdownList>
       </Command>
       {supportsTuning && <fieldset disabled={saving} className="flex items-center gap-1 border-t p-1.5">
         {value.efforts && <Option label="effort" value={value.effort || ""} values={value.efforts} onPick={effort => void save({ effort })} />}
@@ -189,9 +183,9 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
       </fieldset>}
       </>}
       {error && <p role="alert" className="px-3 pb-3 text-xs text-destructive">{error}</p>}
-    </Popover.Content></Popover.Portal>
+    </DropdownContent>
   </Popover.Root>
-  {chips && <fieldset disabled={disabled || saving} className="contents">
+  {chips && !activePreset && <fieldset disabled={disabled || saving} className="contents">
     {value.efforts && <Option chip label="effort" value={value.effort || ""} values={value.efforts} onPick={effort => void save({ effort })} />}
     {speeds && <Option chip label="speed" value={value.speed || ""} values={speeds} onPick={speed => void save({ speed })} />}
   </fieldset>}
