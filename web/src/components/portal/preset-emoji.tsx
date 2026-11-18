@@ -62,7 +62,8 @@ function EmojiGrid({ onPick }: { onPick: (icon: string) => void }) {
       // The picker lives in a shadow root, outside the portal's focus styles.
       const focus = document.createElement("style")
       focus.textContent = `@media (forced-colors: none) {
-        :host :focus-visible { outline: none; background-image: linear-gradient(var(--focus-fill), var(--focus-fill)); }
+        :host :focus-visible { outline: none; }
+        :host :focus-visible:not(input) { background-image: linear-gradient(var(--focus-fill), var(--focus-fill)); }
       }`
       picker.shadowRoot?.append(focus)
       setStatus("ready")
