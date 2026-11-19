@@ -268,6 +268,8 @@ def _settings():
         "desktop_release_dir": entry.get("desktop_release_dir") or None,
         # Optional: a command printing JSON about what runs on this machine (environments.py).
         "environments_command": entry.get("environments_command") or None,
+        # Optional: run with an environment's name to stop it; the page then offers a Stop button.
+        "environments_stop_command": entry.get("environments_stop_command") or None,
         "mesh": mesh,
     }
     contact = str(entry.get("contact") or "mailto:owner@localhost")

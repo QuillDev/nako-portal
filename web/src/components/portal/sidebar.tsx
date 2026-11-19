@@ -36,6 +36,7 @@ import {
 import { type ChatGroup, GROUP_COLORS, type GroupColor, type HermesBuild, type SessionRow, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useDrawer } from "./drawer";
+import { LoadWarning } from "./load-warning";
 import { GROUP_HEX, GroupSwatch, useGroupPicker, useGroupRename } from "./groups";
 import {
   type ChatActions,
@@ -583,7 +584,8 @@ export function Sidebar({
             </span>
           )}
         </div>
-        <div className="flex items-center">
+        <div className="flex items-center gap-1">
+          {portal.connected && <LoadWarning go={go} me={portal.me} />}
           <Button
             aria-label="Settings"
             onClick={() => go("#/settings")}

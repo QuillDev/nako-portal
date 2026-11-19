@@ -8,8 +8,13 @@ The owner points `environments_command` at any program that prints JSON like
      "links": [{"label": "sign in", "url": "https://..."}]}
 
 `status` is running, partial or stopped; `title`, `detail`, both `links` lists and `session` (the
-Hermes chat an environment belongs to; the chat's header then offers its links) are optional.
+Hermes chat an environment belongs to; the chat's header then offers its links) are optional, and
+so is `memory`, the bytes it holds (the page shows it, and the high-load warning lists the biggest).
+The page keeps the command's order for what's running, so the command decides what comes first.
 Unset, the portal shows no Environments page at all.
+
+With `environments_stop_command` set too, each running environment gets a Stop button that runs
+that command with the environment's name as its last argument.
 """
 
 import asyncio
@@ -70,6 +75,9 @@ def parse(raw):
             "status": status if status in STATUSES else "stopped",
             "links": _links(item.get("links")),
         }
+        memory = item.get("memory")
+        if isinstance(memory, int) and not isinstance(memory, bool) and memory >= 0:
+            entry["memory"] = memory
         if _text(item.get("detail"), 200):
             entry["detail"] = _text(item["detail"], 200)
         # The chat it belongs to, when the command knows (a Hermes session id).
@@ -80,15 +88,21 @@ def parse(raw):
     return {"title": _text(data.get("title"), 40) or "Environments", "environments": items, "links": _links(data.get("links"))}
 
 
+def _args(command, setting):
+    args = shlex.split(command) if isinstance(command, str) else [str(part) for part in command]
+    if not args:
+        raise ValueError(f"{setting} is empty")
+    args[0] = os.path.expanduser(args[0])
+    return args
+
+
 class Environments:
     """Runs the command on demand, sharing one run between callers and reusing it for `ttl` seconds."""
 
-    def __init__(self, command, *, ttl=5.0, timeout=20.0, clock=time.monotonic):
-        args = shlex.split(command) if isinstance(command, str) else [str(part) for part in command]
-        if not args:
-            raise ValueError("environments_command is empty")
-        args[0] = os.path.expanduser(args[0])
-        self.args = args
+    def __init__(self, command, *, stop_command=None, ttl=5.0, timeout=20.0, stop_timeout=60.0, clock=time.monotonic):
+        self.args = _args(command, "environments_command")
+        self.stop_args = _args(stop_command, "environments_stop_command") if stop_command else None
+        self.stop_timeout = stop_timeout
         self.ttl = ttl
         self.timeout = timeout
         self.clock = clock
@@ -108,22 +122,39 @@ class Environments:
                 self.running = None
         return result
 
+    async def stop(self, name):
+        """Run the stop command for one environment the list shows as running or partial."""
+        if self.stop_args is None:
+            raise EnvironmentsError("no stop command is set")
+        listed = await self.read()
+        if not any(env["name"] == name and env["status"] != "stopped" for env in listed["environments"]):
+            raise LookupError(name)
+        await _exec([*self.stop_args, name], self.stop_timeout)
+        # The next read shows it stopped.
+        self.cached = None
+
     async def _run(self):
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *self.args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-        except OSError as error:
-            raise EnvironmentsError(f"can't run {self.args[0]}: {error.strerror or error}") from None
-        try:
-            out, err = await asyncio.wait_for(proc.communicate(), self.timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise EnvironmentsError(f"{self.args[0]} took longer than {self.timeout:g}s") from None
-        if proc.returncode != 0:
-            tail = err.decode(errors="replace").strip().splitlines()[-1:] or [f"exit {proc.returncode}"]
-            raise EnvironmentsError(f"{os.path.basename(self.args[0])} failed: {tail[0][:200]}")
-        result = parse(out.decode(errors="replace"))
+        out = await _exec(self.args, self.timeout)
+        result = parse(out)
         self.cached, self.at = result, self.clock()
         return result
+
+
+async def _exec(args, timeout):
+    """Run a command; its stdout, or EnvironmentsError naming what went wrong."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+    except OSError as error:
+        raise EnvironmentsError(f"can't run {args[0]}: {error.strerror or error}") from None
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise EnvironmentsError(f"{args[0]} took longer than {timeout:g}s") from None
+    if proc.returncode != 0:
+        tail = err.decode(errors="replace").strip().splitlines()[-1:] or [f"exit {proc.returncode}"]
+        raise EnvironmentsError(f"{os.path.basename(args[0])} failed: {tail[0][:200]}")
+    return out.decode(errors="replace")

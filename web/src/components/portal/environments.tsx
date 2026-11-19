@@ -1,33 +1,46 @@
-import { MessageSquareIcon, RotateCwIcon } from "lucide-react"
+import { MessageSquareIcon, RotateCwIcon, SquareIcon } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { type Environment, loadEnvironments, STATUS_DOT, useEnvironments } from "@/lib/environments"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { type Environment, loadEnvironments, STATUS_DOT, stopEnvironment, useEnvironments } from "@/lib/environments"
+import { gigabytes } from "@/lib/machine-load"
 import { useChatTitle } from "@/lib/session-refs"
 import { cn } from "@/lib/utils"
 
 // The chat this environment belongs to, by its title.
-function ChatLink({ session }: { session: string }) {
+function ChatLink({ session, className }: { session: string; className?: string }) {
   const title = useChatTitle(session)
   return (
-    <a className="ml-auto flex min-w-0 shrink items-center gap-1 text-muted-foreground text-xs hover:text-foreground" href={`#/c/${session}`} title={title || session}>
+    <a className={cn("flex min-w-0 shrink items-center gap-1 text-muted-foreground text-xs hover:text-foreground", className)} href={`#/c/${session}`} title={title || session}>
       <MessageSquareIcon className="size-3 shrink-0" />
       <span className="max-w-48 truncate">{title || "chat"}</span>
     </a>
   )
 }
 
-function Row({ env }: { env: Environment }) {
+function Row({ env, onStop }: { env: Environment; onStop?: (env: Environment) => void }) {
   const up = env.status !== "stopped"
+  // Memory and Stop take the row's end; on phones the chat link then moves down beside the links.
+  const crowded = up && (env.memory !== undefined || onStop !== undefined)
   return (
     <li className="flex flex-col gap-2 py-3" data-environment={env.name}>
       <div className="flex min-w-0 items-center gap-2.5">
         <span className={cn("size-2 shrink-0 rounded-full", STATUS_DOT[env.status])} title={env.status} />
         <span className={cn("truncate text-sm", up ? "font-medium" : "text-muted-foreground")}>{env.name}</span>
         {env.detail && <span className="truncate text-muted-foreground text-xs">{env.detail}</span>}
-        {env.session && <ChatLink session={env.session} />}
+        <span className="flex-1" />
+        {env.session && <ChatLink className={cn(crowded && "max-sm:hidden")} session={env.session} />}
+        {up && env.memory !== undefined && (
+          <span className="w-14 shrink-0 text-right text-muted-foreground text-xs tabular-nums">{gigabytes(env.memory)}</span>
+        )}
+        {up && onStop && (
+          <Button aria-label={`Stop ${env.name}`} className="size-7 shrink-0 text-muted-foreground" onClick={() => onStop(env)} size="icon" title="Stop" variant="outline">
+            <SquareIcon className="size-2.5 fill-current" />
+          </Button>
+        )}
       </div>
-      {up && env.links.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 pl-[18px]">
+      {up && (env.links.length > 0 || (crowded && env.session)) && (
+        <div className="flex flex-wrap items-center gap-1.5 pl-[18px]">
           {env.links.map(link => (
             <a
               className="rounded-md border px-2 py-1 text-muted-foreground text-xs hover:bg-accent hover:text-foreground"
@@ -39,6 +52,7 @@ function Row({ env }: { env: Environment }) {
               {link.label}
             </a>
           ))}
+          {crowded && env.session && <ChatLink className="ml-auto sm:hidden" session={env.session} />}
         </div>
       )}
     </li>
@@ -49,13 +63,17 @@ function Row({ env }: { env: Environment }) {
 export function EnvironmentsSettings() {
   const { data, error } = useEnvironments(true, 10_000)
   const [busy, setBusy] = useState(false)
+  const [stopping, setStopping] = useState<Environment | null>(null)
+  const [stopBusy, setStopBusy] = useState(false)
+  const [stopError, setStopError] = useState("")
+  const onStop = data?.can_stop ? (env: Environment) => { setStopError(""); setStopping(env) } : undefined
   const live = data?.environments.filter(env => env.status !== "stopped") ?? []
   const stopped = data?.environments.filter(env => env.status === "stopped") ?? []
   return (
     <div className="flex flex-col">
       {error && <p className="py-3 text-destructive text-sm">{error}</p>}
       {data && data.environments.length === 0 && <p className="py-10 text-center text-muted-foreground text-sm">Nothing here yet.</p>}
-      {live.length > 0 && <ul className="divide-y">{live.map(env => <Row env={env} key={env.name} />)}</ul>}
+      {live.length > 0 && <ul className="divide-y">{live.map(env => <Row env={env} key={env.name} onStop={onStop} />)}</ul>}
       {stopped.length > 0 && (
         <>
           <p className="pt-6 pb-1 text-muted-foreground text-xs">Stopped</p>
@@ -83,6 +101,35 @@ export function EnvironmentsSettings() {
           Refresh
         </Button>
       </div>
+      <Dialog onOpenChange={open => !open && !stopBusy && setStopping(null)} open={stopping !== null}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Stop {stopping?.name}?</DialogTitle>
+            <DialogDescription>
+              {stopping?.memory !== undefined ? `Frees about ${gigabytes(stopping.memory)}.` : "It stops running."}
+            </DialogDescription>
+          </DialogHeader>
+          {stopError && <p className="text-destructive text-sm">{stopError}</p>}
+          <DialogFooter>
+            <Button disabled={stopBusy} onClick={() => setStopping(null)} variant="outline">
+              Cancel
+            </Button>
+            <Button
+              disabled={stopBusy}
+              onClick={() => {
+                if (!stopping) return
+                setStopBusy(true)
+                stopEnvironment(stopping.name)
+                  .then(() => setStopping(null), (e: unknown) => setStopError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setStopBusy(false))
+              }}
+              variant="destructive"
+            >
+              {stopBusy ? "Stopping…" : "Stop"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

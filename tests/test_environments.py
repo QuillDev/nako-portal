@@ -69,6 +69,7 @@ async def test_the_page_lists_what_the_command_prints(world, tmp_path):
             {"name": "odd", "status": "stopped", "links": []},
         ],
         "links": [{"label": "sign in", "url": "https://gate.example.test/key"}],
+        "can_stop": False,
     }
 
 
@@ -76,7 +77,7 @@ async def test_the_title_defaults_when_the_command_gives_none(world, tmp_path):
     command, _ = _command(tmp_path, json.dumps({"environments": []}))
     world.portal.environments = Environments(command)
     await world.sign_up()
-    assert await _get(world) == (200, {"title": "Environments", "environments": [], "links": []})
+    assert await _get(world) == (200, {"title": "Environments", "environments": [], "links": [], "can_stop": False})
 
 
 async def test_a_failing_command_says_why(world, tmp_path):
@@ -120,3 +121,70 @@ async def test_a_slow_command_times_out(tmp_path):
     environments = Environments([sys.executable, "-I", str(script)], timeout=0.3)
     with pytest.raises(Exception, match="longer than"):
         await environments.read()
+
+
+async def test_memory_shows_when_the_command_reports_it(world, tmp_path):
+    output = json.dumps({"environments": [
+        {"name": "big", "status": "running", "memory": 6_500_000_000},
+        {"name": "odd", "status": "running", "memory": "lots"},
+        {"name": "negative", "status": "running", "memory": -1},
+    ]})
+    command, _ = _command(tmp_path, output)
+    world.portal.environments = Environments(command)
+    await world.sign_up()
+    _, body = await _get(world)
+    assert [env.get("memory") for env in body["environments"]] == [6_500_000_000, None, None]
+
+
+def _stopper(tmp_path):
+    """A stop command that records the name it was given."""
+    script = tmp_path / "stop.py"
+    stopped = tmp_path / "stopped"
+    script.write_text(f"import sys\nopen({str(stopped)!r}, 'a').write(sys.argv[-1] + '\\n')\n")
+    return [sys.executable, "-I", str(script), "--keep-data"], stopped
+
+
+async def _stop(world, name):
+    response = await world.post(f"/api/environments/{name}/stop")
+    return response.status, await response.json()
+
+
+async def test_stop_runs_the_owners_command_for_a_running_environment(world, tmp_path):
+    listed = json.dumps({"environments": [{"name": "old-feature", "status": "running"}, {"name": "done", "status": "stopped"}]})
+    command, _ = _command(tmp_path, listed)
+    stop, stopped = _stopper(tmp_path)
+    world.portal.environments = Environments(command, stop_command=stop)
+    assert (await _stop(world, "old-feature"))[0] == 401
+    await world.sign_up()
+    assert (await _get(world))[1]["can_stop"] is True
+    assert await _stop(world, "old-feature") == (200, {"stopped": "old-feature"})
+    assert stopped.read_text() == "old-feature\n"
+
+
+async def test_stop_only_runs_for_environments_the_list_shows_running(world, tmp_path):
+    listed = json.dumps({"environments": [{"name": "done", "status": "stopped"}]})
+    command, _ = _command(tmp_path, listed)
+    stop, stopped = _stopper(tmp_path)
+    world.portal.environments = Environments(command, stop_command=stop)
+    await world.sign_up()
+    assert (await _stop(world, "done"))[0] == 404
+    assert (await _stop(world, "made-up"))[0] == 404
+    assert not stopped.exists()
+
+
+async def test_without_a_stop_command_nothing_can_be_stopped(world, tmp_path):
+    command, _ = _command(tmp_path, json.dumps({"environments": [{"name": "a", "status": "running"}]}))
+    world.portal.environments = Environments(command)
+    await world.sign_up()
+    assert (await _stop(world, "a"))[0] == 404
+
+
+async def test_a_failing_stop_says_why(world, tmp_path):
+    command, _ = _command(tmp_path, json.dumps({"environments": [{"name": "a", "status": "running"}]}))
+    script = tmp_path / "fail.py"
+    script.write_text("import sys\nsys.stderr.write('unit is busy\\n')\nsys.exit(1)\n")
+    world.portal.environments = Environments(command, stop_command=[sys.executable, "-I", str(script)])
+    await world.sign_up()
+    status, body = await _stop(world, "a")
+    assert status == 502
+    assert "unit is busy" in body["error"]

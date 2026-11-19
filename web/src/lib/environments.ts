@@ -10,9 +10,15 @@ const Environment = z.object({
   status: z.enum(["running", "partial", "stopped"]),
   detail: z.string().optional(),
   session: z.string().optional(),
+  memory: z.number().optional(),
   links: z.array(Link),
 })
-export const Environments = z.object({ title: z.string(), environments: z.array(Environment), links: z.array(Link) })
+export const Environments = z.object({
+  title: z.string(),
+  environments: z.array(Environment),
+  links: z.array(Link),
+  can_stop: z.boolean().default(false),
+})
 export type Environment = z.infer<typeof Environment>
 export type Environments = z.infer<typeof Environments>
 
@@ -43,6 +49,12 @@ export function loadEnvironments(): Promise<void> {
       loading = null
     })
   return loading
+}
+
+/** Run the owner's stop command for one environment, then read the list again. */
+export async function stopEnvironment(name: string): Promise<void> {
+  await api(`/api/environments/${encodeURIComponent(name)}/stop`, { method: "POST" })
+  await loadEnvironments()
 }
 
 /** The last read, refreshed on mount and every `every` ms while something shows it. */
