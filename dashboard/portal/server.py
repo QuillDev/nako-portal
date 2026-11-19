@@ -86,6 +86,7 @@ class Portal:
         android_cert_sha256=None,
         desktop_release_dir=None,
         environments=None,
+        machine_load=None,
         clock=time.time,
     ):
         self.vapid = vapid
@@ -95,6 +96,8 @@ class Portal:
         self.desktop_release_dir = Path(desktop_release_dir) if desktop_release_dir else None
         # What runs on this machine, from the owner's own command (`environments.Environments`), else None.
         self.environments = environments
+        # Memory and CPU use of this machine (`machine_load.MachineLoad`), else None (no /proc to read).
+        self.machine_load = machine_load
         # Desktop sign-ins the browser approved, waiting for the app: code -> challenge, passkey, expiry.
         self.handoffs = {}
         parsed = urlparse(origin)
@@ -171,6 +174,8 @@ class Portal:
         r.add_post("/api/model", self.set_model)
         r.add_get("/api/usage", self.usage)
         r.add_get("/api/environments", self._auth(self.list_environments))
+        r.add_post("/api/environments/{name}/stop", self._auth(self.stop_environment))
+        r.add_get("/api/machine-load", self._auth(self.read_machine_load))
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
         r.add_post("/api/login/options", self.login_options)
@@ -526,6 +531,7 @@ class Portal:
         if signed_in:
             me["name"] = self.store.meta("name", "")
             me["environments"] = self.environments is not None
+            me["machine_load"] = self.machine_load is not None
         return web.json_response(me)
 
     async def list_environments(self, request):
@@ -533,10 +539,32 @@ class Portal:
         if self.environments is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "no environments command is set"}), content_type="application/json")
         try:
-            return web.json_response(await self.environments.read())
+            listed = await self.environments.read()
         except EnvironmentsError as error:
             log.warning("portal: environments: %s", error)
             return web.json_response({"error": str(error)}, status=502)
+        return web.json_response({**listed, "can_stop": self.environments.stop_args is not None})
+
+    async def stop_environment(self, request):
+        """Run the owner's stop command for one running environment."""
+        if self.environments is None or self.environments.stop_args is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "no stop command is set"}), content_type="application/json")
+        name = request.match_info["name"]
+        try:
+            await self.environments.stop(name)
+        except LookupError:
+            raise web.HTTPNotFound(text=json.dumps({"error": f"{name} isn't running"}), content_type="application/json") from None
+        except EnvironmentsError as error:
+            log.warning("portal: stopping %s: %s", name, error)
+            return web.json_response({"error": str(error)}, status=502)
+        log.info("portal: stopped environment %s", name)
+        return web.json_response({"stopped": name})
+
+    async def read_machine_load(self, request):
+        """Memory in use now and CPU over the last minute; 404 where there's nothing to read."""
+        if self.machine_load is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "machine load isn't available here"}), content_type="application/json")
+        return web.json_response(await asyncio.to_thread(self.machine_load.read))
 
     async def set_name(self, request):
         """The name the new-chat greeting uses, kept here so every device says the same thing."""

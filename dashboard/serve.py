@@ -21,6 +21,7 @@ from portal import push
 from portal.environments import Environments
 from portal.hub import Hub
 from portal.link import GatewayLink
+from portal.machine_load import MachineLoad
 from portal.machine_ops import MachineOps
 from portal.mesh import Mesh, Node
 from portal.offline import Offline
@@ -89,7 +90,10 @@ async def main(config_path):
             android_release_dir=config.get("android_release_dir"),
             android_cert_sha256=config.get("android_cert_sha256"),
             desktop_release_dir=config.get("desktop_release_dir"),
-            environments=Environments(config["environments_command"]) if config.get("environments_command") else None,
+            environments=Environments(config["environments_command"], stop_command=config.get("environments_stop_command"))
+            if config.get("environments_command")
+            else None,
+            machine_load=load if (load := MachineLoad()).available else None,
         )
         link.on_change = portal.gateway_changed
         portal.ops = ops

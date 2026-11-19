@@ -12,6 +12,7 @@ from aiohttp import web
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import ROOT, Backend, FakeGateway  # noqa: E402
 from portal.environments import Environments  # noqa: E402
+from portal.machine_load import MachineLoad  # noqa: E402
 from portal.hub import Hub  # noqa: E402
 from portal.server import Portal  # noqa: E402
 from portal.store import Store  # noqa: E402
@@ -332,9 +333,24 @@ async def main(port):
         hub.unread.add(sid)
     origin = f"http://localhost:{port}"
     # NAKO_DESKTOP_RELEASE_DIR serves a desktop build for trying the app's self-update.
-    # NAKO_ENVIRONMENTS_COMMAND: show the Environments page fed by that command.
-    environments = Environments(os.environ["NAKO_ENVIRONMENTS_COMMAND"]) if os.environ.get("NAKO_ENVIRONMENTS_COMMAND") else None
-    portal = Portal(hub, store, origin=origin, web_root=ROOT / "dashboard" / "web", desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"), environments=environments)
+    # NAKO_ENVIRONMENTS_COMMAND: show the Environments page fed by that command (and
+    # NAKO_ENVIRONMENTS_STOP_COMMAND its Stop buttons).
+    environments = (
+        Environments(os.environ["NAKO_ENVIRONMENTS_COMMAND"], stop_command=os.environ.get("NAKO_ENVIRONMENTS_STOP_COMMAND"))
+        if os.environ.get("NAKO_ENVIRONMENTS_COMMAND")
+        else None
+    )
+    # This machine's load, or NAKO_PROC: a directory with its own meminfo and stat.
+    load = MachineLoad(os.environ.get("NAKO_PROC", "/proc"))
+    portal = Portal(
+        hub,
+        store,
+        origin=origin,
+        web_root=ROOT / "dashboard" / "web",
+        desktop_release_dir=os.environ.get("NAKO_DESKTOP_RELEASE_DIR"),
+        environments=environments,
+        machine_load=load if load.available else None,
+    )
     runner = web.AppRunner(portal.app())
     await runner.setup()
     await web.TCPSite(runner, "127.0.0.1", port).start()
