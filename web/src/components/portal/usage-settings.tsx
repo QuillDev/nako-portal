@@ -17,7 +17,7 @@ const usage = z.object({
 export type Usage = z.infer<typeof usage>
 type Window = Usage["providers"][number]["accounts"][number]["windows"][number]
 
-const resetFormat = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+const dateFormat = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 
 // Window length from its label ("Current week", "Weekly", "Opus week", "Current session"); null when unknown.
 function windowLength(label: string) {
@@ -33,7 +33,9 @@ function pace(window: Window, used: number, now: number) {
   if (length === null || !Number.isFinite(reset)) return null
   const elapsed = Math.min(1, Math.max(0, 1 - (reset - now) / length))
   if (elapsed < 0.02) return null
-  return { elapsed: elapsed * 100, projected: Math.min(100, used / elapsed) }
+  const projected = used / elapsed
+  const runoutAt = projected > 100 ? reset - length * (1 - 100 / projected) : null
+  return { elapsed: elapsed * 100, projected: Math.min(100, projected), runoutAt }
 }
 
 function Limit({ window, now }: { window: Window; now: number }) {
@@ -59,7 +61,10 @@ function Limit({ window, now }: { window: Window; now: number }) {
         )}
       </div>
       {reset && !Number.isNaN(reset.getTime()) && (
-        <span className={cn("text-xs tabular-nums", full ? "text-destructive" : "text-muted-foreground")}>Resets {resetFormat.format(reset)}</span>
+        <div className={cn("flex flex-col gap-x-3 gap-y-1 text-xs tabular-nums sm:flex-row sm:flex-wrap sm:justify-between", full ? "text-destructive" : "text-muted-foreground")}>
+          <span>Resets {dateFormat.format(reset)}</span>
+          {estimate?.runoutAt != null && <span>Est. runout {dateFormat.format(estimate.runoutAt)}</span>}
+        </div>
       )}
     </div>
   )
