@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { api, ApiError } from "@/lib/api"
-import { presetDetails, presetMatches, useModelPresets } from "@/lib/model-presets"
-import { favoriteId, type ModelFavorite, readModelFavorites, toggleModelFavorite } from "@/lib/model-favorites"
+import { presetDetails, presetMatches, refreshModelPicks, toggleModelFavorite, useModelFavorites, useModelPresets } from "@/lib/model-presets"
+import { favoriteId, type ModelFavorite } from "@/lib/model-favorites"
 
 export const modelChoice = z.object({
   provider: z.string(), model: z.string(),
@@ -65,7 +65,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const [query, setQuery] = useState("")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
-  const [favorites, setFavorites] = useState(readModelFavorites)
+  const favorites = useModelFavorites()
   const search = useRef<HTMLInputElement>(null)
   const catalog = new Map(value.providers.map(provider => [provider.provider, provider]))
   const presets = useModelPresets()
@@ -87,11 +87,10 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   })
   const toggle = (favorite: ModelFavorite) => {
     setError("")
-    try { setFavorites(toggleModelFavorite(favorite)) }
-    catch { setError("Couldn't save favorites on this device.") }
+    toggleModelFavorite(favorite).catch(e => setError(e instanceof Error ? e.message : String(e)))
   }
   const show = (next: boolean) => {
-    if (next) setFavorites(readModelFavorites())
+    if (next) void refreshModelPicks()
     setOpen(next)
   }
   const save = async (pick: Pick) => {

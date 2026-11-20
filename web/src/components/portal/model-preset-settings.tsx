@@ -36,8 +36,8 @@ export function ModelPresetSettings({ value }: { value: ModelChoice }) {
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={() => edit(preset)}>Edit preset</DropdownMenuItem>
           <DropdownMenuItem onSelect={() => {
-            try { removeModelPreset(preset.id); setError("") }
-            catch { setError("Couldn't remove this preset on this device.") }
+            setError("")
+            removeModelPreset(preset.id).catch(e => setError(e instanceof Error ? e.message : String(e)))
           }}>Remove preset</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -47,8 +47,7 @@ export function ModelPresetSettings({ value }: { value: ModelChoice }) {
       <DialogContent className="max-h-[95dvh] overflow-y-auto sm:max-w-sm" aria-describedby={undefined}>
         <DialogTitle>{presets.some(preset => preset.id === editing.id) ? "Edit preset" : "Add preset"}</DialogTitle>
         <PresetForm value={value} preset={editing} error={error} onCancel={() => { setEditing(null); setError("") }} onSave={preset => {
-          try { putModelPreset(preset); setEditing(null); setError("") }
-          catch { setError("Couldn't save this preset on this device.") }
+          putModelPreset(preset).then(() => { setEditing(null); setError("") }, e => setError(e instanceof Error ? e.message : String(e)))
         }} />
       </DialogContent>
     </Dialog>}
