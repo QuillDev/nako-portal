@@ -19,6 +19,8 @@ LOGIN_TTL = 30 * 24 * 3600
 # The colors a chat group can have, in the order new groups take them.
 GROUP_COLORS = ("blue", "green", "yellow", "orange", "red", "teal", "purple", "grey")
 GROUP_NAME_MAX = 60
+MODEL_PICKS_MAX = 100
+MODEL_PRESET_NAME_MAX = 40
 SETUP_TTL = 3600
 
 SCHEMA = """
@@ -70,6 +72,35 @@ CREATE TABLE IF NOT EXISTS inbox (
 
 def _hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _text(value, field, *, most=200, required=True):
+    if not isinstance(value, str) or len(value) > most or (required and not value.strip()):
+        raise ValueError(f"A model pick needs a {field}")
+    return value
+
+
+def _model_route(value, *, tuned):
+    """A provider and model, plus the effort and speed when the pick is tuned."""
+    if not isinstance(value, dict):
+        raise ValueError("A model pick needs a provider and model")
+    route = {"provider": _text(value.get("provider"), "provider"), "model": _text(value.get("model"), "model")}
+    if tuned:
+        route["effort"] = _text(value.get("effort", ""), "effort", most=40, required=False)
+        route["speed"] = _text(value.get("speed", ""), "speed", most=40, required=False)
+    return route
+
+
+def _model_preset(value):
+    if not isinstance(value, dict):
+        raise ValueError("A preset needs a name and a model")
+    name = _text(value.get("name"), "name", most=MODEL_PRESET_NAME_MAX).strip()
+    return {
+        "id": _text(value.get("id"), "id", most=64),
+        "name": name,
+        "icon": _text(value.get("icon", ""), "icon", most=32, required=False),
+        "pick": _model_route(value.get("pick"), tuned=True),
+    }
 
 
 class Store:
@@ -178,6 +209,53 @@ class Store:
 
     def set_meta(self, key, value):
         self._run("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, json.dumps(value)))
+
+    # Model presets and favorites: the owner's picks in the model picker, kept here so every
+    # device sees the same ones and a cleared browser loses none of them.
+
+    def model_picks(self):
+        return {"presets": self.meta("model_presets", []), "favorites": self.meta("model_favorites", [])}
+
+    def put_model_preset(self, preset):
+        """Add a preset, or replace the one with its id."""
+        preset = _model_preset(preset)
+        with self.lock:
+            presets = self._meta_locked("model_presets")
+            ids = [p["id"] for p in presets]
+            if preset["id"] in ids:
+                presets[ids.index(preset["id"])] = preset
+            elif len(presets) >= MODEL_PICKS_MAX:
+                raise ValueError(f"Keep it to {MODEL_PICKS_MAX} presets")
+            else:
+                presets.append(preset)
+            self._set_meta_locked("model_presets", presets)
+        return self.model_picks()
+
+    def remove_model_preset(self, preset_id):
+        with self.lock:
+            presets = self._meta_locked("model_presets")
+            self._set_meta_locked("model_presets", [p for p in presets if p["id"] != preset_id])
+        return self.model_picks()
+
+    def toggle_model_favorite(self, favorite):
+        """Star a model (with or without tuning), or unstar it if it's already starred."""
+        favorite = _model_route(favorite, tuned="effort" in (favorite or {}))
+        with self.lock:
+            favorites = self._meta_locked("model_favorites")
+            kept = [f for f in favorites if f != favorite]
+            if len(kept) == len(favorites):
+                if len(kept) >= MODEL_PICKS_MAX:
+                    raise ValueError(f"Keep it to {MODEL_PICKS_MAX} favorites")
+                kept.append(favorite)
+            self._set_meta_locked("model_favorites", kept)
+        return self.model_picks()
+
+    def _meta_locked(self, key):
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else []
+
+    def _set_meta_locked(self, key, value):
+        self.db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, json.dumps(value)))
 
     # Chat groups: named, colored sets of chats, kept by each chat's thread id (it outlives a
     # session rotating under it). A chat is in at most one group.

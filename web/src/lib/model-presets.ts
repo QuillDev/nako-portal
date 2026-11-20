@@ -1,55 +1,88 @@
-import { useSyncExternalStore } from "react"
+import { useEffect, useSyncExternalStore } from "react"
 import { z } from "zod"
+import { api } from "@/lib/api"
+import { favorite, favoriteId, type ModelFavorite } from "@/lib/model-favorites"
 
 const selection = z.object({ provider: z.string().min(1), model: z.string().min(1), effort: z.string(), speed: z.string() })
 const preset = z.object({ id: z.string(), name: z.string().trim().min(1).max(40), icon: z.string().max(32), pick: selection })
 export type ModelPreset = z.infer<typeof preset>
-const key = "portal:model-presets"
-const changed = "portal:model-presets-changed"
+const picks = z.object({ presets: z.array(z.unknown()), favorites: z.array(z.unknown()) })
+
+// Presets and starred models live on the portal server, so every device shows the same ones.
+let state: { presets: ModelPreset[]; favorites: ModelFavorite[] } = { presets: [], favorites: [] }
+const listeners = new Set<() => void>()
+let loading: Promise<void> | null = null
 
 function subscribe(update: () => void) {
-  window.addEventListener(changed, update)
-  window.addEventListener("storage", update)
-  return () => {
-    window.removeEventListener(changed, update)
-    window.removeEventListener("storage", update)
+  listeners.add(update)
+  return () => { listeners.delete(update) }
+}
+
+function valid<T>(schema: z.ZodType<T>, entries: unknown[]) {
+  return entries.flatMap(entry => {
+    const parsed = schema.safeParse(entry)
+    return parsed.success ? [parsed.data] : []
+  })
+}
+
+function apply(raw: unknown) {
+  const parsed = picks.parse(raw)
+  state = { presets: valid(preset, parsed.presets), favorites: valid(favorite, parsed.favorites) }
+  listeners.forEach(update => update())
+}
+
+// Older builds kept presets and favorites in this browser only. Hand the server any it
+// doesn't have yet, then drop the browser copy.
+const LEGACY_PRESETS = "portal:model-presets"
+const LEGACY_FAVORITES = "portal:model-favorites"
+function legacy<T>(schema: z.ZodType<T>, key: string) {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(key) ?? "[]")
+    return Array.isArray(saved) ? valid(schema, saved) : []
+  } catch {
+    return []
   }
 }
 
-let raw: string | null = null
-let entries: ModelPreset[] = []
-function read() {
-  try {
-    const saved = localStorage.getItem(key)
-    if (saved !== raw) {
-      const decoded: unknown = JSON.parse(saved ?? "[]")
-      entries = Array.isArray(decoded) ? decoded.flatMap(item => {
-        const parsed = preset.safeParse(item)
-        return parsed.success ? [parsed.data] : []
-      }) : []
-      raw = saved
-    }
-  } catch { /* Leave the last readable list in place. */ }
-  return entries
+async function adoptLegacy() {
+  const presets = legacy(preset, LEGACY_PRESETS).filter(item => !state.presets.some(saved => saved.id === item.id))
+  const starred = new Set(state.favorites.map(favoriteId))
+  const favorites = legacy(favorite, LEGACY_FAVORITES).filter(item => !starred.has(favoriteId(item)))
+  for (const item of presets) await putModelPreset(item)
+  for (const item of favorites) await toggleModelFavorite(item)
+  localStorage.removeItem(LEGACY_PRESETS)
+  localStorage.removeItem(LEGACY_FAVORITES)
+}
+
+// Read the saved picks again, e.g. when the picker opens after another device changed them.
+export function refreshModelPicks() {
+  loading ??= api<unknown>("/api/model-picks").then(apply).then(adoptLegacy).catch(() => {}).finally(() => { loading = null })
+  return loading
+}
+
+function useModelPicks() {
+  useEffect(() => { void refreshModelPicks() }, [])
+  return useSyncExternalStore(subscribe, () => state)
 }
 
 export function useModelPresets() {
-  return useSyncExternalStore(subscribe, read)
+  return useModelPicks().presets
 }
 
-export function putModelPreset(value: ModelPreset) {
-  const current = read()
-  const next = preset.parse(value)
-  write(current.some(item => item.id === next.id) ? current.map(item => item.id === next.id ? next : item) : [...current, next])
+export function useModelFavorites() {
+  return useModelPicks().favorites
 }
 
-export function removeModelPreset(id: string) {
-  write(read().filter(item => item.id !== id))
+export async function putModelPreset(value: ModelPreset) {
+  apply(await api<unknown>("/api/model-picks/presets", { method: "POST", body: preset.parse(value) }))
 }
 
-function write(next: ModelPreset[]) {
-  localStorage.setItem(key, JSON.stringify(next))
-  window.dispatchEvent(new Event(changed))
+export async function removeModelPreset(id: string) {
+  apply(await api<unknown>(`/api/model-picks/presets/${encodeURIComponent(id)}/remove`, { method: "POST" }))
+}
+
+export async function toggleModelFavorite(value: ModelFavorite) {
+  apply(await api<unknown>("/api/model-picks/favorites", { method: "POST", body: value }))
 }
 
 export function presetMatches(preset: ModelPreset, value: { provider: string; model: string; effort?: string; speed?: string }) {

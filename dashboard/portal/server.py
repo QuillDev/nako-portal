@@ -173,6 +173,10 @@ class Portal:
         r.add_get("/api/model", self.model)
         r.add_post("/api/model", self.set_model)
         r.add_get("/api/usage", self.usage)
+        r.add_get("/api/model-picks", self.model_picks)
+        r.add_post("/api/model-picks/presets", self.put_model_preset)
+        r.add_post("/api/model-picks/presets/{id}/remove", self.remove_model_preset)
+        r.add_post("/api/model-picks/favorites", self.toggle_model_favorite)
         r.add_get("/api/environments", self._auth(self.list_environments))
         r.add_post("/api/environments/{name}/stop", self._auth(self.stop_environment))
         r.add_get("/api/machine-load", self._auth(self.read_machine_load))
@@ -594,6 +598,23 @@ class Portal:
                 raise web.HTTPBadRequest(text=json.dumps({"error": "That model isn't available"}), content_type="application/json")
             await asyncio.to_thread(self.hub.backend.set_sign_off_model, provider, model)
         return await self.sign_off(request)
+
+    async def model_picks(self, request):
+        """The model picker's saved presets and starred models."""
+        self._require(request)
+        return web.json_response(self.store.model_picks())
+
+    async def put_model_preset(self, request):
+        self._require(request)
+        return web.json_response(self.store.put_model_preset(await request.json()))
+
+    async def remove_model_preset(self, request):
+        self._require(request)
+        return web.json_response(self.store.remove_model_preset(request.match_info["id"]))
+
+    async def toggle_model_favorite(self, request):
+        self._require(request)
+        return web.json_response(self.store.toggle_model_favorite(await request.json()))
 
     async def profile(self, request):
         """The Hermes profile the portal shows, and the ones it could."""
