@@ -76,11 +76,13 @@ async def main(config_path):
         link.serve(hub)
         # Hermes's home: chats are read from its session store while no gateway is connected.
         home = Path(config.get("home") or data.parent)
-        link.offline = Offline(home)
+        # What the agent calls itself: it names its home variable, update marker and service after that.
+        agent = config.get("agent")
+        link.offline = Offline(home, agent=agent)
         mesh = config.get("mesh") or {}
         # This machine's Hermes, looked after from here: its version, gateway restarts, updates.
         # A machine in someone's mesh also brings its gateway back when it goes away and stays away.
-        ops = MachineOps(data, home, config.get("hermes"), hub, watchdog=bool(mesh.get("hub")) and mesh.get("watchdog", True) is not False)
+        ops = MachineOps(data, home, config.get("hermes"), hub, agent=agent, watchdog=bool(mesh.get("hub")) and mesh.get("watchdog", True) is not False)
         portal = Portal(
             hub,
             store,

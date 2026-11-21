@@ -22,6 +22,20 @@ MAX_WAIT = 600
 TOOL_CALLS = 10
 LOG_CHARS = 1500
 
+
+def _agent_name():
+    """What the agent these tools are loaded into calls itself; a rebranded build renames its
+    core modules with it, so the name is read off one."""
+    try:
+        import hermes_constants as constants
+    except ImportError:  # no agent on the path (tests)
+        return "hermes"
+    return constants.__name__.partition("_")[0]
+
+
+AGENT = _agent_name()
+TITLE = AGENT.capitalize()
+
 ONLY_WHEN_NEEDED = (
     "Only use this when the work has to happen on that machine: its files, apps, screen, hardware "
     "or local network. Do everything else here, and don't call a machine just to check on it. "
@@ -114,7 +128,7 @@ def _read(session, wait):
         machine = _machine_of(session) or "that machine"
         out["gateway"] = False
         out["note"] = (
-            f"{machine}'s Hermes gateway is down, so nothing is running there now. This is the chat as saved; "
+            f"{machine}'s {TITLE} gateway is down, so nothing is running there now. This is the chat as saved; "
             f"it last moved {out['last_active'] or 'at an unknown time'}. mesh_restart_gateway brings the gateway back."
         )
     return out
@@ -176,7 +190,7 @@ def _follow(machine, wait):
     elif job.get("status") in ("starting", "running"):
         out["note"] = "Still going. Call this again with wait_seconds, or check mesh_machines later."
     elif not out["gateway"]:
-        out["note"] = f"The job finished but {machine}'s gateway isn't connected yet. Its portal server starts it again on its own after a while; the user can also run `hermes gateway start` there."
+        out["note"] = f"The job finished but {machine}'s gateway isn't connected yet. Its portal server starts it again on its own after a while; the user can also run `{AGENT} gateway start` there."
     return out
 
 
@@ -270,8 +284,8 @@ TOOLS = [
     (
         "mesh_machines",
         machines,
-        "List the user's other machines running Hermes (laptops, desktops, the hub), whether each is online now, "
-        "whether its Hermes gateway is up, its OS, its Hermes version and commit, and how many tasks it is running. " + ONLY_WHEN_NEEDED,
+        f"List the user's other machines running {TITLE} (laptops, desktops, the hub), whether each is online now, "
+        f"whether its {TITLE} gateway is up, its OS, its {TITLE} version and commit, and how many tasks it is running. " + ONLY_WHEN_NEEDED,
         {},
         [],
     ),
@@ -322,8 +336,8 @@ TOOLS = [
     (
         "mesh_restart_gateway",
         restart_gateway,
-        "Restart the Hermes gateway on another machine (its portal server does it, so this works when the gateway "
-        "is down or stuck). Waits until it's back and returns its Hermes version and the restart log. Use it when "
+        f"Restart the {TITLE} gateway on another machine (its portal server does it, so this works when the gateway "
+        f"is down or stuck). Waits until it's back and returns its {TITLE} version and the restart log. Use it when "
         "mesh_machines shows the machine online but its gateway down.",
         {"machine": {"type": "string"}, "wait_seconds": {**WAIT, "description": f"Seconds to wait for the gateway to come back (default 120, max {MAX_WAIT})."}},
         ["machine"],
@@ -331,10 +345,10 @@ TOOLS = [
     (
         "mesh_update",
         update,
-        "Update Hermes on another machine: its portal server runs `hermes update --yes` in a process of its own, "
+        f"Update {TITLE} on another machine: its portal server runs `{AGENT} update --yes` in a process of its own, "
         "then restarts the gateway, so the machine comes back even though the gateway stops on the way. Returns "
         "the version before and after (and whether it now matches the hub's) and the end of the update log. "
-        "Never run `hermes update` inside a chat on that machine instead.",
+        f"Never run `{AGENT} update` inside a chat on that machine instead.",
         {
             "machine": {"type": "string"},
             "channel": {"type": "string", "description": "Update channel for this run (stable, main, ...). Default: the machine's own."},
@@ -409,7 +423,7 @@ def _cli(args):
 
         settings = load_config().get("plugins", {}).get("entries", {}).get("nako-portal", {}).get("settings", {}) or {}
         address = str(settings.get("mesh_address") or settings.get("origin") or "<this portal's address>").rstrip("/")
-        print(f"{args.name} can join. On that machine run:\n\n  hermes mesh join {address} {token} --name {args.name}\n")
+        print(f"{args.name} can join. On that machine run:\n\n  {AGENT} mesh join {address} {token} --name {args.name}\n")
         print("Or add it on the portal's Mesh page for a one-line setup.")
         print("The token is shown only once. Restart nothing here; the hub reads new machines as they connect.")
     elif args.mesh_action == "remove":
@@ -441,7 +455,7 @@ def _join(home, args):
     dirs = list((load_config().get("skills") or {}).get("external_dirs") or [])
     if mirror not in dirs:
         set_config_value("skills.external_dirs", json.dumps(dirs + [mirror]))
-    print("Joined. Restart the gateway (`hermes gateway restart`) to connect.")
+    print(f"Joined. Restart the gateway (`{AGENT} gateway restart`) to connect.")
 
 
 # The plugin's loader for its portal modules (`_portal`), set when the plugin registers.
@@ -455,4 +469,4 @@ def _mesh_module():
 
 
 def register_cli(ctx):
-    ctx.register_cli_command("mesh", "Connect other machines' Hermes to this one", _setup_cli, _cli)
+    ctx.register_cli_command("mesh", f"Connect other machines' {TITLE} to this one", _setup_cli, _cli)

@@ -40,6 +40,20 @@ from typing import Any
 
 log = logging.getLogger("hermes.portal")
 PLUGIN = "nako-portal"
+
+
+def _agent_name():
+    """What the agent this plugin is loaded into calls itself (its command, its toolset prefix).
+
+    A rebranded build renames its core modules together with those, so the name is read off one."""
+    try:
+        import hermes_constants as constants
+    except ImportError:  # no agent on the path (tests)
+        return "hermes"
+    return constants.__name__.partition("_")[0]
+
+
+AGENT = _agent_name()
 HOME_CHANNEL = "inbox"
 NEW_THREAD = "new"
 # A chat whose newest row is mid-turn this recently may still be running on its old surface.
@@ -319,8 +333,9 @@ def _server_config(home, origin, port, contact, apps):
     settings, so a server started from anything else is replaced."""
     data = home / "nako-portal"
     # `home`: whose session store the server reads chats from while no gateway is connected.
-    # `hermes`: the command the server runs to restart or update this machine's Hermes.
-    config = {"data": str(data), "home": str(home), "hermes": _hermes_command(), "origin": origin, "port": port, "contact": contact, **apps}
+    # `hermes`: the command the server runs to restart or update this machine's agent.
+    # `agent`: what that agent calls itself, which names its update marker and background service.
+    config = {"data": str(data), "home": str(home), "hermes": _hermes_command(), "agent": AGENT, "origin": origin, "port": port, "contact": contact, **apps}
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode())
     for path in SERVER_CODE:
         digest.update(path.name.encode() + b"\0" + path.read_bytes())
@@ -333,8 +348,8 @@ def _server_config(home, origin, port, contact, apps):
 
 
 def _hermes_command():
-    """The `hermes` command as this machine runs it (argv), for the server; None if not found."""
-    found = shutil.which("hermes")
+    """The agent's command as this machine runs it (argv), for the server; None if not found."""
+    found = shutil.which(AGENT)
     return [found] if found else None
 
 
@@ -1135,14 +1150,14 @@ class HermesBackend:
         cfg["auth"] = "oauth"
         self._mcp_gc_flows()
         with self.mcp_lock:
-            if any(f.server_name == name and f.hermes_home == home and not f.worker_done for f in self.mcp_flows.values()):
+            if any(f.server_name == name and _flow_home(f) == home and not f.worker_done for f in self.mcp_flows.values()):
                 raise ValueError(f"A sign-in for {name} is already open")
             # Older Hermes builds still require profile even though hermes_home carries the scope.
             legacy: dict[str, Any] = {}
             if any(f.name == "profile" for f in dataclasses.fields(DashboardOAuthFlow)):
                 legacy["profile"] = None
             flow = DashboardOAuthFlow(
-                flow_id=secrets.token_urlsafe(24), server_name=name, hermes_home=home,
+                flow_id=secrets.token_urlsafe(24), server_name=name, **{FLOW_HOME: home},
                 redirect_uri=(cfg.get("oauth") or {}).get("redirect_uri") or redirect_uri,
                 reconnect_live=False, **legacy,
             )
@@ -1163,7 +1178,7 @@ class HermesBackend:
         snapshot = flow.snapshot()
         if snapshot["status"] == "approved" and flow.worker_done and not getattr(flow, "portal_applied", False):
             flow.portal_applied = True
-            self._mcp_apply(flow.hermes_home, restart={flow.server_name})
+            self._mcp_apply(_flow_home(flow), restart={flow.server_name})
         return snapshot
 
     def mcp_cancel_signin(self, flow_id):
@@ -1404,8 +1419,16 @@ class HermesBackend:
         return listed
 
 
+# The agent names a sign-in flow's home field after itself.
+FLOW_HOME = f"{AGENT}_home"
+
+
+def _flow_home(flow):
+    return getattr(flow, FLOW_HOME)
+
+
 # What a portal turn gets when its profile resolves to no tools at all.
-FALLBACK_TOOLSETS = ["hermes-cli"]
+FALLBACK_TOOLSETS = [f"{AGENT}-cli"]
 
 
 def _fallback_toolsets(home=None):
@@ -1423,7 +1446,7 @@ def _fallback_toolsets(home=None):
     try:
         if "portal" in (load_config().get("platform_toolsets") or {}):
             return None
-        return None if resolve_toolset("hermes-portal") else list(FALLBACK_TOOLSETS)
+        return None if resolve_toolset(f"{AGENT}-portal") else list(FALLBACK_TOOLSETS)
     except Exception:
         log.warning("portal: could not check the toolset for a turn", exc_info=True)
         return None

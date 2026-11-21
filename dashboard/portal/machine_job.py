@@ -29,7 +29,8 @@ from pathlib import Path
 UPDATE_TIMEOUT = 40 * 60
 STEP_TIMEOUT = 180
 LOG_TAIL = 4000
-VERSION = re.compile(r"Hermes Agent\s+(v[\w.+-]+)(?:\s*\(([^)]*)\))?(?:\s*·\s*([\w.-]+))?(?:\s*·\s*\w+\s+([0-9a-f]{7,64}))?")
+# The agent prints its own name first, so any name is read (a rebranded build has another).
+VERSION = re.compile(r"\b\w+ Agent\s+(v[\w.+-]+)(?:\s*\(([^)]*)\))?(?:\s*·\s*([\w.-]+)(?=\s*(?:·|$)))?(?:\s*·\s*\w+\s+([0-9a-f]{7,64}))?")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -95,7 +96,7 @@ class Job:
     def start_gateway(self, fresh):
         """Bring the gateway up as a background service. `fresh`: stop a running one first."""
         if self.state.get("platform") == "windows":
-            task = self.state.get("task") or "Hermes_Gateway"
+            task = self.state.get("task") or f"{Path(self.hermes[0]).stem.capitalize()}_Gateway"
             if not self._task_registered(task):
                 self.say(f"no {task} scheduled task yet; installing it")
                 self.run([*self.hermes, "gateway", "install", "--if-missing", "--start-on-login", "--no-start-now"])

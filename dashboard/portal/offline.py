@@ -143,9 +143,10 @@ def messages_from_store(home, session, store):
     return with_results(messages, history)
 
 
-def hermes_thread(home, session):
-    """The transcript in Hermes's own display projection, as the gateway would read it."""
-    os.environ["HERMES_HOME"] = str(home)
+def hermes_thread(home, session, agent="hermes"):
+    """The transcript in the agent's own display projection, as the gateway would read it.
+    The agent reads its home from a variable named after itself."""
+    os.environ[f"{agent.upper()}_HOME"] = str(home)
     from tui_gateway.server import _history_to_messages
 
     try:
@@ -174,8 +175,9 @@ def hermes_thread(home, session):
 class Offline:
     """The hub backend's read calls, answered from the session store while no gateway is there."""
 
-    def __init__(self, home, *, python=None, projection=True):
+    def __init__(self, home, *, agent="hermes", python=None, projection=True):
         self.home = Path(home)
+        self.agent = agent or "hermes"
         self.python = python or sys.executable
         # Off in tests that have no Hermes to import: the table projection alone.
         self.projection = projection
@@ -205,7 +207,7 @@ class Offline:
         if self.projection:
             try:
                 done = subprocess.run(
-                    [self.python, str(Path(__file__).resolve()), str(home), str(session)],
+                    [self.python, str(Path(__file__).resolve()), str(home), str(session), self.agent],
                     capture_output=True,
                     text=True,
                     timeout=READ_TIMEOUT,
@@ -221,11 +223,12 @@ class Offline:
 
 def main(argv):
     home, session = argv[1], argv[2]
+    agent = argv[3] if len(argv) > 3 else "hermes"
     # This folder's modules (server, hub, link...) mustn't shadow Hermes's own on import.
     here = Path(__file__).resolve().parent
     sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != here]
     try:
-        thread = hermes_thread(home, session)
+        thread = hermes_thread(home, session, agent)
     except Exception:
         return 1
     sys.stdout.write(json.dumps(thread, default=str))
