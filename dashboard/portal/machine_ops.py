@@ -31,17 +31,20 @@ JOB_STALE = 45 * 60
 # How long the gateway may stay away before the watchdog starts it, and how often it may.
 GRACE = 90
 COOLDOWN = 10 * 60
-# Hermes's own marker while `hermes update` runs (the update stops and restarts gateways itself).
-UPDATE_MARKER = ".hermes-update-in-progress"
+# The agent's own marker while its update runs (the update stops and restarts gateways itself).
+# It is named after the agent, as is the Windows scheduled task below.
+UPDATE_MARKER = ".{agent}-update-in-progress"
+UPSTREAM = "hermes"
 UPDATE_MARKER_TTL = 40 * 60
 
 
-def _task_name(home):
-    """The Windows scheduled task Hermes installs for this home's gateway."""
+def _task_name(home, agent=UPSTREAM):
+    """The Windows scheduled task the agent installs for this home's gateway."""
     home = Path(home)
+    task = f"{agent.capitalize()}_Gateway"
     if home.parent.name == "profiles":
-        return f"Hermes_Gateway_{home.name}"
-    return "Hermes_Gateway"
+        return f"{task}_{home.name}"
+    return task
 
 
 def _platform():
@@ -50,12 +53,14 @@ def _platform():
 
 class MachineOps:
     """`hub` is this server's own hub (its `connected` says whether a gateway is dialed in).
-    `hermes` is the command that runs Hermes here (argv), or None when it wasn't found."""
+    `hermes` is the command that runs the agent here (argv), or None when it wasn't found.
+    `agent` is what that agent calls itself."""
 
-    def __init__(self, data, home, hermes, hub, *, python=None, platform=None, watchdog=False, grace=GRACE, cooldown=COOLDOWN, clock=time.time):
+    def __init__(self, data, home, hermes, hub, *, agent=UPSTREAM, python=None, platform=None, watchdog=False, grace=GRACE, cooldown=COOLDOWN, clock=time.time):
         self.data = Path(data)
         self.home = Path(home)
         self.hermes = list(hermes) if hermes else None
+        self.agent = agent or UPSTREAM
         self.hub = hub
         self.python = python or sys.executable
         self.platform = platform or _platform()
@@ -118,7 +123,7 @@ class MachineOps:
         if kind not in KINDS:
             raise ValueError(f"unknown job {kind!r}")
         if self.hermes is None:
-            raise ValueError("Can't find the hermes command on this machine")
+            raise ValueError(f"Can't find the {self.agent} command on this machine")
         if channel is not None and not (isinstance(channel, str) and channel.replace("-", "").replace(".", "").isalnum() and len(channel) < 40):
             raise ValueError("bad channel name")
         if self.running():
@@ -137,7 +142,7 @@ class MachineOps:
             "started_at": self.clock(),
             "hermes": self.hermes,
             "platform": self.platform,
-            "task": _task_name(self.home),
+            "task": _task_name(self.home, self.agent),
             "log": str(log_path),
         }
         temp = self.job_path.with_suffix(".tmp")
@@ -183,7 +188,7 @@ class MachineOps:
     def _updating(self):
         """Hermes's own `hermes update` is running (it restarts the gateway itself when done)."""
         for root in (self.home, self.home.parent.parent):
-            marker = root / UPDATE_MARKER
+            marker = root / UPDATE_MARKER.format(agent=self.agent)
             try:
                 if self.clock() - marker.stat().st_mtime < UPDATE_MARKER_TTL:
                     return True
