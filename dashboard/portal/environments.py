@@ -109,16 +109,18 @@ class Environments:
         self.cached = None
         self.at = 0.0
         self.running = None
+        self.generation = 0
 
     async def read(self):
         if self.cached is not None and self.clock() - self.at < self.ttl:
             return self.cached
-        if self.running is None:
-            self.running = asyncio.ensure_future(self._run())
+        run = self.running
+        if run is None or run.done():
+            run = self.running = asyncio.ensure_future(self._run(self.generation))
         try:
-            result = await asyncio.shield(self.running)
+            result = await asyncio.shield(run)
         finally:
-            if self.running is not None and self.running.done():
+            if self.running is run and run.done():
                 self.running = None
         return result
 
@@ -130,13 +132,16 @@ class Environments:
         if not any(env["name"] == name and env["status"] != "stopped" for env in listed["environments"]):
             raise LookupError(name)
         await _exec([*self.stop_args, name], self.stop_timeout)
-        # The next read shows it stopped.
+        # Drop both the cache and any read that started before this stop finished.
+        self.generation += 1
         self.cached = None
+        self.running = None
 
-    async def _run(self):
+    async def _run(self, generation):
         out = await _exec(self.args, self.timeout)
         result = parse(out)
-        self.cached, self.at = result, self.clock()
+        if generation == self.generation:
+            self.cached, self.at = result, self.clock()
         return result
 
 

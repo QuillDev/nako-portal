@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 
@@ -188,3 +189,80 @@ async def test_a_failing_stop_says_why(world, tmp_path):
     status, body = await _stop(world, "a")
     assert status == 502
     assert "unit is busy" in body["error"]
+
+
+async def test_two_stops_run_at_once(world, tmp_path):
+    listed = json.dumps({"environments": [{"name": "a", "status": "running"}, {"name": "b", "status": "running"}]})
+    command, _ = _command(tmp_path, listed)
+    # Each stop records itself and waits until the other has also started, so serial stops time out.
+    script = tmp_path / "barrier.py"
+    script.write_text(
+        f"import pathlib, sys, time\n"
+        f"root = pathlib.Path({str(tmp_path)!r})\n"
+        f"(root / f'started-{{sys.argv[-1]}}').write_text('1')\n"
+        f"deadline = time.monotonic() + 3.0\n"
+        f"while not ((root / 'started-a').exists() and (root / 'started-b').exists()):\n"
+        f"    if time.monotonic() > deadline:\n"
+        f"        sys.stderr.write('did not overlap')\n"
+        f"        sys.exit(1)\n"
+        f"    time.sleep(0.02)\n"
+    )
+    world.portal.environments = Environments(command, stop_command=[sys.executable, "-I", str(script)])
+    await world.sign_up()
+    first, second = await asyncio.gather(_stop(world, "a"), _stop(world, "b"))
+    assert first == (200, {"stopped": "a"})
+    assert second == (200, {"stopped": "b"})
+
+
+async def test_stop_ignores_an_in_flight_poll_started_before_it_finished(world, tmp_path):
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"environments": [{"name": "a", "status": "running"}]}))
+    poll_started = tmp_path / "poll-started"
+    release_poll = tmp_path / "release-poll"
+    stop_started = tmp_path / "stop-started"
+    release_stop = tmp_path / "release-stop"
+    list_script = tmp_path / "list.py"
+    list_script.write_text(
+        f"import pathlib, sys, time\n"
+        f"state = pathlib.Path({str(state)!r}).read_text()\n"
+        f"if pathlib.Path({str(stop_started)!r}).exists() and not pathlib.Path({str(release_poll)!r}).exists():\n"
+        f"    pathlib.Path({str(poll_started)!r}).write_text('1')\n"
+        f"    while not pathlib.Path({str(release_poll)!r}).exists():\n"
+        f"        time.sleep(0.02)\n"
+        f"sys.stdout.write(state)\n"
+    )
+    stop_script = tmp_path / "stop.py"
+    stop_script.write_text(
+        f"import json, pathlib, time\n"
+        f"pathlib.Path({str(stop_started)!r}).write_text('1')\n"
+        f"while not pathlib.Path({str(release_stop)!r}).exists():\n"
+        f"    time.sleep(0.02)\n"
+        f"pathlib.Path({str(state)!r}).write_text(json.dumps({{'environments': [{{'name': 'a', 'status': 'stopped'}}]}}))\n"
+    )
+    now = [0.0]
+    world.portal.environments = Environments(
+        [sys.executable, "-I", str(list_script)],
+        stop_command=[sys.executable, "-I", str(stop_script)],
+        ttl=5.0,
+        clock=lambda: now[0],
+    )
+    await world.sign_up()
+    # Prime the cache, then start a stop that pauses mid-command.
+    assert (await _get(world))[1]["environments"][0]["status"] == "running"
+    stop_task = asyncio.create_task(_stop(world, "a"))
+    while not stop_started.exists():
+        await asyncio.sleep(0.01)
+    # Expire the cache and start a poll that reads the pre-stop "running" state and pauses.
+    now[0] = 10.0
+    stale_poll = asyncio.create_task(_get(world))
+    while not poll_started.exists():
+        await asyncio.sleep(0.01)
+    # Finish the stop while that pre-stop poll is still in flight.
+    release_stop.write_text("1")
+    assert await stop_task == (200, {"stopped": "a"})
+    # Let the stale poll finish; a read after the stop must still see "stopped", not the stale poll's result.
+    release_poll.write_text("1")
+    await stale_poll
+    status, body = await _get(world)
+    assert status == 200
+    assert body["environments"][0]["status"] == "stopped"
