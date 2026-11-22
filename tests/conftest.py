@@ -273,6 +273,11 @@ class FakeGateway:
         return {"effort": "medium", "speed": "normal", "efforts": ["none", "low", "medium", "high", "max"],
                 "speeds": ["normal", "fast", "auto", "cold"], **self.profile_models.get(self.profile, {"provider": "fast", "model": "tiny"})}
 
+    def model_options(self, provider, model):
+        if (provider, model) == ("big", "large"):
+            return {"efforts": ["low", "high"], "speeds": ["normal", "ultrafast"]}
+        raise ValueError("Unknown model")
+
     def set_model(self, provider, model):
         if not any(p["provider"] == provider and model in p["models"] for p in self.models()):
             raise ValueError("Model not found for that provider")

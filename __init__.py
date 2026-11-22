@@ -1318,6 +1318,24 @@ class HermesBackend:
             return None
         return self._model_client().usage()
 
+    def model_options(self, provider, model):
+        from hermes_cli.config import get_compatible_custom_providers, load_config
+        from hermes_cli.model_switch import switch_model
+
+        controls = sys.modules.get("model_controls")
+        if controls is None:
+            raise ValueError("Install and enable the model-controls plugin")
+        with self._profile_scope():
+            config = load_config()
+            current = config.get("model") if isinstance(config.get("model"), dict) else {}
+            route = switch_model(raw_input=model, explicit_provider=provider, is_global=False,
+                current_model=current.get("default") or "", current_provider=current.get("provider") or "",
+                current_base_url=current.get("base_url") or "", user_providers=config.get("providers"),
+                custom_providers=get_compatible_custom_providers(config))
+            if not route.success:
+                raise ValueError(route.error_message or "That model can't be used")
+            return controls.settings.options(config, route.target_provider, route.new_model, route.base_url)
+
     def set_model_options(self, body):
         return self._model_client().set_model_options(body)
 

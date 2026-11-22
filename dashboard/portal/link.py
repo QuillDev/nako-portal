@@ -79,6 +79,7 @@ BACKEND_SYNC = (
     "mcp_signin",
     "mcp_cancel_signin",
     "mcp_oauth_callback",
+    "model_options",
     "set_model_options",
     "session_model",
 )

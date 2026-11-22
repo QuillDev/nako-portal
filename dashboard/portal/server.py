@@ -170,6 +170,7 @@ class Portal:
         r.add_post("/api/signoff", self.set_sign_off)
         r.add_get("/api/profile", self.profile)
         r.add_post("/api/profile", self.set_profile)
+        r.add_get("/api/model/options", self.model_options)
         r.add_get("/api/model", self.model)
         r.add_post("/api/model", self.set_model)
         r.add_get("/api/usage", self.usage)
@@ -651,6 +652,17 @@ class Portal:
         if providers is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "model-controls is not enabled"}), content_type="application/json")
         return web.json_response({"providers": providers})
+
+    async def model_options(self, request):
+        self._require(request)
+        provider, model = (request.query.get(key, "") for key in ("provider", "model"))
+        if not provider or not model:
+            raise web.HTTPBadRequest(text="Pick a provider and model")
+        try:
+            options = await asyncio.to_thread(self.hub.backend.model_options, provider, model)
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+        return web.json_response(options)
 
     async def set_model(self, request):
         self._require(request)
