@@ -96,6 +96,15 @@ async def test_each_profile_keeps_its_own_model(world):
     assert ((await tuned.json())["effort"], (await tuned.json())["speed"]) == ("high", "normal")
 
 
+async def test_preview_non_default_model_tuning_leaves_default_unchanged(world):
+    await world.sign_up()
+    before = await (await world.http.get(world.url("/api/model"))).json()
+    preview = await world.http.get(world.url("/api/model/options?provider=big&model=large"))
+    assert preview.status == 200
+    assert await preview.json() == {"efforts": ["low", "high"], "speeds": ["normal", "ultrafast"]}
+    assert await (await world.http.get(world.url("/api/model"))).json() == before
+
+
 async def test_a_model_hermes_refuses_changes_nothing(world):
     await world.sign_up()
     refused = await world.post("/api/model", {"provider": "fast", "model": "imaginary"})

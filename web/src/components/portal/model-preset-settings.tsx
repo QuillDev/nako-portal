@@ -1,6 +1,7 @@
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { nanoid } from "nanoid"
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { api } from "@/lib/api"
 import { EllipsisIcon, PlusIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
@@ -62,7 +63,20 @@ function PresetForm({ value, preset, error, onCancel, onSave }: { value: ModelCh
   const selected = route(pick.provider, pick.model)
   const available = routes.some(item => route(item.provider, item.model) === selected)
   const current = pick.provider === value.provider && pick.model === value.model
-  const options = (known: string[] | undefined, saved: string) => [...new Set([...(current ? known ?? [] : []), ...(saved ? [saved] : [])])]
+  const [preview, setPreview] = useState<{ route: string; efforts?: string[]; speeds?: string[]; error?: string } | null>(null)
+  useEffect(() => {
+    if (current || !available) return
+    let active = true
+    const query = new URLSearchParams({ provider: pick.provider, model: pick.model })
+    api<{ efforts: string[]; speeds: string[] }>(`/api/model/options?${query}`).then(
+      result => { if (active) setPreview({ ...result, route: selected }) },
+      () => { if (active) setPreview({ route: selected, error: "Could not load tuning options for this model." }) },
+    )
+    return () => { active = false }
+  }, [available, current, pick.model, pick.provider, selected])
+  const loaded = !current && preview?.route === selected ? preview : null
+  const choices = current ? value : loaded
+  const options = (known: string[] | undefined, saved: string) => [...new Set([...(known ?? []), ...(saved ? [saved] : [])])]
   const tuning = (fieldName: "effort" | "speed", values: string[]) => {
     const label = fieldName === "effort" ? "Effort" : "Speed"
     return <div className="grid min-w-0 gap-1.5">
@@ -90,7 +104,8 @@ function PresetForm({ value, preset, error, onCancel, onSave }: { value: ModelCh
           if (next) setDraft({ ...draft, pick: { provider: next.provider, model: next.model, effort: "", speed: "" } })
         }} />
     </div>
-    <div className="grid grid-cols-2 gap-3">{tuning("effort", options(value.efforts, pick.effort))}{tuning("speed", options(value.speeds, pick.speed))}</div>
+    <div className="grid grid-cols-2 gap-3">{tuning("effort", options(choices?.efforts, pick.effort))}{tuning("speed", options(choices?.speeds, pick.speed))}</div>
+    {loaded?.error && <p role="alert" className="text-destructive">{loaded.error}</p>}
     {error && <p role="alert" className="text-destructive">{error}</p>}
     <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button><Button type="submit" disabled={!draft.name.trim() || !available}>Save preset</Button></div>
   </form>
