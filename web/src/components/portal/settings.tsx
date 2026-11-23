@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { Switch } from "@/components/ui/switch"
+import { GatewayRestart } from "./gateway-restart"
 import { navigate, type Portal } from "@/hooks/use-portal"
 import { api, ApiError } from "@/lib/api"
 import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
@@ -190,6 +191,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     {
       label: "Nako",
       pages: [
+        { id: "gateway", label: "Gateway", icon: NetworkIcon },
         { id: "nako", label: "Model & profile", icon: SparklesIcon },
         ...(usage !== "unsupported" ? [{ id: "usage", label: "Usage", icon: ChartLineIcon }] : []),
         ...(providers ? [{ id: "providers", label: "Providers", icon: PlugIcon }] : []),
@@ -288,6 +290,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     providers: <ProvidersSettings onError={setError} />,
     secrets: <SecretsSettings onError={setError} />,
     mcp: <McpSettings onError={setError} />,
+    gateway: <GatewayRestart />,
     mesh: <MeshSettings portal={portal} />,
     environments: <EnvironmentsSettings />,
     account: (

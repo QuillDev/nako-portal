@@ -146,6 +146,7 @@ class FakeGateway:
         self.hold = False
         self.ask_approval = False
         self.sign_off_error = None
+        self.restart_snapshot = {"instance": "first", "work": []}
         # The adapter's final send can reach the hub after the turn has ended.
         self.send_late = False
         self.sign_off_route = {"provider": "auto", "model": ""}
@@ -272,6 +273,16 @@ class FakeGateway:
             return None
         return {"effort": "medium", "speed": "normal", "efforts": ["none", "low", "medium", "high", "max"],
                 "speeds": ["normal", "fast", "auto", "cold"], **self.profile_models.get(self.profile, {"provider": "fast", "model": "tiny"})}
+
+    async def restart_work(self):
+        return self.restart_snapshot
+
+    async def restart_thread(self, row, resume):
+        if resume:
+            self.received.append(('resumed', row['session']))
+            return 'Resumed'
+        self.restart_snapshot['work'].remove(row)
+        return 'Pause requested'
 
     def model_options(self, provider, model):
         if (provider, model) == ("big", "large"):
