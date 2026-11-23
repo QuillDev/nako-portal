@@ -363,15 +363,17 @@ function ChannelRow({
   );
 }
 
-export function Sidebar({
-  portal,
-  className,
-}: {
-  portal: Portal;
+type SidebarProps = Pick<Portal, "sessions" | "pin" | "archive" | "prefetch" | "setGroup" | "createGroup" | "updateGroup" | "deleteGroup" | "setError" | "rename" | "route" | "outside" | "connected" | "linked" | "hermes" | "me"> & {
+  currentSession?: string;
+  currentTitle?: string;
+  currentSource?: string;
   className?: string;
-}) {
+};
+
+// Streaming text never enters these props; only sidebar-visible state can redraw the list.
+export const Sidebar = memo(function Sidebar({ className, currentSession, currentTitle, currentSource, ...portal }: SidebarProps) {
   const { go, phone, toggle } = useDrawer();
-  const rename = useRenameDialog(portal);
+  const rename = useRenameDialog({ ...portal, current: currentSession ? { session: currentSession, title: currentTitle ?? "" } : null });
   const picker = useGroupPicker(portal);
   const renameGroup = useGroupRename(portal);
   const [folded, fold] = useFolded();
@@ -447,7 +449,7 @@ export function Sidebar({
           className="flex items-center gap-2 pl-1"
           data-tauri-drag-region="deep"
         >
-          {!inBubble && <img alt="" className="size-6" src="/icon-192.png" />}
+          {!inBubble && <img alt="" className="size-6" src="/favicon.png" />}
           <span className="flex-1 font-medium text-sm">Nako</span>
           <Button
             aria-label="New chat"
@@ -516,7 +518,7 @@ export function Sidebar({
           <button
             className={cn(
               "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
-              (portal.route.view === "outside" || (portal.current?.source && portal.current.source !== "portal")) && "bg-accent",
+              (portal.route.view === "outside" || (currentSource && currentSource !== "portal")) && "bg-accent",
             )}
             onClick={() => go("#/elsewhere")}
             type="button"
@@ -602,7 +604,7 @@ export function Sidebar({
       {renameGroup.dialog}
     </aside>
   );
-}
+});
 
 /** Green while the portal and nako are both reachable, amber while this page reconnects to the portal, red while nako is offline. */
 function ConnectionDot({

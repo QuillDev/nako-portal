@@ -400,7 +400,8 @@ export function usePortal() {
       if (model) form.set("model", JSON.stringify(model))
       for (const a of attachments) {
         const name = a.filename || "file"
-        form.append("file", a.url.startsWith("data:") ? dataUrlToFile(a.url, name, a.mediaType) : new File([], name), name)
+        if (!a.url.startsWith("data:")) throw new Error(`Couldn't read ${name}. Please attach it again.`)
+        form.append("file", dataUrlToFile(a.url, name, a.mediaType), name)
       }
       setError("")
       try {

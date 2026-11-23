@@ -3,7 +3,8 @@
 // so each table's toolbar gets a small host element and the menu is portalled into it. The menu
 // itself opens in a body portal, so a short table in a clipped message can't cut it off.
 import { CopyIcon, DownloadIcon, EllipsisIcon, Maximize2Icon } from "lucide-react"
-import { useEffect, useState, type RefObject } from "react"
+import { useLayoutEffect, useRef, useState, type ComponentProps } from "react"
+import type { defaultComponents } from "streamdown"
 import { createPortal } from "react-dom"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { loadedMarkdown } from "@/lib/markdown"
@@ -11,37 +12,25 @@ import { loadedMarkdown } from "@/lib/markdown"
 const TOOLBAR = '[data-streamdown="table-wrapper"]:not(.h-full) > div:first-child'
 const ICON = "size-4 text-muted-foreground"
 
-/** A ⋯ menu in every table under `root`. */
-export function TableMenus({ root }: { root: RefObject<HTMLElement | null> }) {
-  const [hosts, setHosts] = useState<HTMLElement[]>([])
-  useEffect(() => {
-    const el = root.current
-    if (!el) return
-    let frame = 0
-    const scan = () => {
-      frame = 0
-      const next = [...el.querySelectorAll<HTMLElement>(TOOLBAR)].map(bar => {
-        let host = bar.querySelector<HTMLElement>(":scope > [data-table-menu]")
-        if (!host) {
-          host = document.createElement("span")
-          host.dataset.tableMenu = ""
-          bar.append(host)
-        }
-        return host
-      })
-      setHosts(prev => (prev.length === next.length && prev.every((h, i) => h === next[i]) ? prev : next))
+/** Render Streamdown's unchanged table UI; only actual tables get toolbar work. */
+export function MarkdownTable(props: ComponentProps<typeof defaultComponents.table>) {
+  const table = useRef<HTMLTableElement>(null)
+  const [host, setHost] = useState<HTMLElement | null>(null)
+  const Table = loadedMarkdown()!.defaultComponents.table
+  // React has committed the table's toolbar before layout effects run. No subtree observer
+  // is needed, and ordinary Markdown bodies never mount this component at all.
+  useLayoutEffect(() => {
+    const bar = table.current?.closest('[data-streamdown="table-wrapper"]')?.querySelector<HTMLElement>(TOOLBAR)
+    if (!bar) return
+    let next = bar.querySelector<HTMLElement>(":scope > [data-table-menu]")
+    if (!next) {
+      next = document.createElement("span")
+      next.dataset.tableMenu = ""
+      bar.append(next)
     }
-    scan()
-    const observer = new MutationObserver(() => {
-      frame ||= requestAnimationFrame(scan)
-    })
-    observer.observe(el, { childList: true, subtree: true })
-    return () => {
-      observer.disconnect()
-      cancelAnimationFrame(frame)
-    }
-  }, [root])
-  return hosts.map((host, i) => createPortal(<TableMenu host={host} />, host, String(i)))
+    setHost(previous => previous === next ? previous : next)
+  })
+  return <><Table {...props} ref={table} />{host && createPortal(<TableMenu host={host} />, host)}</>
 }
 
 function TableMenu({ host }: { host: HTMLElement }) {

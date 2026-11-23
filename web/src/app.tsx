@@ -2,11 +2,11 @@ import { type ComponentType, lazy, Suspense, useEffect } from "react"
 import { Chat } from "@/components/portal/chat"
 import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
-import { Elsewhere } from "@/components/portal/elsewhere"
 import { Sidebar } from "@/components/portal/sidebar"
 import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { usePortal } from "@/hooks/use-portal"
+import { loadMarkdown } from "@/lib/markdown"
 
 /**
  * A screen kept out of the first download. Once its chunk is in, it renders straight away:
@@ -29,6 +29,7 @@ function screen<P extends object>(load: () => Promise<ComponentType<P>>) {
   return Object.assign(Screen, { preload: () => void get().catch(() => {}) })
 }
 
+const Elsewhere = screen(() => import("@/components/portal/elsewhere").then(m => m.Elsewhere))
 const Gate = screen(() => import("@/components/portal/gate").then(m => m.Gate))
 const DesktopLink = screen(() => import("@/components/portal/desktop-link").then(m => m.DesktopLink))
 const Settings = screen(() => import("@/components/portal/settings").then(m => m.Settings))
@@ -49,12 +50,40 @@ function useWarmSettings(signedIn: boolean) {
 export function App() {
   const portal = usePortal()
   useWarmSettings(Boolean(portal.me?.signed_in))
+  useEffect(() => {
+    if (portal.me?.signed_in && portal.route.view !== "desktop") void loadMarkdown().catch(() => {})
+  }, [portal.me?.signed_in, portal.route.view])
   if (!portal.me) return null
   if (!portal.me.signed_in) return <Gate portal={portal} />
   if (portal.route.view === "desktop") return <DesktopLink query={portal.route.query} />
   return (
     <TooltipProvider>
-      <DrawerLayout list={portal.route.view === "list"} sidebar={<Sidebar portal={portal} />}>
+      <DrawerLayout
+        list={portal.route.view === "list"}
+        sidebar={
+          <Sidebar
+            sessions={portal.sessions}
+            pin={portal.pin}
+            archive={portal.archive}
+            prefetch={portal.prefetch}
+            setGroup={portal.setGroup}
+            createGroup={portal.createGroup}
+            updateGroup={portal.updateGroup}
+            deleteGroup={portal.deleteGroup}
+            setError={portal.setError}
+            rename={portal.rename}
+            route={portal.route}
+            outside={portal.outside}
+            connected={portal.connected}
+            linked={portal.linked}
+            hermes={portal.hermes}
+            me={portal.me}
+            currentSession={portal.current?.session}
+            currentTitle={portal.current?.title}
+            currentSource={portal.current?.source}
+          />
+        }
+      >
         <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings page={portal.route.page} portal={portal} /> : portal.route.view === "outside" ? <Elsewhere portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
       <ChatSearch sessions={portal.sessions} unarchive={portal.unarchive} />
