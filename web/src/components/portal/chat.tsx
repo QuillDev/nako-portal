@@ -228,7 +228,7 @@ function NewChat({ portal }: { portal: Portal }) {
 
 // A session that came in another way (Slack, cron...): its transcript, no composer and no chat
 // controls. The portal only watches it; turns there stream nothing here, so it rereads instead.
-function ReadOnlyChat({ portal, source }: { portal: Portal; source: string }) {
+function ReadOnlyChat({ portal, source, find }: { portal: Portal; source: string; find?: ReactNode }) {
   const c = portal.current!
   const renderer = useMarkdown()
   const markdownError = useMarkdownError()
@@ -246,6 +246,7 @@ function ReadOnlyChat({ portal, source }: { portal: Portal; source: string }) {
           </>
         }
       ><FindInChatButton /></PageHeader>
+      {find}
       <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {loading && <TurnSkeletons count={3} />}
@@ -269,14 +270,18 @@ export function Chat({ portal }: { portal: Portal }) {
   const source = portal.current?.source
   const root = useRef<HTMLDivElement>(null)
   const markdownError = useMarkdownError()
+  const banner = (
+    <>
+      {Boolean(markdownError) && <p role="alert" className="border-b px-4 py-2 text-sm text-muted-foreground">Formatting couldn’t load. <button type="button" className="underline" onClick={() => void retryMarkdown().catch(() => {})}>Try again</button></p>}
+      {portal.current && <ChatFind key={portal.current.session} root={root} session={portal.current.session} />}
+    </>
+  )
   return <div ref={root} className="flex min-h-0 flex-1 flex-col">
-    {Boolean(markdownError) && <p role="alert" className="px-4 py-2 text-sm text-muted-foreground">Formatting couldn’t load. <button type="button" className="underline" onClick={() => void retryMarkdown().catch(() => {})}>Try again</button></p>}
-    {portal.current && <ChatFind key={portal.current.session} root={root} session={portal.current.session} />}
-    {source && source !== "portal" ? <ReadOnlyChat portal={portal} source={source} /> : <PortalChat portal={portal} />}
+    {source && source !== "portal" ? <ReadOnlyChat find={banner} portal={portal} source={source} /> : <PortalChat find={banner} portal={portal} />}
   </div>
 }
 
-function PortalChat({ portal }: { portal: Portal }) {
+function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
   const c = portal.current
   const presence = usePresence()
   // Held on the skeleton until the renderer is in too, so the chat mounts once, at its bottom.
@@ -309,6 +314,7 @@ function PortalChat({ portal }: { portal: Portal }) {
       {rename.dialog}
       {picker.dialog}
       {offline}
+      {find}
       {/* A fresh scroller per opened chat, mounted once its latest page is in, so it starts at the bottom without scrolling there. */}
       <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>
         {/* Scrollable from the first layout (StickToBottom only sets overflow later), so OlderTurns can pin the bottom before paint. */}
