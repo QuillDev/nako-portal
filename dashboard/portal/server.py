@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import hmac
 import json
 import logging
 import mimetypes
 import re
-import secrets
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -17,25 +14,23 @@ from urllib.parse import quote, urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
+from .auth_routes import CHALLENGE_TTL as CHALLENGE_TTL
+from .auth_routes import HANDOFF_TTL as HANDOFF_TTL
+from .auth_routes import PKCE_CHALLENGE as PKCE_CHALLENGE
+from .auth_routes import AuthRoutes
 from .environments import EnvironmentsError
-from .hub import NEEDS_YOU, WORKING, for_app, from_thread_line, page
-from .link import GATEWAY_PATH
+from .hub import NEEDS_YOU, WORKING, for_app, page
+from .local_api import MAX_BODY, SESSION_ID, LocalAPI
+from .local_api import TOOL_RESULT_CHARS as TOOL_RESULT_CHARS
 from .media import media_paths, shown_files
 from .mesh import parse as remote
 from .restart_panel import RestartPanel
 
 log = logging.getLogger("hermes.portal")
 
-CHALLENGE_TTL = 300
 MAX_FILE = 25 * 1024 * 1024
-MAX_BODY = 60 * 1024 * 1024
-# How much of each tool result an agent following another chat gets back (loopback read, ?tools=).
-TOOL_RESULT_CHARS = 600
-SESSION_ID = re.compile(r"^[\w.-]{1,120}$")
 ANDROID_APK_PATH = "/android/nako.apk"
 ANDROID_PACKAGE = "moe.nakode.portal"
-# How long the desktop app has to collect a sign-in the browser approved.
-HANDOFF_TTL = 120
 # Built files carry their content hash in the name, so a browser can keep them for good.
 IMMUTABLE = "public, max-age=31536000, immutable"
 # What the browser tab says after an MCP server's sign-in page sends it back: title, line, status.
@@ -54,7 +49,6 @@ CHECK_IN_BACKGROUND = "max-age=0, stale-while-revalidate=604800"
 SHOWN_FILE_CACHE = "private, max-age=86400"
 # How long the files a transcript shows are remembered before it's read again to check one.
 SHOWN_FILES_TTL = 30
-PKCE_CHALLENGE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 # Tauri updater platform keys, and the release files they point at (no paths).
 DESKTOP_PLATFORM = re.compile(r"^(linux|windows|darwin)-(x86_64|aarch64)$")
@@ -73,7 +67,7 @@ def _index(raw):
     return int(raw)
 
 
-class Portal:
+class Portal(AuthRoutes, LocalAPI):
     def __init__(
         self,
         hub,
@@ -284,184 +278,6 @@ class Portal:
 
         return route
 
-    def local_app(self, token, link=None):
-        """Starts chats for scripts on this machine (an agent handing work to a new thread), and
-        is where the gateway dials in (`link`).
-
-        Served on its own loopback port, never through the public origin, and every call
-        carries the token from a 0600 file only this account can read.
-        """
-        expected = f"Bearer {token}".encode()
-
-        @web.middleware
-        async def guard(request, handler):
-            if not secrets.compare_digest(request.headers.get("Authorization", "").encode(), expected):
-                return web.json_response({"error": "bad token"}, status=401)
-            try:
-                return await handler(request)
-            except ValueError as error:
-                return web.json_response({"error": str(error)}, status=400)
-            except ConnectionError:
-                return web.json_response({"error": "Nako is offline right now"}, status=503)
-
-        async def brief(request):
-            body = await request.json()
-            text = str(body.get("text") or "")
-            if not text.strip():
-                raise ValueError("Write something first")
-            return body, text
-
-        async def start(request):
-            body, text = await brief(request)
-            hub = await self._hub()
-            started = await hub.create(
-                text, title=body.get("title") or None, cwd=body.get("cwd") or None, yolo=bool(body.get("yolo")), archived=bool(body.get("archived")), sender=body.get("from") or None
-            )
-            return web.json_response(started)
-
-        async def send(request):
-            # Same turn lock as a typed message: a busy thread queues or steers it.
-            # `from`: the thread sending it (nako-spawn passes its own session), shown as that thread's message.
-            body, text = await brief(request)
-            hub, session = await self._target(self._session(request))
-            if hub is not self.hub:
-                return web.json_response(await hub.send(session, await self._signed(text, body.get("from")), []))
-            return web.json_response(await hub.send(session, text, sender=body.get("from") or None))
-
-        async def handoff(request):
-            hub = await self._hub()
-            return web.json_response(await hub.adopt(self._session(request)))
-
-        async def read(request):
-            """Where a chat stands, for an agent following it: running or not, any open question,
-            its last few messages (?last=, default 4) as plain text, and with ?tools=N the last N
-            tool calls among them with the start of each result. It reads with this machine's
-            gateway down too (from the session store), and says so in `gateway`."""
-            session = self._session(request)
-            hub, inner = await self._target(session) if remote(session) else (self.hub, session)
-            try:
-                opened = await hub.open(inner, True)
-            except RuntimeError:
-                # A machine on a plugin from before tool results: its transcript without them.
-                opened = await hub.open(inner)
-            last = max(1, min(int(request.query.get("last") or 4), 50))
-            tools = max(0, min(int(request.query.get("tools") or 0), 50))
-            rows = opened.get("messages") or []
-            spoken = [i for i, m in enumerate(rows) if m.get("role") in ("user", "assistant") and (m.get("text") or "").strip()]
-            window = spoken[-last:]
-            calls = [m for m in rows[window[0] if window else 0 :] if m.get("role") == "tool"][-tools:] if tools else []
-            return web.json_response(
-                {
-                    "session": request.match_info["session"],
-                    "title": opened.get("title"),
-                    "running": bool(opened.get("running")),
-                    "status": opened.get("status"),
-                    "requests": opened.get("requests") or [],
-                    "gateway": opened.get("gateway", True),
-                    "last_active": opened.get("last_active"),
-                    "messages": [{"role": rows[i]["role"], "text": rows[i]["text"]} for i in window],
-                    **({"tools": [{"name": m.get("name"), "context": m.get("context") or "", "result": (m.get("result") or "")[:TOOL_RESULT_CHARS]} for m in calls]} if tools else {}),
-                }
-            )
-
-        async def stop(request):
-            hub, session = await self._target(self._session(request))
-            return web.json_response(await hub.interrupt(session))
-
-        async def machines(request):
-            if self.node is not None:
-                return web.json_response(await self.node.call("machines"))
-            return web.json_response([self.mesh.me()] + self.mesh.machines() if self.mesh is not None else [])
-
-        async def machine_op(request, op, *args):
-            """A restart, update or job check on another machine, run by that machine's portal server."""
-            machine = request.match_info["machine"]
-            if self.node is not None:
-                return web.json_response(await self.node.call("machine_op", machine, op, list(args)))
-            if self.mesh is None:
-                raise ValueError("This machine isn't in a mesh")
-            return web.json_response(await self.mesh.machine_op(machine, op, *args))
-
-        async def restart_gateway(request):
-            return await machine_op(request, "restart_gateway")
-
-        async def update(request):
-            body = await request.json() if request.can_read_body else {}
-            return await machine_op(request, "update_hermes", body.get("channel") or None)
-
-        async def job(request):
-            return await machine_op(request, "job")
-
-        async def threads(request):
-            """Another machine's chats, so an agent can pick one up."""
-            machine = request.match_info["machine"]
-            if self.node is not None:
-                return web.json_response(await self.node.call("threads", machine))
-            if self.mesh is None:
-                raise ValueError("This machine isn't in a mesh")
-            return web.json_response(await self.mesh.threads(machine))
-
-        async def answer(request):
-            """Answer a question or approval a chat on another machine is waiting on."""
-            body = await request.json()
-            request_id = str(body.get("request") or "")
-            if not request_id:
-                raise ValueError("Say which request")
-            hub, _session = await self._target(self._session(request))
-            if hub is self.hub:
-                raise ValueError("Answer this machine's own questions in its chat")
-            return web.json_response(await hub.answer(request_id, body.get("result") or {}))
-
-        async def start_on(request):
-            """A new chat on another machine, running a brief from a thread here."""
-            body, text = await brief(request)
-            machine = request.match_info["machine"]
-            signed = await self._signed(text, body.get("from"))
-            cwd, title, yolo = body.get("cwd") or None, body.get("title") or None, body.get("yolo", True) is not False
-            if self.node is not None:
-                return web.json_response(await self.node.call("start", machine, signed, title, cwd, yolo))
-            if self.mesh is None:
-                raise ValueError("This machine isn't in a mesh")
-            return web.json_response(await self.mesh.machine_hub(machine).create(signed, [], title, cwd, yolo))
-
-        app = web.Application(client_max_size=MAX_BODY, middlewares=[guard])
-        app.router.add_post("/sessions", start)
-        app.router.add_get("/sessions/{session}", read)
-        app.router.add_post("/sessions/{session}/messages", send)
-        app.router.add_post("/sessions/{session}/stop", stop)
-        app.router.add_post("/sessions/{session}/handoff", handoff)
-        app.router.add_get("/mesh/machines", machines)
-        app.router.add_get("/mesh/machines/{machine}/sessions", threads)
-        app.router.add_post("/sessions/{session}/answer", answer)
-        app.router.add_post("/mesh/machines/{machine}/sessions", start_on)
-        app.router.add_post("/mesh/machines/{machine}/gateway/restart", restart_gateway)
-        app.router.add_post("/mesh/machines/{machine}/update", update)
-        app.router.add_get("/mesh/machines/{machine}/job", job)
-        app.router.add_post("/sessions/{session}/group", self.set_group)
-        app.router.add_get("/groups", self.groups)
-        app.router.add_post("/groups", self.create_group)
-        app.router.add_post("/groups/{group}", self.update_group)
-        app.router.add_post("/groups/{group}/remove", self.delete_group)
-        if link is not None:
-            app.router.add_get(GATEWAY_PATH, link.handle)
-        return app
-
-    async def _signed(self, text, sender):
-        """A message from a thread here, going to another machine: it opens with the line saying
-        which thread sent it, so that machine's model doesn't read it as the person's own words."""
-        if not sender or text.startswith("/"):
-            return text
-        if not SESSION_ID.match(str(sender)):
-            raise ValueError("The sending thread's id isn't a session id")
-        try:
-            title = await asyncio.to_thread(self.hub.backend.title_of, str(sender))
-        except Exception:  # noqa: BLE001 - Optional backend titles must not block message delivery.
-            title = None
-        # Named the way the other machine reaches it, so its agent can answer that thread.
-        here = self.mesh_name
-        if here:
-            sender, title = f"mesh.{here}.{sender}", f"{title or 'untitled'} on {here}"
-        return from_thread_line(str(sender), title) + text
 
     @web.middleware
     async def _guard(self, request, handler):
@@ -490,35 +306,6 @@ class Portal:
         if request.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
 
-    def _signed_in(self, request):
-        return self.store.login(request.cookies.get(self.cookie))
-
-    def _require(self, request):
-        credential = self._signed_in(request)
-        if credential is None:
-            raise web.HTTPUnauthorized(text=json.dumps({"error": "sign in"}), content_type="application/json")
-        return credential
-
-    def _set_login(self, response, credential_id):
-        token = self.store.start_login(credential_id)
-        response.set_cookie(
-            self.cookie, token, max_age=30 * 24 * 3600, path="/", secure=self.secure, httponly=True, samesite="Strict"
-        )
-
-    def _challenge(self, kind, **extra):
-        now = self.clock()
-        for key in [k for k, v in self.challenges.items() if v["expires"] < now]:
-            self.challenges.pop(key, None)
-        cid = secrets.token_urlsafe(16)
-        challenge = secrets.token_bytes(32)
-        self.challenges[cid] = {"kind": kind, "challenge": challenge, "expires": now + CHALLENGE_TTL, **extra}
-        return cid, challenge
-
-    def _take_challenge(self, cid, kind):
-        entry = self.challenges.pop(str(cid or ""), None)
-        if entry is None or entry["kind"] != kind or entry["expires"] < self.clock():
-            raise ValueError("That sign-in attempt expired. Try again.")
-        return entry
 
     @staticmethod
     def _session(request):
@@ -544,16 +331,6 @@ class Portal:
     def mesh_name(self):
         return self.mesh.name if self.mesh is not None else self.node.name if self.node is not None else None
 
-    # Sign-in
-
-    async def me(self, request):
-        signed_in = self._signed_in(request) is not None
-        me = {"signed_in": signed_in, "has_passkeys": self.store.has_credentials(), "connected": self.hub.connected}
-        if signed_in:
-            me["name"] = self.store.meta("name", "")
-            me["environments"] = self.environments is not None
-            me["machine_load"] = self.machine_load is not None
-        return web.json_response(me)
 
     async def list_environments(self, request):
         """What the owner's environments command says runs here; 404 when none is set."""
@@ -709,128 +486,6 @@ class Portal:
         except ValueError as error:
             raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
 
-    async def register_options(self, request):
-        body = await request.json()
-        setup = body.get("setup")
-        signed_in = self._signed_in(request)
-        if signed_in is None and not self.store.setup_link_valid(setup):
-            raise web.HTTPForbidden(text=json.dumps({"error": "This setup link is invalid or used up."}), content_type="application/json")
-        user_id = self.store.meta("user_id")
-        if user_id is None:
-            user_id = webauthn.b64url(secrets.token_bytes(16))
-            self.store.set_meta("user_id", user_id)
-        cid, challenge = self._challenge("register", setup=None if signed_in else setup)
-        existing = [{"type": "public-key", "id": webauthn.b64url(c["id"])} for c in self.store.credentials()]
-        return web.json_response(
-            {
-                "challenge_id": cid,
-                "publicKey": {
-                    "challenge": webauthn.b64url(challenge),
-                    "rp": {"id": self.rp_id, "name": self.rp_name},
-                    "user": {"id": user_id, "name": "owner", "displayName": "Nako"},
-                    "pubKeyCredParams": [{"type": "public-key", "alg": webauthn.ES256}, {"type": "public-key", "alg": webauthn.RS256}],
-                    "authenticatorSelection": {"residentKey": "required", "userVerification": "required"},
-                    "attestation": "none",
-                    "excludeCredentials": existing,
-                    "timeout": CHALLENGE_TTL * 1000,
-                },
-            }
-        )
-
-    async def register_finish(self, request):
-        body = await request.json()
-        entry = self._take_challenge(body.get("challenge_id"), "register")
-        if entry["setup"] is None and self._signed_in(request) is None:
-            raise web.HTTPForbidden()
-        credential = body.get("credential") or {}
-        registered = webauthn.verify_registration(
-            client_data_json=webauthn.unb64url(credential.get("clientDataJSON", "")),
-            attestation_object=webauthn.unb64url(credential.get("attestationObject", "")),
-            challenge=entry["challenge"],
-            origin=self.origins,
-            rp_id=self.rp_id,
-        )
-        if entry["setup"] is not None and not self.store.use_setup_link(entry["setup"]):
-            raise web.HTTPForbidden(text=json.dumps({"error": "This setup link was already used."}), content_type="application/json")
-        label = str(body.get("label") or "passkey")[:60]
-        self.store.add_credential(registered.credential_id, registered.cose_key, registered.sign_count, label)
-        log.info("Nako portal registered a passkey (%s)", label)
-        response = web.json_response({"ok": True})
-        self._set_login(response, registered.credential_id)
-        return response
-
-    async def login_options(self, request):
-        cid, challenge = self._challenge("login")
-        return web.json_response(
-            {
-                "challenge_id": cid,
-                "publicKey": {
-                    "challenge": webauthn.b64url(challenge),
-                    "rpId": self.rp_id,
-                    "userVerification": "required",
-                    "allowCredentials": [],
-                    "timeout": CHALLENGE_TTL * 1000,
-                },
-            }
-        )
-
-    async def login_finish(self, request):
-        body = await request.json()
-        entry = self._take_challenge(body.get("challenge_id"), "login")
-        credential = body.get("credential") or {}
-        credential_id = webauthn.unb64url(credential.get("id", ""))
-        stored = self.store.credential(credential_id)
-        if stored is None:
-            raise web.HTTPForbidden(text=json.dumps({"error": "This passkey isn't registered here."}), content_type="application/json")
-        count = webauthn.verify_assertion(
-            client_data_json=webauthn.unb64url(credential.get("clientDataJSON", "")),
-            authenticator_data=webauthn.unb64url(credential.get("authenticatorData", "")),
-            signature=webauthn.unb64url(credential.get("signature", "")),
-            challenge=entry["challenge"],
-            origin=self.origins,
-            rp_id=self.rp_id,
-            cose_key=stored["cose_key"],
-            stored_sign_count=stored["sign_count"],
-        )
-        self.store.used_credential(credential_id, count)
-        response = web.json_response({"ok": True})
-        self._set_login(response, credential_id)
-        return response
-
-    async def logout(self, request):
-        token = request.cookies.get(self.cookie)
-        self.store.end_login(token)
-        await self._revoke_clients(lambda client: client.token == token)
-        response = web.json_response({"ok": True})
-        response.del_cookie(self.cookie, path="/")
-        return response
-
-    async def passkeys(self, request):
-        current = self._require(request)
-        return web.json_response(
-            [
-                {"id": webauthn.b64url(c["id"]), "label": c["label"], "created_at": c["created_at"], "last_used_at": c["last_used_at"], "current": c["id"] == current}
-                for c in self.store.credentials()
-            ]
-        )
-
-    async def remove_passkey(self, request):
-        current = self._require(request)
-        target = webauthn.unb64url(request.match_info["id"])
-        if target == current:
-            raise ValueError("Sign in with another passkey to remove this one")
-        self.store.remove_credential(target)
-        await self._revoke_clients(lambda client: client.credential == target)
-        return web.json_response({"ok": True})
-
-    async def _revoke_clients(self, matches):
-        clients = [c for c in self._clients if matches(c)]
-        for client in clients:
-            client.revoked = True
-            self.hub.leave(client)
-        await asyncio.gather(*(c.ws.close(code=1008, message=b"Login revoked") for c in clients))
-
-    # Conversations
 
     async def search(self, request):
         self._require(request)
@@ -965,12 +620,6 @@ class Portal:
     # Chat groups. The same handlers serve the app (signed in) and the loopback API, which is how
     # the agent's group tools reach them.
 
-    def _auth(self, handler):
-        async def signed(request):
-            self._require(request)
-            return await handler(request)
-
-        return signed
 
     async def _grouped(self):
         """This machine's chats with their group, and the groups."""
@@ -1397,37 +1046,7 @@ class Portal:
 
     # Desktop app. It can't use the portal's passkeys (they live in the browser), so the browser signs
     # in and hands the session over: the app sends the browser here with a PKCE challenge and a
-    # loopback port, the signed-in page approves and passes a one-time code to the loopback, and
-    # the app's webview trades the code plus its secret verifier for its own login cookie.
 
-    async def desktop_link(self, request):
-        credential = self._require(request)
-        body = await request.json()
-        challenge = str(body.get("challenge") or "")
-        if not PKCE_CHALLENGE.match(challenge):
-            raise ValueError("That sign-in request is malformed")
-        now = self.clock()
-        for key in [k for k, v in self.handoffs.items() if v["expires"] < now]:
-            self.handoffs.pop(key, None)
-        code = secrets.token_urlsafe(32)
-        self.handoffs[code] = {"challenge": challenge, "credential": credential, "expires": now + HANDOFF_TTL}
-        return web.json_response({"code": code})
-
-    async def desktop_session(self, request):
-        entry = self.handoffs.pop(request.query.get("code", ""), None)
-        verifier = request.query.get("verifier", "").encode()
-        proof = webauthn.b64url(hashlib.sha256(verifier).digest())
-        valid = (
-            entry is not None
-            and entry["expires"] >= self.clock()
-            and hmac.compare_digest(proof, entry["challenge"])
-            and self.store.credential(entry["credential"]) is not None
-        )
-        if not valid:
-            return web.Response(status=303, headers={"Location": "/#signin=failed"})
-        response = web.Response(status=303, headers={"Location": "/"})
-        self._set_login(response, entry["credential"])
-        return response
 
     def _published_desktop(self):
         """The published release: its version and, per platform, the file and its updater signature.

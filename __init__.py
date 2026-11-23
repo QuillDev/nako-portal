@@ -36,21 +36,49 @@ import time
 import uuid
 from contextlib import closing
 from pathlib import Path
-from typing import Any
 
 log = logging.getLogger("hermes.portal")
 PLUGIN = "nako-portal"
 
 
-def _agent_name():
-    """What the agent this plugin is loaded into calls itself (its command, its toolset prefix).
+# Bootstrap the path loader without importing this directory as a Python package.
+_runtime_spec = importlib.util.spec_from_file_location("nako_portal_runtime", Path(__file__).with_name("plugin_runtime.py"))
+if _runtime_spec.name not in sys.modules:
+    _runtime = importlib.util.module_from_spec(_runtime_spec)
+    sys.modules[_runtime_spec.name] = _runtime
+    _runtime_spec.loader.exec_module(_runtime)
+_runtime = sys.modules[_runtime_spec.name]
+_load_sibling = _runtime._load_sibling
+_agent_name = _runtime._agent_name
+_secrets_api = _runtime._secrets_api
+_need_secrets = _runtime._need_secrets
 
-    A rebranded build renames its core modules together with those, so the name is read off one."""
-    try:
-        import hermes_constants as constants
-    except ImportError:  # no agent on the path (tests)
-        return "hermes"
-    return constants.__name__.partition("_")[0]
+# Compatibility exports for callers that import helpers from the plugin entry point.
+_providers = _load_sibling("nako_portal_providers", "plugin_providers.py")
+_mcp = _load_sibling("nako_portal_mcp", "plugin_mcp.py")
+_adapter_module = _load_sibling("nako_portal_adapter", "plugin_adapter.py")
+_provider_accounts = _providers._provider_accounts
+LOOPBACK = _providers.LOOPBACK
+_provider_catalog = _providers._provider_catalog
+_ScopedEnv = _providers._ScopedEnv
+_account_status = _providers._account_status
+_add_accounts = _providers._add_accounts
+_oauth_routes = _providers._oauth_routes
+_default_endpoint = _providers._default_endpoint
+_provider_row = _providers._provider_row
+FLOW_HOME = _mcp.FLOW_HOME
+MCP_SIGNIN_TTL = _mcp.MCP_SIGNIN_TTL
+_flow_home = _mcp._flow_home
+_mcp_configs = _mcp._mcp_configs
+_codex_runtime = _mcp._codex_runtime
+_mcp_redact = _mcp._mcp_redact
+_mcp_tool_filters = _mcp._mcp_tool_filters
+_mcp_tool_on = _mcp._mcp_tool_on
+_mcp_row = _mcp._mcp_row
+_mcp_pending_row = _mcp._mcp_pending_row
+SecretSurface = _adapter_module.SecretSurface
+QUIET_DISPLAY = _adapter_module.QUIET_DISPLAY
+_quiet_display_defaults = _adapter_module._quiet_display_defaults
 
 
 AGENT = _agent_name()
@@ -397,7 +425,7 @@ def _local_token(data):
     return path.read_text().strip()
 
 
-class HermesBackend:
+class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
     """The hub's view of Hermes: the gateway's session store and this adapter's inbound path.
 
     The portal shows one profile at a time (Settings). Its chats, history and new threads all
@@ -418,6 +446,9 @@ class HermesBackend:
         self.mcp_installs = {}
         self.mcp_flows = {}
         self.mcp_lock = threading.Lock()
+
+    def _mcp_changed(self):
+        _hub_tell("mcp_changed")
 
     @property
     def store(self):
@@ -892,435 +923,6 @@ class HermesBackend:
     def remove_secret(self, name):
         return self._scoped(_need_secrets().remove, name)
 
-    # Providers: the catalog `hermes model` offers, and the two ways to sign one in.
-
-    def providers(self, *, home=None):
-        """What the shown profile can run on and whether it's already set up. Read inside that
-        profile's own scope, the way its turns see keys: another profile's key in the gateway's
-        environment must not count. Nothing secret comes back."""
-        with self._profile_scope(home):
-            env = _ScopedEnv()
-            accounts = _account_status()
-            rows = [row for row in (_provider_row(entry, env, accounts) for entry in _provider_catalog()) if row is not None]
-            for row in rows:
-                if row["kind"] != "key":
-                    _add_accounts(row)
-            return rows
-
-    def set_provider_key(self, slug, value):
-        """Save an API key to the profile on screen, under the provider's own variable name."""
-        home = self._home()
-        from hermes_cli.config import save_env_value
-
-        row = self._provider_for_key(slug, home=home)
-        key = str(value or "").strip()
-        if not key:
-            raise ValueError("Paste a key first")
-        self._scoped(lambda: save_env_value(row["env_var"], key), home=home)
-
-    def remove_provider_key(self, slug):
-        home = self._home()
-        from hermes_cli.config import remove_env_value
-
-        row = self._provider_for_key(slug, home=home)
-        for name in row["env_vars"]:
-            try:
-                self._scoped(remove_env_value, name, home=home)
-            except FileNotFoundError:  # a variable that was never set is already the goal
-                log.debug("portal: provider %s: nothing to remove for %s", slug, name)
-
-    def _provider_for_key(self, slug, *, home=None):
-        row = next((r for r in self.providers(home=home) if r["slug"] == slug), None)
-        if row is None:
-            raise ValueError("That provider isn't one this page can set up")
-        if row["kind"] != "key":
-            raise ValueError("That provider doesn't take an API key here")
-        return row
-
-    def start_provider_signin(self, slug):
-        """Begin a provider's device-code sign-in: the code and link to show, for polling after."""
-        routes = _oauth_routes()
-        if slug not in routes._DEVICE_CODE_STARTERS:
-            raise ValueError("That provider signs in from a terminal on this machine")
-        body = self._scoped(lambda: asyncio.run(routes._start_device_code_flow(slug)))
-        return {k: body[k] for k in ("session_id", "user_code", "verification_url", "expires_in", "poll_interval")}
-
-    def provider_signin(self, slug, session):
-        """How a started sign-in is going: pending until the provider is approved, then done."""
-        routes = _oauth_routes()
-        with routes._oauth_sessions_lock:
-            state = routes._oauth_sessions.get(str(session))
-        if state is None or state.get("provider") != slug:
-            raise ValueError("That sign-in expired. Start it again")
-        status = "cancelled" if state.get("cancelled") else state.get("status")
-        return {"status": status, "error": state.get("error_message")}
-
-    # Several accounts per provider: one sign-in that adds a new account or refreshes the one
-    # that came back (provider_accounts.py decides which), and removing one.
-
-    def _account_source(self, slug):
-        source = _provider_accounts().source_for(str(slug))
-        if source is None:
-            raise ValueError("That provider has a single sign-in")
-        return source
-
-    def start_account_signin(self, slug, target=None):
-        """Begin a sign-in: a link and a code field (`paste`), or a code to enter (`code`)."""
-        from gateway.run import _profile_runtime_scope
-
-        source = self._account_source(slug)
-        home = Path(self._home())
-        with self._profile_scope():
-            return source.start(str(target) if target else None, lambda: _profile_runtime_scope(home))
-
-    def finish_account_signin(self, slug, attempt, code):
-        """Redeem a pasted code: `{outcome: added | refreshed, label, email, plan}`."""
-        source = self._account_source(slug)
-        with self._profile_scope():
-            return source.finish(str(attempt), str(code or ""))
-
-    def account_signin(self, slug, attempt):
-        """How a code sign-in is going: pending, then done with its outcome."""
-        source = self._account_source(slug)
-        with self._profile_scope():
-            return source.status(str(attempt))
-
-    def cancel_account_signin(self, slug, attempt):
-        source = self._account_source(slug)
-        with self._profile_scope():
-            source.cancel(str(attempt))
-
-    def remove_account(self, slug, account):
-        """Remove one of a provider's accounts from the profile on screen."""
-        source = self._account_source(slug)
-        with self._profile_scope():
-            source.remove(str(account))
-
-    # MCP servers: the list `hermes mcp` keeps in the shown profile's config.yaml. Every change
-    # goes through Hermes's own config helpers, then the running gateway is brought in step the
-    # way Desktop's MCP page does it (reconcile, refresh cached agents, recopy for Codex).
-
-    def mcp_servers(self):
-        """The shown profile's servers and how each is doing; None on a Hermes without MCP."""
-        try:
-            from tools.mcp_tool_discovery import get_mcp_status
-        except ImportError:
-            return None
-        home = str(self._home())
-        with self._profile_scope():
-            servers, plugins = _mcp_configs()
-            live = {row["name"]: row for row in get_mcp_status(servers)}
-            codex = _codex_runtime()
-            rows = [_mcp_row(name, cfg, plugins.get(name), live.get(name) or {}, codex) for name, cfg in sorted(servers.items())]
-        with self.mcp_lock:
-            pending = {name: dict(state) for (where, name), state in self.mcp_installs.items() if where == home}
-        for row in rows:
-            state = pending.pop(row["name"], None)
-            if state and state["status"] == "installing":
-                row["installing"] = True
-        rows += [_mcp_pending_row(name, state) for name, state in sorted(pending.items())]
-        return {"servers": rows, "codex": codex}
-
-    def mcp_catalog(self):
-        """The servers Hermes's catalog offers, with what each needs before it can run."""
-        from hermes_cli import mcp_catalog
-        from hermes_cli.config import get_env_value
-
-        with self._profile_scope():
-            rows = []
-            for entry in mcp_catalog.list_catalog():
-                rows.append({
-                    "name": entry.name,
-                    "description": entry.description or "",
-                    "transport": entry.transport.type,
-                    "url": entry.transport.url or "",
-                    "command": entry.transport.command or "",
-                    "args": list(entry.transport.args or []),
-                    "auth": getattr(entry.auth, "type", "none") or "none",
-                    "env": [{"name": spec.name, "prompt": spec.prompt, "required": spec.required, "secret": spec.secret,
-                             "saved": bool(spec.secret and get_env_value(spec.name))} for spec in entry.auth.env or []],
-                    "source": entry.install.url if entry.install else "",
-                    "post_install": (entry.post_install or "").strip(),
-                    "installed": mcp_catalog.is_installed(entry.name),
-                })
-            return rows
-
-    def mcp_install(self, name, env=None):
-        """Install a catalog server for the shown profile. Keys it declares are saved first (secrets
-        to `.env`); the install itself (a clone and build for some) runs on in the background."""
-        from hermes_cli import mcp_catalog
-        from hermes_cli.config import get_env_value, save_env_value, validate_env_var_name_for_write
-
-        entry = mcp_catalog.get_entry(str(name or ""))
-        if entry is None:
-            raise ValueError("That server isn't in the catalog")
-        specs = {spec.name: spec for spec in entry.auth.env or []}
-        values = {str(k): str(v).strip() for k, v in (env or {}).items() if str(v or "").strip()}
-        unknown = sorted(set(values) - set(specs))
-        if unknown:
-            raise ValueError(f"{entry.name} doesn't use {', '.join(unknown)}")
-        for key in values:
-            validate_env_var_name_for_write(key)
-        home = self._home()
-        with self._profile_scope():
-            missing = [s.name for s in specs.values() if s.required and s.name not in values and not (s.secret and get_env_value(s.name))]
-            if missing:
-                raise ValueError(f"{entry.name} needs {', '.join(missing)}")
-            for key, value in values.items():
-                if specs[key].secret:
-                    save_env_value(key, value)
-        key = (str(home), entry.name)
-        with self.mcp_lock:
-            if (self.mcp_installs.get(key) or {}).get("status") == "installing":
-                raise ValueError(f"{entry.name} is already installing")
-            self.mcp_installs[key] = {"status": "installing", "error": ""}
-        threading.Thread(target=self._mcp_install_run, args=(home, entry, values), daemon=True, name=f"portal-mcp-install-{entry.name}").start()
-        return {"name": entry.name}
-
-    def _mcp_install_run(self, home, entry, values):
-        from gateway.run import _profile_runtime_scope
-        from hermes_cli import mcp_catalog
-        from tools.mcp_oauth import suppress_interactive_oauth
-
-        key = (str(home), entry.name)
-        try:
-            with _profile_runtime_scope(Path(home)), suppress_interactive_oauth():
-                mcp_catalog.install_entry(entry, enable=True, preloaded_env=values or None)
-            with self.mcp_lock:
-                self.mcp_installs.pop(key, None)
-            self._mcp_apply(home)
-        except Exception as error:  # noqa: BLE001 - MCP installers can fail with plugin-defined exceptions.
-            log.warning("portal: MCP install of %s failed: %s", entry.name, error)
-            with self.mcp_lock:
-                self.mcp_installs[key] = {"status": "failed", "error": _mcp_redact(error) or "The install failed"}
-        _hub_tell("mcp_changed")
-
-    def mcp_add(self, spec):
-        """Add a server by hand: a URL (with an optional token or browser sign-in) or a command
-        with its arguments and environment, checked the way `hermes mcp add` checks it."""
-        from hermes_cli.mcp_config import _save_bearer_auth_token, _save_mcp_server
-        from hermes_cli.web_models import MCPServerCreate
-        from hermes_cli.web_server_mcp import _normalize_mcp_server_create
-        from pydantic import SecretStr
-
-        spec = dict(spec or {})
-        token = str(spec.pop("token", "") or "").strip()
-        body = MCPServerCreate(
-            name=str(spec.get("name") or ""), url=spec.get("url") or None, command=spec.get("command") or None,
-            args=[str(a) for a in spec.get("args") or []], env={str(k): str(v) for k, v in (spec.get("env") or {}).items()},
-            auth=spec.get("auth") or ("header" if token else None), bearer_token=SecretStr(token) if token else None)
-        name, server_config, bearer = _normalize_mcp_server_create(body)
-        with self._profile_scope():
-            servers, _plugins = _mcp_configs()
-            if name in servers:
-                raise ValueError(f"There's already a server named {name}")
-            if bearer is not None:
-                server_config["headers"] = _save_bearer_auth_token(name, bearer)
-            if not _save_mcp_server(name, server_config):
-                raise ValueError(f"{name} was refused: its command looks unsafe")
-        self._mcp_apply()
-        return {"name": name}
-
-    def mcp_set_enabled(self, name, enabled):
-        from hermes_cli.config import load_config, save_config
-
-        with self._profile_scope():
-            self._mcp_own(name)
-            config = load_config()
-            config["mcp_servers"][name]["enabled"] = bool(enabled)
-            save_config(config)
-        self._mcp_apply()
-
-    def mcp_remove(self, name):
-        from hermes_cli.mcp_config import _remove_mcp_server
-
-        home = str(self._home())
-        with self.mcp_lock:
-            failed = self.mcp_installs.get((home, name), {}).get("status") == "failed"
-            if failed:
-                self.mcp_installs.pop((home, name), None)
-        if failed:
-            return
-        with self._profile_scope():
-            self._mcp_own(name)
-            _remove_mcp_server(name)
-            try:  # its sign-in goes with it, as `hermes mcp remove` does
-                from tools.mcp_oauth_manager import get_manager
-
-                get_manager().remove(name)
-            except Exception:
-                log.debug("portal: no MCP sign-in to clean up for %s", name, exc_info=True)
-        self._mcp_apply()
-
-    def mcp_test(self, name):
-        """Connect to one server, list its tools, disconnect: whether it works, and which tools the
-        profile has switched on."""
-        from hermes_cli.mcp_config import _oauth_tokens_present, _probe_single_server
-        from tools.mcp_oauth import suppress_interactive_oauth
-
-        with self._profile_scope():
-            servers, _plugins = _mcp_configs()
-            cfg = servers.get(name)
-            if cfg is None:
-                raise ValueError(f"No server named {name}")
-            try:
-                with suppress_interactive_oauth():
-                    tools = _probe_single_server(name, cfg)
-            except Exception as error:  # noqa: BLE001 - A failed third-party probe becomes a result for the UI.
-                return {"ok": False, "error": _mcp_redact(error) or "It didn't connect", "tools": []}
-            if cfg.get("auth") == "oauth" and not _oauth_tokens_present(name):
-                return {"ok": False, "error": "Sign in first", "tools": []}
-        include, exclude = _mcp_tool_filters(cfg)
-        return {"ok": True, "error": "", "tools": [{"name": t, "description": d or "", "on": _mcp_tool_on(t, include, exclude)} for t, d in tools]}
-
-    def mcp_set_tools(self, name, tools, chosen):
-        """Switch a server's tools on and off, the way `hermes mcp configure` saves the checklist."""
-        from hermes_cli.config import load_config, save_config
-        from hermes_cli.mcp_config import _rebuild_exclude_list
-        from tools.mcp_tool_schema import matches_name_filter
-
-        names = [str(t) for t in tools or []]
-        picked = {str(t) for t in chosen or []}
-        if not names or not picked <= set(names):
-            raise ValueError("Test the server first, then pick its tools")
-        with self._profile_scope():
-            self._mcp_own(name)
-            config = load_config()
-            entry = config["mcp_servers"][name]
-            include, exclude = _mcp_tool_filters(entry)
-            exclude_mode = bool(exclude) and include is None
-            chosen_at = {i for i, t in enumerate(names) if t in picked}
-            if len(picked) == len(names) and not exclude_mode:
-                entry.pop("tools", None)
-            elif exclude_mode:
-                rebuilt = _rebuild_exclude_list(name, exclude, names, chosen_at, matches_name_filter)
-                if rebuilt:
-                    entry.setdefault("tools", {})["exclude"] = rebuilt
-                    entry["tools"].pop("include", None)
-                else:
-                    entry.pop("tools", None)
-            else:
-                entry.setdefault("tools", {})["include"] = [t for t in names if t in picked]
-                entry["tools"].pop("exclude", None)
-            save_config(config)
-        # A live server keeps the tools it registered: reconnect it so the new choice applies.
-        self._mcp_apply(restart={name})
-
-    def mcp_start_signin(self, name, redirect_uri):
-        """Start a server's browser sign-in. The provider sends the browser back to the portal's
-        own callback, which hands the code to the waiting flow (`mcp_oauth_callback`)."""
-        from hermes_cli.web_server_mcp import _run_dashboard_mcp_oauth
-        from tools.mcp_dashboard_oauth import DashboardOAuthFlow, exception_message
-
-        home = str(Path(self._home()).expanduser().resolve(strict=False))
-        with self._profile_scope():
-            servers, plugins = _mcp_configs()
-        cfg = dict(servers.get(name) or {})
-        if not cfg:
-            raise ValueError(f"No server named {name}")
-        if plugins.get(name):
-            raise ValueError(f"{name} comes from the {plugins[name]} plugin")
-        if not cfg.get("url"):
-            raise ValueError("Servers run by a command sign in with keys, not a browser")
-        if cfg.get("headers") and cfg.get("auth") != "oauth":
-            raise ValueError("This server signs in with a token")
-        cfg["auth"] = "oauth"
-        self._mcp_gc_flows()
-        with self.mcp_lock:
-            if any(f.server_name == name and _flow_home(f) == home and not f.worker_done for f in self.mcp_flows.values()):
-                raise ValueError(f"A sign-in for {name} is already open")
-            # Older Hermes builds still require profile even though hermes_home carries the scope.
-            legacy: dict[str, Any] = {}
-            if any(f.name == "profile" for f in dataclasses.fields(DashboardOAuthFlow)):
-                legacy["profile"] = None
-            flow = DashboardOAuthFlow(
-                flow_id=secrets.token_urlsafe(24), server_name=name, **{FLOW_HOME: home},
-                redirect_uri=(cfg.get("oauth") or {}).get("redirect_uri") or redirect_uri,
-                reconnect_live=False, **legacy,
-            )
-            self.mcp_flows[flow.flow_id] = flow
-        threading.Thread(target=_run_dashboard_mcp_oauth, args=(flow, cfg), daemon=True, name=f"portal-mcp-oauth-{name}").start()
-        try:
-            asyncio.run(flow.wait_for_authorization_url(timeout=30))
-        except (TimeoutError, RuntimeError) as error:
-            flow.mark_error(exception_message(error))
-        return flow.snapshot()
-
-    def mcp_signin(self, flow_id):
-        """How a started sign-in is going; once it's approved the server is brought live."""
-        with self.mcp_lock:
-            flow = self.mcp_flows.get(str(flow_id))
-        if flow is None:
-            raise ValueError("That sign-in expired. Start it again")
-        snapshot = flow.snapshot()
-        if snapshot["status"] == "approved" and flow.worker_done and not getattr(flow, "portal_applied", False):
-            flow.portal_applied = True
-            self._mcp_apply(_flow_home(flow), restart={flow.server_name})
-        return snapshot
-
-    def mcp_cancel_signin(self, flow_id):
-        with self.mcp_lock:
-            flow = self.mcp_flows.get(str(flow_id))
-        if flow is not None:
-            flow.mark_error("Cancelled", cancelled=True)
-
-    def mcp_oauth_callback(self, name, code=None, state=None, error=None, iss=None):
-        """The provider's redirect back: the flow whose state matches takes it. Returns what the
-        browser tab should say."""
-        with self.mcp_lock:
-            flows = [f for f in self.mcp_flows.values() if f.server_name == name and f.status == "authorization_required"]
-        flow = next((f for f in flows if f.expected_state and state and secrets.compare_digest(f.expected_state, str(state))), None)
-        if flow is None:
-            return "expired"
-        try:
-            flow.deliver_callback(code=code, state=state, error=error, iss=iss)
-        except ValueError:
-            return "rejected"
-        return "failed" if error else "ok"
-
-    def _mcp_gc_flows(self):
-        cutoff = time.time() - MCP_SIGNIN_TTL
-        with self.mcp_lock:
-            for flow_id in [k for k, f in self.mcp_flows.items() if f.created_at < cutoff]:
-                self.mcp_flows.pop(flow_id, None)
-
-    def _mcp_own(self, name):
-        """Refuse a server this page can't change: unknown, or one a plugin brings."""
-        servers, plugins = _mcp_configs()
-        if name not in servers:
-            raise ValueError(f"No server named {name}")
-        if plugins.get(name):
-            raise ValueError(f"{name} comes from the {plugins[name]} plugin")
-
-    def _mcp_apply(self, home=None, restart=()):
-        """Bring the running gateway in step with the config just written: connect what's new or
-        switched on, drop what's gone or off, reconnect ``restart``, refresh the profile's cached
-        agents, and recopy the list for Codex. Best effort: the gateway's own housekeeping
-        reconciles on its next tick anyway."""
-        from gateway.run import _profile_runtime_scope
-
-        home = home or self._home()
-        profile = next((name for name, h in self.homes().items() if Path(h).resolve() == Path(home).resolve()), self.profile)
-        try:
-            from tools import mcp_tool_discovery as discovery
-            from tools.mcp_oauth import suppress_interactive_oauth
-            from tools.mcp_tool_lifecycle import shutdown_mcp_servers
-
-            with _profile_runtime_scope(Path(home)), suppress_interactive_oauth():
-                if restart:
-                    shutdown_mcp_servers(scope=discovery._core._mcp_registry_scope(), names=set(restart))
-                discovery.reconcile_mcp_servers_with_config()
-                runner = getattr(self.adapter, "gateway_runner", None)
-                if runner is not None and hasattr(runner, "_mcp_reload_refresh_cached_agents"):
-                    runner._mcp_reload_refresh_cached_agents(bool(getattr(runner.config, "multiplex_profiles", False)), profile)
-                if _codex_runtime():
-                    from hermes_cli.codex_runtime_plugin_migration import migrate
-                    from hermes_cli.config import load_config
-
-                    migrate(load_config())
-        except Exception:
-            log.warning("portal: could not apply MCP changes live; the gateway picks them up on its next pass", exc_info=True)
-        _hub_tell("mcp_changed")
 
     def _set_session_value(self, name, session, value):
         def write():
@@ -1514,14 +1116,6 @@ class HermesBackend:
         return listed
 
 
-# The agent names a sign-in flow's home field after itself.
-FLOW_HOME = f"{AGENT}_home"
-
-
-def _flow_home(flow):
-    return getattr(flow, FLOW_HOME)
-
-
 # What a portal turn gets when its profile resolves to no tools at all.
 FALLBACK_TOOLSETS = [f"{AGENT}-cli"]
 
@@ -1619,604 +1213,11 @@ def _parse_target(ref):
     return (ref, None) if TARGET.match(ref) else None
 
 
-def _secrets_api():
-    """The agent-secrets plugin's API when that plugin is loaded (it publishes it under this name)."""
-    return sys.modules.get("agent_secrets")
-
-
-def _need_secrets():
-    api = _secrets_api()
-    if api is None:
-        raise ValueError("The agent-secrets plugin isn't installed")
-    return api
-
-
-# Providers: the catalog and status helpers `hermes model` itself uses, so the portal never keeps
-# a second list of names, key variables or sign-in flows.
-
-def _provider_catalog():
-    """Every provider this Hermes offers, in `hermes model` order."""
-    from hermes_cli.provider_catalog import provider_catalog
-
-    return provider_catalog()
-
-
-class _ScopedEnv:
-    """A key's value as the current profile scope sees it: that profile's `.env`, and process
-    variables only where Hermes treats them as shared (`get_env_value` holds the policy)."""
-
-    def get(self, name, default=None):
-        from hermes_cli.config import get_env_value
-
-        return get_env_value(name) or default
-
-
-def _account_status():
-    """How each account provider signs in, and whether it has (`{"slug": {"flow", "cli_command", "status"}}`).
-
-    Built the way Hermes's own Accounts page builds it, so the command shown is the one Hermes shows.
-    """
-    try:
-        from hermes_cli.web_routers.oauth import (
-            _build_oauth_catalog,
-            _external_process_cli_command,
-            _resolve_provider_status,
-        )
-
-        return {
-            entry["id"]: {
-                "flow": entry.get("flow") or "",
-                "cli_command": _external_process_cli_command(entry["id"], entry.get("cli_command") or ""),
-                "status": _resolve_provider_status(entry["id"], entry.get("status_fn")),
-            }
-            for entry in _build_oauth_catalog()
-        }
-    except Exception:  # an older Hermes: keys still work, the accounts tab just has nothing to say
-        log.warning("portal: could not read provider sign-in status", exc_info=True)
-        return {}
-
-
-# MCP servers: Hermes's own config, catalog and probe helpers, so the page keeps no second copy
-# of how a server is stored, checked or signed in to.
-
-MCP_SIGNIN_TTL = 15 * 60
-
-
-def _mcp_configs():
-    """``(servers, plugins)``: every server the current profile has, config and plugin ones
-    alike, and the plugin that brings each (None for ones in config.yaml)."""
-    from hermes_cli.mcp_config import _get_mcp_servers
-    from tui_gateway.mcp_rpc_helpers import server_configs_with_sources
-
-    return server_configs_with_sources(_get_mcp_servers())
-
-
-def _codex_runtime():
-    """Whether Codex runs the profile's turns itself, from its own copy of the server list."""
-    try:
-        from hermes_cli.codex_runtime_switch import get_current_runtime
-        from hermes_cli.config import load_config
-
-        return get_current_runtime(load_config()) == "codex_app_server"
-    except Exception:  # noqa: BLE001 - Optional runtime discovery must not prevent MCP management.
-        return False
-
-
-def _mcp_redact(error):
-    """An error's text with anything key-shaped masked, as `hermes mcp test` prints it."""
-    try:
-        from hermes_cli.mcp_config import redact_mcp_probe_text
-
-        return str(redact_mcp_probe_text(error) or "").strip()
-    except Exception:  # noqa: BLE001 - Fail closed if redaction fails; never expose the raw error.
-        return ""
-
-
-def _mcp_tool_filters(cfg):
-    """``(include, exclude)`` from a server's ``tools:`` block; None where a list isn't set."""
-    tools = cfg.get("tools") if isinstance(cfg, dict) else None
-    if not isinstance(tools, dict):
-        return None, None
-    include, exclude = tools.get("include"), tools.get("exclude")
-    return (include if isinstance(include, list) else None, exclude if isinstance(exclude, list) else None)
-
-
-def _mcp_tool_on(tool, include, exclude):
-    from tools.mcp_tool_schema import matches_name_filter
-
-    if include is not None:
-        return matches_name_filter(tool, {str(p) for p in include})
-    if exclude:
-        return not matches_name_filter(tool, {str(p) for p in exclude})
-    return True
-
-
-def _mcp_row(name, cfg, plugin, live, codex):
-    """One row of Settings > MCP servers. Header and env values never leave: only their names."""
-    from hermes_cli.mcp_config import _oauth_tokens_present
-    from tools.mcp_tool_common import mcp_server_enabled
-
-    include, exclude = _mcp_tool_filters(cfg)
-    auth = cfg.get("auth") or ("header" if any(str(k).lower() == "authorization" for k in (cfg.get("headers") or {})) else None)
-    enabled = mcp_server_enabled(cfg)
-    status = live.get("status") or ("configured" if enabled else "disabled")
-    note = ""
-    if codex and auth == "oauth":
-        note = "Codex runs can't sign in to this server"
-    elif codex and (include is not None or exclude):
-        note = "Codex runs get all of this server's tools"
-    return {
-        "name": name,
-        "url": cfg.get("url") or "",
-        "command": cfg.get("command") or "",
-        "args": [str(a) for a in cfg.get("args") or []],
-        "env": sorted(str(k) for k in (cfg.get("env") or {})),
-        "auth": auth or "none",
-        "enabled": enabled,
-        "plugin": plugin or "",
-        "status": status,
-        "error": _mcp_redact(live.get("error")) if live.get("error") else "",
-        "signed_in": auth != "oauth" or _oauth_tokens_present(name),
-        "picked": include is not None or bool(exclude),
-        "codex": note,
-        "installing": False,
-    }
-
-
-def _mcp_pending_row(name, state):
-    """A catalog install that hasn't reached config yet (still running, or failed)."""
-    return {"name": name, "url": "", "command": "", "args": [], "env": [], "auth": "none", "enabled": False, "plugin": "",
-            "status": "failed" if state["status"] == "failed" else "installing", "error": state.get("error") or "",
-            "signed_in": True, "picked": False, "codex": "", "installing": state["status"] == "installing"}
-
-
 def _hub_tell(call, *args):
     """Tell the server something changed in this process, if the link is up."""
     link, loop = _LIVE_TOOLS.get("link"), _LIVE_TOOLS.get("loop")
     if link is not None and loop is not None and link.peer is not None:
         loop.call_soon_threadsafe(link.tell, call, *args)
-
-
-def _provider_accounts():
-    """provider_accounts.py, loaded once under a private name (its sign-ins in flight live there)."""
-    name = "nako_portal_provider_accounts"
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, ROOT / "provider_accounts.py")
-        loaded = importlib.util.module_from_spec(spec)
-        sys.modules.setdefault(name, loaded)
-        spec.loader.exec_module(loaded)
-    return sys.modules[name]
-
-
-def _add_accounts(row):
-    """Put a provider's accounts on its row, when it can have more than one."""
-    try:
-        source = _provider_accounts().source_for(row["slug"])
-        if source is None:
-            return
-        accounts = source.list()
-    except Exception:  # the page still shows the single sign-in it had before
-        log.warning("portal: could not list %s accounts", row["slug"], exc_info=True)
-        return
-    row["accounts"] = accounts
-    row["login"] = source.mode
-    row["connected"] = any(a["signed_in"] for a in accounts)
-
-
-def _oauth_routes():
-    from hermes_cli.web_routers import oauth
-
-    return oauth
-
-
-def _default_endpoint(slug):
-    """The address Hermes calls for a provider when nothing overrides it ("" when it has none)."""
-    try:
-        from hermes_cli.auth import PROVIDER_REGISTRY
-
-        config = PROVIDER_REGISTRY.get(slug)
-    except ImportError:
-        return None
-    return None if config is None else str(getattr(config, "inference_base_url", "") or "")
-
-
-LOOPBACK = re.compile(r"^https?://(localhost|127\.|0\.0\.0\.0|\[::1\])", re.IGNORECASE)
-
-
-def _provider_row(entry, env, accounts, endpoint=_default_endpoint):
-    """One row for the Providers page, or None for a provider this page can't finish setting up.
-
-    A single pasted key needs nothing else, and a provider with a device-code sign-in needs only
-    the code. Most key providers also name a base-URL variable, but only as an optional override:
-    Hermes already knows their address. Left out until they have a form of their own are the ones
-    that can't run on a key alone: no key variable (Bedrock's AWS login, Vertex's service-account
-    file), no built-in address (Azure Foundry), or an address on this machine (a local server).
-    """
-    if entry.auth_type in ("virtual",):
-        return None
-    account = accounts.get(entry.slug) or {}
-    if entry.tab == "accounts" and account:
-        return {
-            "slug": entry.slug,
-            "label": entry.label,
-            "description": entry.description,
-            "kind": "signin" if account.get("flow") == "device_code" else "cli",
-            "command": account.get("cli_command") or "",
-            "connected": bool((account.get("status") or {}).get("logged_in")),
-            "source": (account.get("status") or {}).get("source_label") or "",
-            "env_var": "",
-            "env_vars": [],
-            "signup_url": entry.signup_url or "",
-        }
-    key_vars = tuple(entry.api_key_env_vars or ())
-    if not key_vars:
-        return None
-    address = endpoint(entry.slug)
-    # No registry entry (OpenRouter): Hermes routes it by name, so the key is all it needs.
-    if address is not None and (not address or LOOPBACK.match(address)):
-        return None
-    found = next((v for v in key_vars if env.get(v)), "")
-    return {
-        "slug": entry.slug,
-        "label": entry.label,
-        "description": entry.description,
-        "kind": "key",
-        "command": "",
-        "connected": bool(found),
-        "source": found,
-        "env_var": key_vars[0],
-        "env_vars": list(key_vars),
-        "signup_url": entry.signup_url or "",
-    }
-
-
-class SecretSurface:
-    """The portal as the place agent-secrets asks for a secret: a card with a masked field in the
-    chat that asked. The answer comes back through `HermesBackend.resolve`."""
-
-    def __init__(self, adapter, loop):
-        self.adapter = adapter
-        self.loop = loop
-        # Requests shown since connecting; their cards go when the gateway does.
-        self.shown = set()
-
-    def ask(self, session_id, request):
-        try:
-            from gateway.session_context import get_session_env
-
-            chat = get_session_env("HERMES_SESSION_CHAT_ID", "")
-        except ImportError:
-            chat = ""
-        backend = self.adapter.backend
-        if not chat and backend is not None and session_id:
-            chat = backend.chat_of(session_id) or ""
-        if not chat:
-            return False
-        card = {
-            "id": request["id"],
-            "method": "secret",
-            "params": {"name": request["name"], "note": request.get("note") or "", "replace": bool(request.get("replace"))},
-            "private": {"secret_request": request["id"]},
-        }
-        try:
-            shown = bool(asyncio.run_coroutine_threadsafe(self.adapter._hub("ask", str(chat), card), self.loop).result(timeout=15))
-        except Exception:
-            log.warning("portal: couldn't show a secret request", exc_info=True)
-            return False
-        if shown:
-            self.shown.add(request["id"])
-        return shown
-
-    def show_line(self, name):
-        return f"SECRET:{name}"
-
-
-def _adapter(config):
-    from gateway.config import Platform
-    from gateway.platforms.base import BasePlatformAdapter, SendResult
-
-    class PortalAdapter(BasePlatformAdapter):
-        @property
-        def authorization_is_upstream(self) -> bool:
-            # Only the portal's own server delivers here, and it has already signed its one
-            # person in with a passkey; there is no sender for a gateway allowlist to check.
-            return True
-
-        def __init__(self, cfg):
-            super().__init__(cfg, Platform("portal"))
-            self.backend = None
-            self.link = None
-            self._tasks = []
-            self._http = None
-            self._spawned = 0.0
-            # Chats whose turn the gateway announced through the processing hooks, and the turns
-            # the sweep announced itself because Hermes ran them without the hooks (chat -> admission).
-            self._hooked = set()
-            self._swept = {}
-
-        # One portal per machine: the default profile's adapter runs the link to the server and
-        # shows every served profile. Hermes still gives each other profile that loads this
-        # plugin its own portal adapter, and only that adapter may carry the profile's turns
-        # (the gateway refuses a turn whose profile isn't its adapter's owner). So such a
-        # secondary never dials the server; the primary hands it that profile's messages, and it
-        # hands everything it sends back to the primary.
-
-        def _secondary(self):
-            return bool(getattr(self, "_owner_profile", None))
-
-        def _primary(self):
-            """The adapter that holds the link, when this one is a secondary; else None."""
-            if not self._secondary():
-                return None
-            adapters = getattr(getattr(self, "gateway_runner", None), "adapters", None) or {}
-            primary = adapters.get(self.platform)
-            return primary if primary is not None and primary is not self else None
-
-        async def connect(self, *, is_reconnect: bool = False) -> bool:
-            import aiohttp
-
-            if self._secondary():
-                self._mark_connected()
-                return True
-            if self.link is None:
-                home, origin, port, contact, apps = _settings()
-                data = home / "nako-portal"
-                token = _local_token(data)
-                config_path, config = _server_config(home, origin, port, contact, apps)
-                self.backend = HermesBackend(self, home)
-
-                async def start_server(stale=False):
-                    # A stale server shuts itself down; the new one waits for its port.
-                    if not stale and time.monotonic() - self._spawned < SPAWN_GAP:
-                        return
-                    self._spawned = time.monotonic()
-                    await asyncio.to_thread(_spawn_server, config_path, data)
-
-                self.link = _portal("link").GatewayClient(
-                    f"http://127.0.0.1:{port + 1}/gateway",
-                    token,
-                    config["code"],
-                    self.backend,
-                    hermes_build=await asyncio.to_thread(_hermes_build),
-                    on_missing=start_server,
-                    on_stale=lambda: start_server(stale=True),
-                )
-                self._http = aiohttp.ClientSession()
-                loop = asyncio.get_running_loop()
-                self._tasks.append(loop.create_task(self.link.run(self._http)))
-                self._tasks.append(loop.create_task(_forward_inbox(_portal("store").Store(data / "portal.db"), self)))
-                self._tasks.append(loop.create_task(self._sweep_turns()))
-                _LIVE_TOOLS.update(link=self.link, loop=loop)
-                # With agent-secrets loaded, the portal is where its requests and shared secrets show.
-                secrets_api = _secrets_api()
-                if secrets_api is not None:
-                    self._secrets = SecretSurface(self, loop)
-                    secrets_api.register_surface("portal", self._secrets)
-                    if not getattr(secrets_api, "_portal_listening", False):
-                        secrets_api._portal_listening = True
-                        secrets_api.on_change(lambda _home: _secrets_changed())
-            store = getattr(self, "_session_store", None)
-            if store is not None:
-                await asyncio.to_thread(_own_origins, store)
-            # Every served profile gets its Notifications thread, so its cron posts have one to land in.
-            for profile in await asyncio.to_thread(self.backend.homes):
-                await asyncio.to_thread(self._chat, HOME_CHANNEL, CHAT_TITLE, profile)
-            self._mark_connected()
-            return True
-
-        async def disconnect(self) -> None:
-            if self._secondary():
-                self._mark_disconnected()
-                return
-            # The server keeps running and shows "offline" until a gateway dials in again.
-            for task in self._tasks:
-                task.cancel()
-            if self._http is not None:
-                await self._http.close()
-            _LIVE_TOOLS.clear()
-            secrets_api = _secrets_api()
-            if secrets_api is not None and getattr(self, "_secrets", None) is not None:
-                secrets_api.unregister_surface("portal", self._secrets)
-                for request_id in self._secrets.shown:
-                    secrets_api.close(request_id)
-            self._secrets = None
-            self._tasks, self._http, self.link, self.backend = [], None, None, None
-            self._mark_disconnected()
-
-        async def _hub(self, method, *args):
-            """Tell the portal's hub something and wait for it; a no-op while it's unreachable."""
-            if self.link is None:
-                return False
-            try:
-                await self.link.call(method, *args)
-                return True
-            except ConnectionError:
-                return False
-
-        def _chat(self, chat, title=None, profile=None):
-            """A thread in ``profile``; by default the one whose work is sending (a cron run or
-            turn), else the profile the portal shows."""
-            try:
-                if profile is None and self.backend is not None:
-                    profile = self.backend._origin()
-                return _ensure_chat(getattr(self, "_session_store", None), chat, title, profile)
-            except Exception:
-                log.exception("portal: could not open thread %s", chat)
-                return None
-
-        async def _new_thread(self, content):
-            """`portal:new`: a thread whose first post is this message, titled by its first line."""
-            from gateway.mirror import mirror_to_session
-
-            chat = uuid.uuid4().hex[:16]
-            title = (content.strip().splitlines() or ["new thread"])[0][:80]
-            session = await asyncio.to_thread(self._chat, chat, title)
-            # send_message mirrors into the chat it was given ("new"), which no session matches.
-            if session:
-                await asyncio.to_thread(mirror_to_session, "portal", chat, content, source_label="send_message", session_id=session)
-            await self._hub("sessions_changed")
-            return chat
-
-        async def send(self, chat_id, content, reply_to=None, metadata=None):
-            if (primary := self._primary()) is not None:
-                return await primary.send(chat_id, content, reply_to=reply_to, metadata=metadata)
-            chat = str(chat_id or HOME_CHANNEL)
-            if chat == NEW_THREAD:
-                chat = await self._new_thread(content)
-            elif chat in CHANNELS:
-                # send_message mirrors the post into this thread right after the send returns.
-                await asyncio.to_thread(self._chat, chat, CHANNELS[chat])
-            message_id = uuid.uuid4().hex
-            if self.link is not None:
-                # Not awaited: outside a turn the hub waits for the mirror before telling clients.
-                self.link.tell("outgoing", chat, message_id, content)
-            return SendResult(success=True, message_id=message_id)
-
-        async def edit_message(self, chat_id, message_id, content, *, finalize=False):
-            if (primary := self._primary()) is not None:
-                return await primary.edit_message(chat_id, message_id, content, finalize=finalize)
-            await self._hub("outgoing", str(chat_id), message_id, content)
-            return SendResult(success=True, message_id=message_id)
-
-        async def _send_file(self, chat_id, path, caption):
-            return await self.send(chat_id, "\n".join(part for part in (caption, f"MEDIA:{path}") if part))
-
-        async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs):
-            return await self._send_file(chat_id, image_path, caption)
-
-        async def send_document(self, chat_id, file_path, caption=None, file_name=None, reply_to=None, metadata=None, **kwargs):
-            return await self._send_file(chat_id, file_path, caption)
-
-        async def send_voice(self, chat_id, audio_path, caption=None, reply_to=None, metadata=None, **kwargs):
-            return await self._send_file(chat_id, audio_path, caption)
-
-        async def send_video(self, chat_id, video_path, caption=None, reply_to=None, metadata=None, **kwargs):
-            return await self._send_file(chat_id, video_path, caption)
-
-        async def send_typing(self, chat_id, metadata=None):
-            return None
-
-        def toolsets_for_source(self, source):
-            if (primary := self._primary()) is not None:
-                return primary.toolsets_for_source(source)
-            home = self.backend.home_of(getattr(source, "profile", None)) if self.backend is not None else None
-            return _fallback_toolsets(home)
-
-        async def get_chat_info(self, chat_id):
-            return {"name": "Nako", "type": "dm"}
-
-        async def on_processing_start(self, event):
-            if (primary := self._primary()) is not None:
-                return await primary.on_processing_start(event)
-            chat = event.source.chat_id
-            self._hooked.add(chat)
-            self._swept.pop(chat, None)  # the hooks report this chat's turns from here
-            if self.backend is not None:
-                await asyncio.to_thread(self.backend.restore_model_options, event.source)
-            await self._hub("turn_started", chat)
-
-        async def on_processing_complete(self, event, outcome):
-            if (primary := self._primary()) is not None:
-                return await primary.on_processing_complete(event, outcome)
-            self._hooked.discard(event.source.chat_id)
-            await self._hub("turn_finished", event.source.chat_id, getattr(outcome, "value", str(outcome)))
-
-        async def _sweep_turns(self):
-            """Hermes runs some turns without the processing hooks: a message queued behind a busy
-            turn runs from its durable queue, and so does one held over a gateway restart. Read
-            what it is running and tell the hub, so those chats show as working and finish with a
-            reply and a ping like any other turn. A turn is announced once it has run a whole sweep,
-            and never for a turn the hooks already reported, whose record may settle a moment after it ends."""
-            seen, hooked = {}, set()
-            sweeps, outside = 0, None
-            while True:
-                await asyncio.sleep(TURN_SWEEP)
-                backend = self.backend
-                if backend is None:
-                    continue
-                outside = await self._sweep_outside(backend, sweeps, outside)
-                sweeps += 1
-                try:
-                    running = await asyncio.to_thread(backend.running_turns)
-                except Exception:
-                    log.warning("portal: could not read running turns", exc_info=True)
-                    continue
-                for chat, admission in list(self._swept.items()):
-                    if running.get(chat) != admission:
-                        del self._swept[chat]
-                        outcome = await asyncio.to_thread(backend.turn_outcome, admission)
-                        await self._hub("turn_finished", chat, outcome)
-                for chat, admission in running.items():
-                    if chat in self._hooked:
-                        hooked.add(admission)
-                    if admission in hooked or self._swept.get(chat) == admission:
-                        continue
-                    if seen.get(chat) == admission:
-                        self._swept[chat] = admission
-                        await self._hub("turn_started", chat)
-                seen, hooked = running, hooked & set(running.values())
-
-        async def _sweep_outside(self, backend, sweeps, last):
-            """Tell the hub which sessions from other ways in are running a turn (and which ways in
-            there are), when that changes and every so often anyway. Returns what it last sent."""
-            try:
-                sources = last["sources"] if last and sweeps % OUTSIDE_SOURCES_EVERY else await asyncio.to_thread(backend.outside_sources)
-                now = {"sources": sources, "running": await asyncio.to_thread(backend.outside_running)}
-            except Exception:
-                log.warning("portal: could not read sessions from other platforms", exc_info=True)
-                return last
-            if (now != last or sweeps % OUTSIDE_REPEAT_EVERY == 0) and not await self._hub("outside", now):
-                return None
-            return now
-
-        async def _send_exec_approval_prompt(self, prompt):
-            if (primary := self._primary()) is not None:
-                return await primary._send_exec_approval_prompt(prompt)
-            request = {
-                "id": uuid.uuid4().hex,
-                "method": "approval",
-                "params": {"command": prompt.command, "description": prompt.description, "choices": prompt.choices},
-                "private": {"session_key": prompt.session_key},
-            }
-            if not await self._hub("ask", prompt.chat_id, request):
-                return SendResult(success=False, error="the portal server isn't reachable")
-            return SendResult(success=True, message_id=request["id"])
-
-        async def send_clarify(self, chat_id, question, choices, clarify_id, session_key, metadata=None):
-            if (primary := self._primary()) is not None:
-                return await primary.send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
-            if self.link is None or self.link.peer is None or not choices:
-                # An open question is answered by the next message, which the gateway intercepts.
-                return await super().send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
-            request = {
-                "id": uuid.uuid4().hex,
-                "method": "clarify",
-                "params": {"questions": [{"qid": clarify_id, "question": question, "choices": list(choices)}]},
-                "private": {"clarify_id": clarify_id},
-            }
-            if not await self._hub("ask", str(chat_id), request):
-                return await super().send_clarify(chat_id, question, choices, clarify_id, session_key, metadata)
-            return SendResult(success=True, message_id=request["id"])
-
-    return PortalAdapter(config)
-
-
-# The chat UI draws tool calls and mid-turn commentary from the session store, so the gateway's
-# text breadcrumbs and interim bubbles would show each turn twice. Streaming and heartbeats stay on.
-QUIET_DISPLAY = {"tool_progress": "off", "interim_assistant_messages": False}
-
-
-def _quiet_display_defaults():
-    """Hermes's named display tiers can't drop just these two (the low tier also stops streaming),
-    so the portal's built-in defaults are the high tier minus them. config.yaml still overrides."""
-    try:
-        from gateway import display_config
-    except ImportError:
-        return
-    defaults = getattr(display_config, "_PLATFORM_DEFAULTS", None)
-    high = getattr(display_config, "_TIERS", {}).get("high")
-    if isinstance(defaults, dict) and isinstance(high, dict):
-        defaults.setdefault("portal", {**high, **QUIET_DISPLAY})
 
 
 # The reply goes in <reply> tags so small models write about it instead of answering it.
@@ -2271,10 +1272,7 @@ def _mesh_tools():
     """The mesh tools and `hermes mesh` command (mesh_tools.py), loaded once under a private name."""
     name = "nako_portal_mesh_tools"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, ROOT / "mesh_tools.py")
-        loaded = importlib.util.module_from_spec(spec)
-        sys.modules[name] = loaded
-        spec.loader.exec_module(loaded)
+        loaded = _load_sibling(name, "mesh_tools.py")
         loaded.PORTAL = _portal
     return sys.modules[name]
 
@@ -2283,15 +1281,39 @@ def _groups_tools():
     """The chat-group tools (groups_tools.py), loaded once under a private name."""
     name = "nako_portal_groups_tools"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, ROOT / "groups_tools.py")
-        loaded = importlib.util.module_from_spec(spec)
-        sys.modules[name] = loaded
-        spec.loader.exec_module(loaded)
+        loaded = _load_sibling(name, "groups_tools.py")
         mesh = _mesh_tools()
         loaded.CALL = lambda method, path, body=None: mesh._call(
             method, path, body, missing="the portal server isn't running here, so chat groups can't be changed"
         )
     return sys.modules[name]
+
+
+def _adapter(config):
+    return _adapter_module._adapter(config, _adapter_module.AdapterRuntime(
+        backend=HermesBackend,
+        settings=_settings,
+        local_token=_local_token,
+        server_config=_server_config,
+        spawn_server=_spawn_server,
+        portal=_portal,
+        hermes_build=_hermes_build,
+        forward_inbox=_forward_inbox,
+        live_tools=_LIVE_TOOLS,
+        secrets_api=_secrets_api,
+        secrets_changed=_secrets_changed,
+        own_origins=_own_origins,
+        ensure_chat=_ensure_chat,
+        fallback_toolsets=_fallback_toolsets,
+        home_channel=HOME_CHANNEL,
+        chat_title=CHAT_TITLE,
+        new_thread=NEW_THREAD,
+        channels=CHANNELS,
+        spawn_gap=SPAWN_GAP,
+        turn_sweep=lambda: TURN_SWEEP,
+        outside_sources_every=OUTSIDE_SOURCES_EVERY,
+        outside_repeat_every=OUTSIDE_REPEAT_EVERY,
+    ))
 
 
 def register(ctx):
