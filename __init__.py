@@ -556,7 +556,6 @@ class HermesBackend:
             lambda: self._list_sessions(
                 source=source or None,
                 exclude_sources=list(NOT_OUTSIDE),
-                min_message_count=1,
                 # Archived in another client is still something that happened.
                 include_archived=True,
                 limit=OUTSIDE_PAGE,
@@ -579,12 +578,12 @@ class HermesBackend:
         try:
             rows = self._read(
                 "SELECT DISTINCT source FROM sessions WHERE source IS NOT NULL AND source NOT IN (?, ?) "
-                "AND message_count > 0 AND COALESCE(hidden, 0)=0 ORDER BY source",
+                "AND COALESCE(hidden, 0)=0 ORDER BY source",
                 NOT_OUTSIDE,
             )
         except sqlite3.OperationalError:  # a Hermes from before hidden sessions
             rows = self._read(
-                "SELECT DISTINCT source FROM sessions WHERE source IS NOT NULL AND source NOT IN (?, ?) AND message_count > 0 ORDER BY source",
+                "SELECT DISTINCT source FROM sessions WHERE source IS NOT NULL AND source NOT IN (?, ?) ORDER BY source",
                 NOT_OUTSIDE,
             )
         return [source for (source,) in rows]
