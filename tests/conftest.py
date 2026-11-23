@@ -618,6 +618,11 @@ class FakeGateway:
     def commands(self):
         return [{"name": "/status", "description": "Show session status", "skill": False}, {"name": "/work", "description": "Do focused work", "skill": True}]
 
+    def search_sessions(self, query):
+        from portal.search import search_sessions
+
+        return search_sessions(self.search_home, query) if hasattr(self, "search_home") else []
+
 
 class Backend:
     """FakeGateway as the hub sees it: its `sessions` dict is the backend's `sessions()` list."""

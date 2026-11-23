@@ -7,7 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Skeleton } from "@/components/ui/skeleton"
 import { navigate, type Portal } from "@/hooks/use-portal"
 import { toggleAppBrowser, useAppBrowser } from "@/lib/desktop-browser"
-import { useMarkdown } from "@/lib/markdown"
+import { retryMarkdown, useMarkdown, useMarkdownError } from "@/lib/markdown"
 import { sourceName } from "@/lib/outside"
 import { inBubble } from "@/lib/bubble"
 import { usePresence } from "@/lib/presence"
@@ -21,12 +21,14 @@ import { SecretDock } from "./secrets"
 import { useGroupPicker } from "./groups"
 import { type ChatActions, sessionActions, useRenameDialog } from "./session-actions"
 import { Transcript } from "./transcript"
+import { ChatFind, FindInChatButton } from "./chat-find"
 
 // The open chat's title, background processes and ⋯ menu; unchanged while a turn streams in below it.
 const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable, actions, running, environments }: { title: string; session: string; pinned: boolean; groupable: boolean; actions: ChatActions; running: boolean; environments: boolean }) {
   const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
+      <FindInChatButton />
       {/* The floating panel keeps to the chat itself; its full controls are one tap away in the app. */}
       {!inBubble && (
         <>
@@ -229,7 +231,8 @@ function NewChat({ portal }: { portal: Portal }) {
 function ReadOnlyChat({ portal, source }: { portal: Portal; source: string }) {
   const c = portal.current!
   const renderer = useMarkdown()
-  const loading = c.loading || !renderer
+  const markdownError = useMarkdownError()
+  const loading = c.loading || (!renderer && !markdownError)
   const running = portal.outside.running.includes(c.session)
   const name = sourceName(source)
   return (
@@ -242,7 +245,7 @@ function ReadOnlyChat({ portal, source }: { portal: Portal; source: string }) {
             <span className="ml-2 font-normal text-muted-foreground text-xs">{name}</span>
           </>
         }
-      />
+      ><FindInChatButton /></PageHeader>
       <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {loading && <TurnSkeletons count={3} />}
@@ -264,8 +267,13 @@ const NO_NOTES: never[] = []
 
 export function Chat({ portal }: { portal: Portal }) {
   const source = portal.current?.source
-  if (source && source !== "portal") return <ReadOnlyChat portal={portal} source={source} />
-  return <PortalChat portal={portal} />
+  const root = useRef<HTMLDivElement>(null)
+  const markdownError = useMarkdownError()
+  return <div ref={root} className="flex min-h-0 flex-1 flex-col">
+    {Boolean(markdownError) && <p role="alert" className="px-4 py-2 text-sm text-muted-foreground">Formatting couldn’t load. <button type="button" className="underline" onClick={() => void retryMarkdown().catch(() => {})}>Try again</button></p>}
+    {portal.current && <ChatFind key={portal.current.session} root={root} session={portal.current.session} />}
+    {source && source !== "portal" ? <ReadOnlyChat portal={portal} source={source} /> : <PortalChat portal={portal} />}
+  </div>
 }
 
 function PortalChat({ portal }: { portal: Portal }) {
@@ -273,7 +281,8 @@ function PortalChat({ portal }: { portal: Portal }) {
   const presence = usePresence()
   // Held on the skeleton until the renderer is in too, so the chat mounts once, at its bottom.
   const renderer = useMarkdown()
-  const loading = !c || c.loading || !renderer
+  const markdownError = useMarkdownError()
+  const loading = !c || c.loading || (!renderer && !markdownError)
   const draftKey = c ? `draft:${c.session}` : ""
   const rename = useRenameDialog(portal)
   const picker = useGroupPicker(portal)

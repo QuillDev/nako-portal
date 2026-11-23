@@ -1,4 +1,4 @@
-import { type ComponentType, lazy, Suspense, useEffect } from "react"
+import { Component, type ComponentType, type ReactNode, lazy, Suspense, useEffect } from "react"
 import { Chat } from "@/components/portal/chat"
 import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
@@ -6,7 +6,36 @@ import { Sidebar } from "@/components/portal/sidebar"
 import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { usePortal } from "@/hooks/use-portal"
-import { loadMarkdown } from "@/lib/markdown"
+import { loadMarkdown, retryMarkdown } from "@/lib/markdown"
+
+const resetScreens: (() => void)[] = []
+const CHUNK_RELOAD = "nako-chunk-reload"
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null; attempt: number }> {
+  state = { error: null as Error | null, attempt: 0 }
+  static getDerivedStateFromError(error: unknown) { return { error: error instanceof Error ? error : new Error(String(error)) } }
+  componentDidCatch(error: unknown) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+    if (!/ChunkLoadError|Loading (?:CSS )?chunk|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(message)) return
+    try {
+      if (sessionStorage.getItem(CHUNK_RELOAD)) return
+      sessionStorage.setItem(CHUNK_RELOAD, "1")
+      location.reload()
+    } catch { /* Storage may be disabled; leave the manual recovery controls available. */ }
+  }
+  render() {
+    if (this.state.error) return <main role="alert" className="flex min-h-dvh items-center justify-center gap-3 p-6 text-sm">
+      <span>Something went wrong.</span>
+      <button type="button" className="underline focus-visible:outline focus-visible:outline-ring" onClick={() => {
+        resetScreens.forEach(reset => reset())
+        void retryMarkdown().catch(() => {})
+        this.setState(state => ({ error: null, attempt: state.attempt + 1 }))
+      }}>Try again</button>
+      <button type="button" className="underline focus-visible:outline focus-visible:outline-ring" onClick={() => location.reload()}>Reload</button>
+    </main>
+    return <div key={this.state.attempt} className="contents">{this.props.children}</div>
+  }
+}
 
 /**
  * A screen kept out of the first download. Once its chunk is in, it renders straight away:
@@ -16,12 +45,14 @@ import { loadMarkdown } from "@/lib/markdown"
 function screen<P extends object>(load: () => Promise<ComponentType<P>>) {
   let loaded: ComponentType<P> | null = null
   const get = () => load().then(component => (loaded = component))
-  const Lazy = lazy(() => get().then(component => ({ default: component })))
+  const makeLazy = () => lazy(() => get().then(component => ({ default: component })))
+  let Lazy = makeLazy()
+  resetScreens.push(() => { loaded = null; Lazy = makeLazy() })
   function Screen(props: P) {
     const Loaded = loaded
     if (Loaded) return <Loaded {...props} />
     return (
-      <Suspense>
+      <Suspense fallback={<p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p>}>
         <Lazy {...props} />
       </Suspense>
     )
@@ -48,6 +79,10 @@ function useWarmSettings(signedIn: boolean) {
 }
 
 export function App() {
+  return <ErrorBoundary><AppContent /></ErrorBoundary>
+}
+
+function AppContent() {
   const portal = usePortal()
   useWarmSettings(Boolean(portal.me?.signed_in))
   useEffect(() => {

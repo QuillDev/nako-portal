@@ -29,6 +29,7 @@ CALL_TIMEOUT = 180
 HEARTBEAT = 20
 # The hub's backend, as calls over the link. These block (the hub runs them in a thread).
 BACKEND_SYNC = (
+    "search_sessions",
     "sessions",
     "outside_sessions",
     "archived_sessions",
@@ -86,7 +87,7 @@ BACKEND_SYNC = (
 # These are awaited.
 BACKEND_ASYNC = ("restart_work", "restart_thread", "new_thread", "adopt", "inbound", "resolve", "set_session_model")
 # Reads the server answers itself from the session store while no gateway is connected.
-OFFLINE_READS = ("thread", "chat_of", "title_of")
+OFFLINE_READS = ("thread", "chat_of", "title_of", "search_sessions")
 # What the gateway tells the hub.
 HUB_CALLS = ("turn_started", "turn_finished", "outgoing", "ask", "tool", "outside", "sessions_changed", "secrets_changed", "providers_changed", "mcp_changed")
 

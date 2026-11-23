@@ -49,6 +49,12 @@ export function splitReply(text: string) {
   return { body: cut(text, found), files: [...new Set(found.map(f => f.path))] }
 }
 
+/** Clipboard text never contains secret placeholders or media control lines, even in code. */
+export function copyReplyText(text: string): string {
+  const clean = text.replace(/^[^\S\n]*(?:SECRET|MEDIA):[^\n]*(?:\n|$)/gim, "")
+  return splitReply(clean).body.replace(/\n{3,}/g, "\n\n").trim()
+}
+
 /** A user turn without Hermes's image hints and placeholders, and the images they name. */
 // An image turn is stored as [your text, image parts..., turn context]. Flattened, the image
 // parts become hints plus one placeholder each, so whatever follows the last placeholder is

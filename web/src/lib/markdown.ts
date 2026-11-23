@@ -1,34 +1,21 @@
 import { useEffect, useSyncExternalStore } from "react"
+import { retryableLoader } from "./retryable-loader"
 
 type Markdown = typeof import("streamdown")
 
-let loaded: Markdown | null = null
-const listeners = new Set<() => void>()
-
-let pending: Promise<Markdown> | null = null
+const loader = retryableLoader<Markdown>(() => import("streamdown"))
 
 /** Start only after sign-in (or when a Markdown body is actually mounted). */
-export function loadMarkdown(): Promise<Markdown> {
-  return pending ??= import("streamdown").then(module => {
-    loaded = module
-    for (const listener of listeners) listener()
-    return module
-  }).catch(error => {
-    pending = null
-    throw error
-  })
-}
+export const loadMarkdown = loader.load
+export const retryMarkdown = loader.load
+export const useMarkdownError = () => useSyncExternalStore(loader.subscribe, loader.error)
 
 /** The renderer once it's in, for code that only runs on rendered Markdown (a table's copy button). */
-export const loadedMarkdown = () => loaded
-
-const subscribe = (listener: () => void) => {
-  listeners.add(listener)
-  return () => listeners.delete(listener)
-}
+export const loadedMarkdown = loader.get
 
 /** The renderer, or null for the moment it's still loading. */
 export const useMarkdown = () => {
-  useEffect(() => { void loadMarkdown().catch(() => {}) }, [])
-  return useSyncExternalStore(subscribe, loadedMarkdown)
+  // Newly mounted plain-text replies must not restart a failed import in a loop.
+  useEffect(() => { if (!loader.error()) void loadMarkdown().catch(() => {}) }, [])
+  return useSyncExternalStore(loader.subscribe, loadedMarkdown)
 }

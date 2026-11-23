@@ -519,6 +519,9 @@ class HermesBackend:
 
     # Chats
 
+    def search_sessions(self, query):
+        return _portal("search").search_sessions(self._home(), query)
+
     def sessions(self):
         live = {
             sid: (chat, pinned)

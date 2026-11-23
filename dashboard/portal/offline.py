@@ -188,6 +188,16 @@ class Offline:
                 return home
         return None
 
+    def search_sessions(self, query):
+        from .search import search_sessions
+
+        found = {}
+        for home in _homes(self.home):
+            for row in search_sessions(home, query):
+                if row["id"] not in found or row["at"] > found[row["id"]]["at"]:
+                    found[row["id"]] = row
+        return sorted(found.values(), key=lambda row: (row["at"], row["id"]), reverse=True)[:20]
+
     def chat_of(self, session):
         home = self._home_of(session)
         rows = _query(home, "SELECT chat_id FROM sessions WHERE id=?", (session,)) if home else []
