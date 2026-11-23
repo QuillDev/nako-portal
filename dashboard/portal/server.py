@@ -17,12 +17,12 @@ from urllib.parse import quote, urlparse
 from aiohttp import WSMsgType, web
 
 from . import webauthn
+from .environments import EnvironmentsError
 from .hub import NEEDS_YOU, WORKING, for_app, from_thread_line, page
 from .link import GATEWAY_PATH
-from .restart_panel import RestartPanel
-from .environments import EnvironmentsError
 from .media import media_paths, shown_files
 from .mesh import parse as remote
+from .restart_panel import RestartPanel
 
 log = logging.getLogger("hermes.portal")
 
@@ -406,7 +406,7 @@ class Portal:
             request_id = str(body.get("request") or "")
             if not request_id:
                 raise ValueError("Say which request")
-            hub, session = await self._target(self._session(request))
+            hub, _session = await self._target(self._session(request))
             if hub is self.hub:
                 raise ValueError("Answer this machine's own questions in its chat")
             return web.json_response(await hub.answer(request_id, body.get("result") or {}))
@@ -454,7 +454,7 @@ class Portal:
             raise ValueError("The sending thread's id isn't a session id")
         try:
             title = await asyncio.to_thread(self.hub.backend.title_of, str(sender))
-        except Exception:
+        except Exception:  # noqa: BLE001 - Optional backend titles must not block message delivery.
             title = None
         # Named the way the other machine reaches it, so its agent can answer that thread.
         here = self.mesh_name
@@ -644,7 +644,7 @@ class Portal:
         try:
             shown = await asyncio.to_thread(self.hub.backend.use_profile, str(body.get("profile") or ""))
         except ValueError as error:
-            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
         self.store.set_meta("profile", shown["profile"])
         self.hub.inboxes = None
         self.shown.clear()
@@ -676,7 +676,7 @@ class Portal:
         try:
             options = await asyncio.to_thread(self.hub.backend.model_options, provider, model)
         except ValueError as error:
-            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
         return web.json_response(options)
 
     async def set_model(self, request):
@@ -686,7 +686,7 @@ class Portal:
         try:
             await asyncio.to_thread(self.hub.backend.set_model_options, body)
         except ValueError as error:
-            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
         return await self.model(request)
 
     async def session_model(self, request):
@@ -695,7 +695,7 @@ class Portal:
         try:
             return web.json_response(await hub.session_model(session))
         except ValueError:
-            raise web.HTTPNotFound()
+            raise web.HTTPNotFound() from None
 
     async def set_session_model(self, request):
         self._require(request)
@@ -706,7 +706,7 @@ class Portal:
         try:
             return web.json_response(await hub.set_session_model(session, await request.json()))
         except ValueError as error:
-            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json")
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
 
     async def register_options(self, request):
         body = await request.json()
@@ -1103,7 +1103,7 @@ class Portal:
             return web.json_response(await hub.start_provider_signin(request.match_info["slug"]))
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=400)
-        except Exception as error:  # the provider's own refusal, e.g. device login disabled
+        except Exception as error:  # noqa: BLE001 - Provider exceptions become a 502 response.
             log.warning("portal: provider sign-in failed: %s", error)
             return web.json_response({"error": str(error) or "That sign-in didn't start"}, status=502)
 
@@ -1124,7 +1124,7 @@ class Portal:
             return web.json_response(await hub.start_account_signin(request.match_info["slug"], (body or {}).get("target")))
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=400)
-        except Exception as error:  # the provider's own refusal
+        except Exception as error:  # noqa: BLE001 - Provider exceptions become a 502 response.
             log.warning("portal: account sign-in failed to start: %s", error)
             return web.json_response({"error": str(error) or "That sign-in didn't start"}, status=502)
 
@@ -1136,7 +1136,7 @@ class Portal:
             return web.json_response(await hub.finish_account_signin(request.match_info["slug"], request.match_info["attempt"], body.get("code")))
         except ValueError as error:
             return web.json_response({"error": str(error)}, status=400)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Provider exceptions become a 502 response.
             log.warning("portal: account sign-in failed: %s", error)
             return web.json_response({"error": str(error) or "That sign-in failed"}, status=502)
 
@@ -1189,7 +1189,7 @@ class Portal:
         self._require(request)
         body = await request.json()
         if not isinstance(body, dict):
-            raise ValueError("bad server")
+            raise ValueError("bad server")  # noqa: TRY004 - The request guard maps validation ValueError to HTTP 400.
         return web.json_response(await (await self._hub()).mcp_change("mcp_add", body))
 
     async def mcp_set_enabled(self, request):
@@ -1212,7 +1212,7 @@ class Portal:
         body = await request.json()
         tools, on = body.get("tools"), body.get("on")
         if not isinstance(tools, list) or not isinstance(on, list):
-            raise ValueError("bad tool list")
+            raise ValueError("bad tool list")  # noqa: TRY004 - The request guard maps validation ValueError to HTTP 400.
         await (await self._hub()).mcp_change("mcp_set_tools", request.match_info["name"], [str(t) for t in tools], [str(t) for t in on])
         return web.json_response({"ok": True})
 
@@ -1268,7 +1268,7 @@ class Portal:
 
         name = PureWindowsPath(raw).name
         kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        inline = kind.startswith("image/") or kind.startswith("audio/") or kind.startswith("video/") or kind == "application/pdf"
+        inline = kind.startswith(("image/", "audio/", "video/")) or kind == "application/pdf"
         disposition = "inline" if inline and not download else "attachment"
         # A plain ASCII name first for clients that don't read `filename*` (some Android versions).
         plain = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in name)

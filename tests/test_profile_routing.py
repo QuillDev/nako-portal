@@ -145,7 +145,7 @@ async def test_the_linked_adapter_alone_is_refused_for_another_profile(tmp_path,
     except ImportError:
         from hermes_state_runtime import RuntimeStoreError
 
-    plugin, runner, primary, secondary, homes, close = await _gateway(tmp_path, monkeypatch)
+    plugin, runner, primary, _secondary, homes, close = await _gateway(tmp_path, monkeypatch)
     try:
         with pytest.raises(RuntimeStoreError, match="profile_mismatch"):
             _provenance(runner, _event(plugin, primary, "chat-w", "work"), primary, homes)
@@ -155,7 +155,7 @@ async def test_the_linked_adapter_alone_is_refused_for_another_profile(tmp_path,
 
 @pytest.mark.asyncio
 async def test_the_default_profile_stays_on_the_linked_adapter(tmp_path, monkeypatch):
-    plugin, runner, primary, secondary, homes, close = await _gateway(tmp_path, monkeypatch)
+    plugin, runner, primary, _secondary, homes, close = await _gateway(tmp_path, monkeypatch)
     try:
         backend = plugin.HermesBackend(primary, homes["default"])
         assert backend._carrier(None) is primary
@@ -167,7 +167,7 @@ async def test_the_default_profile_stays_on_the_linked_adapter(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_the_other_profiles_adapter_never_dials_and_its_replies_reach_the_server(tmp_path, monkeypatch):
-    plugin, runner, primary, secondary, homes, close = await _gateway(tmp_path, monkeypatch)
+    _plugin, _runner, primary, secondary, _homes, close = await _gateway(tmp_path, monkeypatch)
     try:
         assert await secondary.connect() is True
         assert secondary.link is None  # no second link to the server, so no refused handshake

@@ -70,7 +70,7 @@ CRON_DELIVERY = re.compile(r"^\[Cron delivery: ([^\]\n]+)\]?\n?")
 # A message sent while a turn runs is steered into it with a note for the model saying where it
 # came from; Hermes keeps that note in the saved text, but the user never typed it. Several messages
 # sent during one turn arrive joined, each with its own note at the start of a line.
-STEER_ORIGIN = re.compile(r"^Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\n*", re.M)
+STEER_ORIGIN = re.compile(r"^Gateway message origin \([^)\n]*\):\n\{[^\n]*\}\n(?:Do not guess[^\n]*\n)?\n*", re.MULTILINE)
 # When Hermes compacts a chat mid-turn it restates the unfinished request after the summary, under
 # this header, so the model carries on. The person sent that message once, earlier in the turn.
 RESTATED = re.compile(r"^\[STILL IN PROGRESS\b[^\]]*\]\s*")
@@ -89,13 +89,13 @@ SHOWN_FIELDS = ("role", "text", "row_id", "timestamp", "reasoning", "label", "po
 # Nako's own one-liner for the end of a reply: the model writes it in the reply, the app shows it
 # beside her and hides the tag. A tag still streaming in (`<sign`, `<signoff>proud of`) is hidden too.
 # A reply that mentions the tag in prose (`<signoff>`) isn't one: a tag holds no other tag.
-SIGN_OFF_TAG = re.compile(r"\s*<signoff>((?:(?!</?signoff>).)*?)</signoff>\s*", re.S | re.I)
+SIGN_OFF_TAG = re.compile(r"\s*<signoff>((?:(?!</?signoff>).)*?)</signoff>\s*", re.DOTALL | re.IGNORECASE)
 # Only on a line of its own, where the sign-off goes, so a `<signoff>` in prose isn't a tag.
-SIGN_OFF_OPEN = re.compile(r"(?:\A|\n)\s*(?:<signoff>[^<\n]*|<(?:s(?:i(?:g(?:n(?:o(?:f(?:f)?)?)?)?)?)?)?)$", re.I)
+SIGN_OFF_OPEN = re.compile(r"(?:\A|\n)\s*(?:<signoff>[^<\n]*|<(?:s(?:i(?:g(?:n(?:o(?:f(?:f)?)?)?)?)?)?)?)$", re.IGNORECASE)
 # A post outside a turn is mirrored into the transcript just after the send returns.
 MIRROR_SETTLE = 1.0
 # A reply line that shows the person a stored secret: `SECRET:NAME` (web/src/lib/secrets.ts).
-SECRET_LINE = re.compile(r"^[^\S\n]*SECRET:([A-Za-z_][A-Za-z0-9_]{0,63})[^\S\n]*$", re.M)
+SECRET_LINE = re.compile(r"^[^\S\n]*SECRET:([A-Za-z_][A-Za-z0-9_]{0,63})[^\S\n]*$", re.MULTILINE)
 
 
 class Hub:
@@ -193,7 +193,7 @@ class Hub:
             async with self.send_slots:
                 try:
                     await asyncio.wait_for(client.send(message), SEND_TIMEOUT)
-                except Exception:
+                except Exception:  # noqa: BLE001 - One broken browser must not block broadcasts to the others.
                     self.leave(client)
 
         await asyncio.gather(*(send(client) for client in list(clients)))

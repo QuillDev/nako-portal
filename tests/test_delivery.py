@@ -12,7 +12,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
 from portal import push
 from portal.store import Store
 
@@ -166,8 +165,9 @@ async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
     spec.loader.exec_module(plugin)
 
     class Db:
-        titles = {}
-        archived = set()
+        def __init__(self):
+            self.titles = {}
+            self.archived = set()
 
         def get_session(self, sid):
             return {"id": sid, "archived": int(sid in self.archived)}
@@ -182,8 +182,9 @@ async def test_the_portal_keeps_one_titled_chat_for_its_posts(monkeypatch):
             self.titles[sid] = title
 
     class Store:
-        _db = Db()
-        sessions = {}
+        def __init__(self):
+            self._db = Db()
+            self.sessions = {}
 
         def get_or_create_session(self, source, touch_activity=True):
             entry = self.sessions.setdefault(source, type("Entry", (), {"session_id": f"s{len(self.sessions)}"})())

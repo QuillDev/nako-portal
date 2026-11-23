@@ -18,7 +18,7 @@ import json
 import logging
 import secrets
 
-from aiohttp import WSMsgType, web
+from aiohttp import ClientError, WSMsgType, web
 
 log = logging.getLogger("hermes.portal")
 
@@ -353,7 +353,7 @@ class GatewayClient:
                     heartbeat=HEARTBEAT,
                     max_msg_size=MAX_FRAME,
                 )
-            except Exception as error:
+            except (ClientError, OSError, TimeoutError) as error:
                 status = getattr(error, "status", None)
                 if status == 409:
                     if self.on_stale is not None:

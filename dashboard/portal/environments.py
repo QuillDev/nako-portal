@@ -155,7 +155,7 @@ async def _exec(args, timeout):
         raise EnvironmentsError(f"can't run {args[0]}: {error.strerror or error}") from None
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise EnvironmentsError(f"{args[0]} took longer than {timeout:g}s") from None

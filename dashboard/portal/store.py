@@ -84,7 +84,7 @@ def _text(value, field, *, most=200, required=True):
 def _model_route(value, *, tuned):
     """A provider and model, plus the effort and speed when the pick is tuned."""
     if not isinstance(value, dict):
-        raise ValueError("A model pick needs a provider and model")
+        raise ValueError("A model pick needs a provider and model")  # noqa: TRY004 - Store validation is surfaced by the request guard as HTTP 400.
     route = {"provider": _text(value.get("provider"), "provider"), "model": _text(value.get("model"), "model")}
     if tuned:
         route["effort"] = _text(value.get("effort", ""), "effort", most=40, required=False)
@@ -94,7 +94,7 @@ def _model_route(value, *, tuned):
 
 def _model_preset(value):
     if not isinstance(value, dict):
-        raise ValueError("A preset needs a name and a model")
+        raise ValueError("A preset needs a name and a model")  # noqa: TRY004 - Store validation is surfaced by the request guard as HTTP 400.
     name = _text(value.get("name"), "name", most=MODEL_PRESET_NAME_MAX).strip()
     return {
         "id": _text(value.get("id"), "id", most=64),

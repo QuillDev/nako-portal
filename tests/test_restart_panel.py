@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 
 async def test_owner_can_pause_one_thread_and_resume_it_only_after_gateway_replacement(world):
-    a = dict(title='Release', session='one', turn='alpha')
-    b = dict(title='Invoices', session='two', turn='beta')
+    a = {'title': 'Release', 'session': 'one', 'turn': 'alpha'}
+    b = {'title': 'Invoices', 'session': 'two', 'turn': 'beta'}
     live = world.hermes.restart_snapshot
     live['work'] = [a, b]
     jobs = []

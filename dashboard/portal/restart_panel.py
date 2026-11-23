@@ -1,7 +1,7 @@
 """Owner-initiated local restart. The portal, not a chat turn, owns the durable plan."""
 import asyncio
-from contextlib import suppress
 import time
+from contextlib import suppress
 
 
 class RestartPanel:
@@ -101,7 +101,7 @@ class RestartPanel:
                 await self.tick()
             except ConnectionError:
                 continue
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - Record job failures without stopping the watchdog.
                 plan = self.plan()
                 plan.update(phase='failed', error=str(exc))
                 self.save(plan)

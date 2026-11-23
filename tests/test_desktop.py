@@ -6,7 +6,6 @@ import secrets
 import aiohttp
 import pytest
 from aiohttp.test_utils import TestServer
-
 from conftest import ORIGIN, ROOT
 from portal.server import Portal
 
@@ -45,7 +44,7 @@ async def link(world, url, challenge):
 
 
 async def test_the_desktop_app_signs_in_through_the_browser_and_keeps_the_session(world, desktop):
-    server, clock, app = desktop
+    server, _clock, app = desktop
     url = lambda path: str(server.make_url(path))  # noqa: E731
     sid = world.hermes.add_session("20261024_070707_abcdef", "deploy")
     await world.sign_up()
@@ -103,7 +102,7 @@ async def test_a_hand_off_is_refused_without_the_apps_secret_a_signed_in_browser
 
 
 async def test_the_desktop_app_updates_from_the_release_the_server_publishes(world, desktop, tmp_path):
-    server, clock, app = desktop
+    server, _clock, app = desktop
     url = lambda path: str(server.make_url(path))  # noqa: E731
     await world.sign_up()
 

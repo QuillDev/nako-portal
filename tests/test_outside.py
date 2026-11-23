@@ -4,7 +4,6 @@ which are running a turn, and opens them read-only."""
 from __future__ import annotations
 
 import pytest
-
 from conftest import ORIGIN, next_message
 
 pytestmark = pytest.mark.asyncio

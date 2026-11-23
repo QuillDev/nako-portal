@@ -7,7 +7,6 @@ import json
 import sys
 
 import pytest
-
 from conftest import until
 from portal.environments import Environments
 

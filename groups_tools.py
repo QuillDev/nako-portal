@@ -74,9 +74,9 @@ TOOLS = [
     (
         "group_list",
         group_list,
-        "List the chat groups in the user's portal sidebar, each with its id, name, color and chats "
+        ("List the chat groups in the user's portal sidebar, each with its id, name, color and chats "
         "(session id and title). Also returns this chat's own session id. Check here before creating a group, "
-        "so related work lands in the group that already exists.",
+        "so related work lands in the group that already exists."),
         {},
         [],
     ),
@@ -104,8 +104,8 @@ TOOLS = [
     (
         "group_add",
         group_add,
-        "Put portal chats in a group, moving each out of any group it was in (a chat is in one group at most). "
-        "Use it to keep related chats together, e.g. every chat about one PR or project.",
+        ("Put portal chats in a group, moving each out of any group it was in (a chat is in one group at most). "
+        "Use it to keep related chats together, e.g. every chat about one PR or project."),
         {
             "group": GROUP,
             "sessions": SESSIONS,
@@ -128,7 +128,7 @@ def _wrap(fn):
     def handler(args, **kwargs):
         try:
             return json.dumps(fn(args or {}, kwargs.get("session_id") or os.environ.get("HERMES_SESSION_ID") or None))
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Tool failures are returned to the agent as JSON.
             return json.dumps({"error": str(error)})
 
     return handler
@@ -138,7 +138,7 @@ TOOL_HANDLERS = {name: _wrap(fn) for name, fn, *_ in TOOLS}
 
 
 def register(ctx):
-    for name, fn, description, properties, required in TOOLS:
+    for name, _fn, description, properties, required in TOOLS:
         ctx.register_tool(
             name=name,
             toolset=TOOLSET,

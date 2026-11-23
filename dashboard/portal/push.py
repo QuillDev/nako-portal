@@ -122,6 +122,6 @@ class Pusher:
                         delivered += 1
                     else:
                         log.warning("Nako portal push got %s from %s", response.status, urlparse(endpoint).netloc)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - An invalid subscription must not stop delivery to the others.
                 log.warning("Nako portal push failed: %s", type(error).__name__)
         return delivered

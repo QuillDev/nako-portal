@@ -4,7 +4,6 @@ import json
 
 import pytest
 from aiohttp.test_utils import TestServer
-
 from conftest import ORIGIN, ROOT, Authenticator, next_message
 from portal import webauthn
 from portal.server import Portal

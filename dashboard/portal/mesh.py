@@ -29,13 +29,13 @@ import stat
 import time
 from pathlib import Path
 
-from aiohttp import WSMsgType, web
+from aiohttp import ClientError, web
 
-from .mesh_setup import powershell_script, shell_script
-from .attachments import Attachments, MAX_FILE, MAX_FILES, decode_attachment, read_attachment
+from .attachments import MAX_FILE, MAX_FILES, Attachments, decode_attachment, read_attachment
 from .hub import FROM_THREAD
-from .media import media_paths, shown_files
 from .link import HEARTBEAT, MAX_FRAME, Peer, decode_files, encode_files
+from .media import media_paths, shown_files
+from .mesh_setup import powershell_script, shell_script
 
 log = logging.getLogger("hermes.portal")
 
@@ -657,7 +657,7 @@ class Mesh:
         async def one(machine):
             try:
                 rows = await asyncio.wait_for(self.call(machine, "sessions"), LIST_TIMEOUT)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - A remote backend failure must not hide other machines.
                 log.info("portal: %s didn't list its chats (%s)", machine, error)
                 return []
             shown = []
@@ -1079,7 +1079,7 @@ class Node:
                     heartbeat=HEARTBEAT,
                     max_msg_size=MAX_FRAME,
                 )
-            except Exception as error:
+            except (ClientError, OSError, TimeoutError) as error:
                 log.info("portal: can't reach the mesh hub at %s (%s)", self.url, error)
                 await asyncio.sleep(self.RETRY)
                 continue
@@ -1099,7 +1099,7 @@ class Node:
                 if self.skills_into is not None:
                     syncing = asyncio.get_running_loop().create_task(self._sync_skills(peer))
                 await running
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Reconnect after any remote handshake or link failure.
                 log.warning("portal: mesh link dropped (%s)", error)
             finally:
                 self.peer = None

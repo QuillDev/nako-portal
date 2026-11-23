@@ -32,7 +32,7 @@ def source_for(slug):
         from providers import get_provider_profile
 
         profile = get_provider_profile(slug)
-    except Exception:
+    except Exception:  # noqa: BLE001 - Optional provider discovery must not break the provider list.
         return None
     if profile is not None and all(callable(getattr(profile, hook, None)) for hook in HOOKS):
         return PluginAccounts(profile)
@@ -58,7 +58,7 @@ class PluginAccounts:
     def remove(self, account):
         hook = getattr(self.profile, "remove_account_login", None)
         if not callable(hook):
-            raise ValueError("That provider can't remove accounts here")
+            raise ValueError("That provider can't remove accounts here")  # noqa: TRY004 - Callers handle unsupported account operations as ValueError.
         hook(account)
 
     def start(self, target, scope):
@@ -158,21 +158,25 @@ class CodexAccounts:
                 state["status"] = "cancelled"
                 return
             tokens = routes._codex_exchange_tokens(httpx, code)
-            with scope():
-                # Cancellation and committing credentials are serialized. In particular an
-                # exchange that finishes after cancellation must never resurrect the login.
-                with self._lock:
-                    if state["cancelled"]:
-                        state["status"] = "cancelled"
-                        return
-                    result = self._link(tokens, target)
-                    state.update(status="done", result=result)
-        except Exception as error:
+            # Cancellation and committing credentials are serialized. In particular an
+            # exchange that finishes after cancellation must never resurrect the login.
+            with scope(), self._lock:
+                if state["cancelled"]:
+                    state["status"] = "cancelled"
+                    return
+                result = self._link(tokens, target)
+                state.update(status="done", result=result)
+        except Exception as error:  # noqa: BLE001 - Publish background login failures to the polling UI.
             log.warning("portal: codex sign-in failed: %s", error)
             state.update(status="error", error=str(error) or "That sign-in failed")
 
     def _link(self, tokens, target):
-        from agent.credential_pool import AUTH_TYPE_OAUTH, SOURCE_MANUAL_DEVICE_CODE, PooledCredential, _codex_principal_identity
+        from agent.credential_pool import (
+            AUTH_TYPE_OAUTH,
+            SOURCE_MANUAL_DEVICE_CODE,
+            PooledCredential,
+            _codex_principal_identity,
+        )
 
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         pool = self._pool()

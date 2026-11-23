@@ -2,11 +2,25 @@
 reinstalled app or a second device still has them."""
 
 import aiohttp
-
+import pytest
+from conftest import ORIGIN
 from portal.store import Store
 
 FAST = {"id": "p1", "name": "Quick", "icon": "🐇", "pick": {"provider": "fast", "model": "small", "effort": "low", "speed": "fast"}}
 DEEP = {"id": "p2", "name": "Deep", "icon": "", "pick": {"provider": "fast", "model": "small", "effort": "high", "speed": ""}}
+
+
+@pytest.mark.parametrize("path, body", [
+    ("presets", []),
+    ("presets", {**FAST, "pick": []}),
+    ("favorites", []),
+])
+async def test_wrong_json_types_are_validation_errors(world, path, body):
+    await world.sign_up()
+    response = await world.http.post(world.url(f"/api/model-picks/{path}"), json=body, headers={"Origin": ORIGIN})
+    assert response.status == 400
+    assert "error" in await response.json()
+    assert await read(world) == {"presets": [], "favorites": []}
 
 
 async def read(world, http=None):

@@ -101,6 +101,7 @@ def test_a_chat_that_isnt_a_portal_thread_reads_as_missing(backend):
 
 async def test_periodic_attachment_backfill_preserves_the_open_transcript_cache(backend):
     import asyncio
+
     from portal.hub import Hub
     from portal.mesh import Node
 

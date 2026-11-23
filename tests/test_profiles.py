@@ -1,6 +1,5 @@
 import aiohttp
 import pytest
-
 from conftest import ORIGIN, next_message
 
 pytestmark = pytest.mark.asyncio
@@ -189,13 +188,15 @@ async def test_chat_settings_reject_invalid_busy_foreign_and_unsigned_writes(wor
 
 async def test_real_gateway_keeps_chat_model_and_tuning_after_reload(tmp_path, monkeypatch):
     from types import SimpleNamespace
+
     from test_process_wake import gateway
     pytest.importorskip("gateway.run")
-    import hermes_cli.model_switch as switching
     import importlib.util
     import os
     import sys
     from pathlib import Path
+
+    import hermes_cli.model_switch as switching
 
     root = Path(os.environ.get("MODEL_CONTROLS_SOURCE", ""))
     if not (root / "plugin.yaml").is_file():

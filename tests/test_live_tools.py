@@ -13,7 +13,8 @@ def plugin_hooks():
     spec.loader.exec_module(plugin)
 
     class Ctx:
-        hooks = {}
+        def __init__(self):
+            self.hooks = {}
 
         def register_hook(self, name, callback):
             self.hooks[name] = callback
@@ -60,7 +61,7 @@ async def test_tool_calls_in_a_running_turn_reach_the_open_chat_live(world):
     await asyncio.to_thread(hooks["pre_tool_call"], tool_name="terminal", args={}, session_id=sid, tool_call_id="call-2")
     try:
         stray = await next_message(ws, lambda m: m.get("type") == "tool", timeout=0.3)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         stray = None
     assert stray is None
     await ws.close()
@@ -148,7 +149,7 @@ async def test_a_finished_reply_gets_nakos_sign_off_and_a_failed_one_is_just_ski
     await next_message(ws, lambda m: m.get("type") == "message.complete")
     try:
         stray = await next_message(ws, lambda m: m.get("type") == "signoff", timeout=0.3)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         stray = None
     assert stray is None
     await ws.close()
@@ -176,7 +177,7 @@ async def test_the_sign_off_can_be_turned_off_and_moved_to_another_model_from_se
     await next_message(ws, lambda m: m.get("type") == "message.complete")
     try:
         stray = await next_message(ws, lambda m: m.get("type") == "signoff", timeout=0.3)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         stray = None
     assert stray is None
     # Off stays off for every device and across restarts: the server keeps it.

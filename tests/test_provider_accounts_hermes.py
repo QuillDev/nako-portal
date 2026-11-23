@@ -9,7 +9,6 @@ import importlib.util
 import json
 
 import pytest
-
 from conftest import ROOT
 
 pytest.importorskip("agent.credential_pool")
