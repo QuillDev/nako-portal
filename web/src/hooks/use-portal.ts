@@ -7,8 +7,9 @@ import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
 import { reloadMcp } from "@/lib/mcp"
 import { reloadProviders } from "@/lib/providers"
 import { reloadSecrets } from "@/lib/secrets"
+import { cachedLive, caughtUp, isCurrentRequest, reconcileSession, sentMessage } from "@/lib/portal-state"
 import { rememberTitles } from "@/lib/session-refs"
-import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type HistoryMessage, type Live, type Me, type OpenSession, type Outside, type SessionRow } from "@/lib/types"
+import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type Live, type Me, type OpenSession, type Outside, type SessionRow } from "@/lib/types"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
@@ -55,44 +56,18 @@ function remember(cache: Map<string, Cached>, opened: OpenSession, at: number) {
   while (cache.size > CACHED_CHATS) cache.delete(cache.keys().next().value!)
 }
 
-function sameMessage(a: HistoryMessage, b: HistoryMessage) {
-  if (a === b) return true
-  const keys = Object.keys(a) as (keyof HistoryMessage)[]
-  if (keys.length !== Object.keys(b).length) return false
-  return keys.every(k => {
-    const x = a[k] as unknown
-    const y = b[k] as unknown
-    return x === y || (Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => v === y[i]))
-  })
-}
-
-// The reread messages, reusing the ones already on screen that didn't change, so only new or
-// edited rows render again.
-function reuse(shown: HistoryMessage[], fresh: HistoryMessage[]) {
-  let changed = shown.length !== fresh.length
-  const out = fresh.map((m, i) => {
-    const old = shown[i]
-    if (old && sameMessage(old, m)) return old
-    changed = true
-    return m
-  })
-  return changed ? out : shown
-}
-
-// The running turn as the server saw it, plus anything that streamed in since the read started.
-function caughtUp(live: Live | null, seen: Live | undefined): Live | null {
-  if (!seen) return live
-  if (!live) return seen
-  const merge = <T extends { id: string }>(old: T[], now: T[]) => [...old.filter(o => !now.some(n => n.id && n.id === o.id)), ...now]
-  return { messages: merge(seen.messages, live.messages), tools: merge(seen.tools, live.tools) }
-}
-
 export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [route, setRoute] = useState<Route>(() => parseRoute(location.hash))
   const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
-  const [live, setLive] = useState<Live | null>(null)
+  const [live, setLiveState] = useState<Live | null>(null)
+  const liveRef = useRef<Live | null>(null)
+  const setLive = useCallback((update: Live | null | ((previous: Live | null) => Live | null)) => {
+    liveRef.current = typeof update === "function" ? update(liveRef.current) : update
+    setLiveState(liveRef.current)
+  }, [])
+  const generation = useRef({ request: 0, turn: 0 })
   const [connected, setConnected] = useState(true)
   const [hermes, setHermes] = useState<import("@/lib/types").HermesBuild | null>(null)
   // Bumped when a machine in the mesh joins, leaves or starts work; Settings rereads the list.
@@ -148,27 +123,22 @@ export function usePortal() {
 
   // Rereads the open chat from where its loaded pages start, so older pages already on screen stay.
   const refresh = useCallback(async (session: string) => {
+    const ticket = { ...generation.current, request: ++generation.current.request }
+    const startedLive = liveRef.current
+    const valid = () => isCurrentRequest(ticket, generation.current) && currentRef.current?.session === session
     const open = currentRef.current
     const since = open?.session === session && !open.loading ? `?since=${open.start}` : ""
     try {
       const opened = await (since ? api<OpenSession>(sessionPath(session) + since) : read(session))
-      setCurrent(c => {
-        if (c?.session !== session) return c
-        // An older page that landed while this was in flight sits before opened.start.
-        const kept = !c.loading && c.start < opened.start ? c.messages.slice(0, opened.start - c.start) : []
-        const start = opened.start - kept.length
-        const messages = c.loading ? opened.messages : c.start === start ? reuse(c.messages, [...kept, ...opened.messages]) : [...kept, ...opened.messages]
-        return { ...opened, start, messages, loading: false, loadingOlder: c.loadingOlder }
-      })
-      // A chat opened mid-turn (or reread after the tab slept) carries on from what the turn has
-      // shown so far; its own live view, when it has one, is already as far along.
-      if (currentRef.current?.session === session) setLive(l => (opened.running ? caughtUp(l, opened.live) : null))
+      if (!valid()) return
+      setCurrent(c => c?.session === session && valid() ? reconcileSession(c, opened) : c)
+      setLive(l => opened.running ? caughtUp(l, opened.live, startedLive) : null)
       // Opening a chat marks it seen on the server too (the notifications chat's posts, any chat's ended turn).
       setSessions(rows => (rows.some(r => r.id === session && (r.unread || r.finished)) ? rows.map(r => (r.id === session ? { ...r, unread: false, finished: false } : r)) : rows))
     } catch (e) {
-      setError((e as Error).message)
+      if (valid()) setError((e as Error).message)
     }
-  }, [read])
+  }, [read, setLive])
 
   const loadOlder = useCallback(async () => {
     const open = currentRef.current
@@ -247,6 +217,7 @@ export function usePortal() {
       const p = frame.payload || {}
       switch (frame.type) {
         case "message.start":
+          generation.current.turn += 1
           setSignOff(null)
           setLive(emptyLive())
           setCurrent(c => c && { ...c, running: true })
@@ -273,6 +244,7 @@ export function usePortal() {
           break
         }
         case "message.complete":
+          generation.current.turn += 1
           setCurrent(c => c && { ...c, running: false })
           refresh(open.session)
           break
@@ -287,7 +259,7 @@ export function usePortal() {
           break
       }
     },
-    [loadSessions, refresh],
+    [loadSessions, refresh, setLive],
   )
 
   const onFrameRef = useRef(onFrame)
@@ -304,7 +276,12 @@ export function usePortal() {
       setLinked(true)
       socket.send(JSON.stringify({ watch: currentRef.current?.session ?? null, looking: looking() }))
     }
-    socket.onmessage = event => onFrameRef.current(JSON.parse(event.data))
+    socket.onmessage = event => {
+      let frame: Frame
+      try { frame = JSON.parse(event.data) } catch { return }
+      if (!frame || typeof frame !== "object" || typeof frame.kind !== "string") return
+      onFrameRef.current(frame)
+    }
     socket.onclose = () => {
       socketRef.current = null
       setLinked(false)
@@ -361,6 +338,8 @@ export function usePortal() {
     if (!me?.signed_in) return
     setError("")
     if (!routedSession) {
+      generation.current.turn += 1
+      currentRef.current = null
       setCurrent(null)
       setLive(null)
       if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ watch: null }))
@@ -371,9 +350,13 @@ export function usePortal() {
     const cached = cacheRef.current.get(routedSession)
     const reading = inflightRef.current.has(routedSession)
     // Seen lately: show it as it was straight away, then catch up from where its pages start.
-    if (cached) setCurrent({ ...cached.opened, title: cached.opened.title || title, loading: false, loadingOlder: false })
-    else setCurrent({ session: routedSession, title, messages: [], start: 0, requests: [], running: false, loading: true, loadingOlder: false })
-    setLive(null)
+    generation.current.turn += 1
+    const opened = cached
+      ? { ...cached.opened, title: cached.opened.title || title, loading: false, loadingOlder: false }
+      : { session: routedSession, title, messages: [], start: 0, requests: [], running: false, loading: true, loadingOlder: false }
+    currentRef.current = opened
+    setCurrent(opened)
+    setLive(cached ? cachedLive(cached.opened) : null)
     if (socketRef.current?.readyState === WebSocket.OPEN) socketRef.current.send(JSON.stringify({ watch: routedSession }))
     // A read already on its way (the pointer was on the row) or just finished is the latest page.
     if (!(cached && !reading && Date.now() - cached.at < FRESH_MS)) refresh(routedSession)
@@ -407,9 +390,10 @@ export function usePortal() {
       try {
         const open = currentRef.current
         if (open) {
+          generation.current.turn += 1
           await api(sessionPath(open.session, "/messages"), { method: "POST", form })
-          setCurrent(c => c && { ...c, running: true, messages: [...c.messages, { role: "user", text, row_id: `pending-${Date.now()}`, timestamp: Date.now() / 1000, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }] })
-          setLive(l => l || emptyLive())
+          setCurrent(c => sentMessage(c, open.session, { role: "user", text, row_id: `pending-${Date.now()}`, timestamp: Date.now() / 1000, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }))
+          if (currentRef.current?.session === open.session) setLive(l => l || emptyLive())
         } else {
           const created = z.object({ session: z.string(), confirmation: z.string().optional(), message: z.string().optional() }).parse(await api<unknown>("/api/sessions", { method: "POST", form }))
           if (created.confirmation) {
@@ -426,7 +410,7 @@ export function usePortal() {
         throw e
       }
     },
-    [loadSessions],
+    [loadSessions, setLive],
   )
 
   const act = useCallback(
@@ -546,24 +530,27 @@ export function usePortal() {
         note(done.output ? `${text.trim()}\n${done.output}` : text.trim())
         if (done.sent) {
           setCurrent(c => (c?.session === open.session ? { ...c, running: true } : c))
-          setLive(l => l || emptyLive())
-          refresh(open.session)
+          if (currentRef.current?.session === open.session) {
+            generation.current.turn += 1
+            setLive(l => l || emptyLive())
+            refresh(open.session)
+          }
         }
         return done.prefill
       } catch (e) {
         note(`${text.trim()}\n${(e as Error).message}`)
       }
     },
-    [refresh],
+    [refresh, setLive],
   )
 
   // What's on screen is what going back to a chat shows next time.
   useEffect(() => {
     if (current && !current.loading) {
       const { loading: _loading, loadingOlder: _older, ...opened } = current
-      remember(cacheRef.current, opened, cacheRef.current.get(current.session)?.at ?? 0)
+      remember(cacheRef.current, { ...opened, live: live ?? undefined }, cacheRef.current.get(current.session)?.at ?? 0)
     }
-  }, [current])
+  }, [current, live])
 
   return { me, setName, boot, sessions, outside, route, current, live, connected, hermes, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }

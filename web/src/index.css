@@ -14,7 +14,7 @@
   --card-foreground: #ececef;
   --popover: #111114;
   --popover-foreground: #ececef;
-  --primary: #ec4899;
+  --primary: #db2777;
   --primary-foreground: #ffffff;
   --secondary: #17171b;
   --secondary-foreground: #ececef;
@@ -98,7 +98,7 @@
   }
 }
 
-/* Mark keyboard focus without drawing a ring or changing the control's border. */
+/* Keep keyboard focus subtle; text fields supply their own focus border. */
 :where(button, a[href], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
   outline: none;
 }

@@ -53,7 +53,14 @@ export function App() {
   useEffect(() => {
     if (portal.me?.signed_in && portal.route.view !== "desktop") void loadMarkdown().catch(() => {})
   }, [portal.me?.signed_in, portal.route.view])
-  if (!portal.me) return null
+  if (!portal.me) return (
+    <main className="flex min-h-dvh items-center justify-center gap-3 p-6 text-sm">
+      {portal.error ? <div className="flex items-center gap-3" role="alert">
+        <span>{portal.error}</span>
+        <button type="button" className="underline" onClick={() => void portal.boot().catch(e => portal.setError((e as Error).message))}>Retry</button>
+      </div> : <p role="status" className="text-muted-foreground">Loading…</p>}
+    </main>
+  )
   if (!portal.me.signed_in) return <Gate portal={portal} />
   if (portal.route.view === "desktop") return <DesktopLink query={portal.route.query} />
   return (

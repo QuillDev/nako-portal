@@ -5,7 +5,7 @@ const clock = (d: Date) => d.toLocaleTimeString([], { hour: "numeric", minute: "
 const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 
 // Whole days between `at` and today: 0 today, 1 yesterday.
-function daysAgo(at: number, now: Date) {
+export function daysAgo(at: number, now: Date) {
   return Math.round((midnight(now) - midnight(new Date(at * 1000))) / 86_400_000)
 }
 
@@ -29,4 +29,14 @@ export function fullTime(at: number, now = new Date()) {
   const pad = (n: number) => String(n).padStart(2, "0")
   const day = ago === 0 ? "Today" : ago === 1 ? "Yesterday" : `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${pad(d.getFullYear() % 100)}`
   return `${day} at ${clock(d)}`
+}
+
+// Calendar days, shared by both session lists and the transcript's day labels.
+export function age(at: number, now = new Date()) {
+  const days = daysAgo(at, now)
+  if (days < 1) return "today"
+  if (days < 2) return "yesterday"
+  if (days < 7) return "this week"
+  if (days < 30) return "this month"
+  return "older"
 }

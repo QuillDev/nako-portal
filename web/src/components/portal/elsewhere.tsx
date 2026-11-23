@@ -4,12 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { sourceName } from "@/lib/outside"
-import { timeOf } from "@/lib/times"
+import { age, timeOf } from "@/lib/times"
 import type { OutsideRow } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useDrawer } from "./drawer"
 import { PageHeader } from "./header"
-import { age } from "./sidebar"
+import { appendPage, isCurrentRequest } from "@/lib/portal-state"
 
 // What the server sends a page of; a shorter page is the last one.
 const PAGE = 50
@@ -37,6 +37,10 @@ export function Elsewhere({ portal }: { portal: Portal }) {
   const [rows, setRows] = useState<OutsideRow[] | null>(null)
   const [more, setMore] = useState(false)
   const loading = useRef(false)
+  const generation = useRef({ request: 0, turn: 0 })
+  const [pending, setPending] = useState(true)
+  const [error, setError] = useState<{ message: string; page: boolean } | null>(null)
+  const [retry, setRetry] = useState(0)
   const end = useRef<HTMLDivElement>(null)
   const shown = source && sources.includes(source) ? source : null
 
@@ -44,52 +48,65 @@ export function Elsewhere({ portal }: { portal: Portal }) {
   // any later pages already loaded below it.
   const runningKey = running.join(" ")
   useEffect(() => {
-    let live = true
+    const ticket = { ...generation.current, request: ++generation.current.request }
+    const valid = () => isCurrentRequest(ticket, generation.current)
+    loading.current = true
+    setPending(true)
+    setError(null)
     api<OutsideRow[]>(query(shown, 0)).then(
       page => {
-        if (!live) return
+        if (!valid()) return
         setRows(old => {
-          const ids = new Set(page.map(r => r.id))
-          const kept = old && old.length > PAGE ? old.slice(PAGE).filter(r => !ids.has(r.id) && (!shown || r.source === shown)) : []
-          return [...page, ...kept]
+          const kept = old && old.length > PAGE ? old.slice(PAGE).filter(r => !shown || r.source === shown) : []
+          return appendPage(page, kept)
         })
         setMore(page.length === PAGE)
       },
-      e => live && portal.setError((e as Error).message),
-    )
-    return () => {
-      live = false
-    }
-  }, [shown, runningKey, portal.setError])
+      e => { if (valid()) setError({ message: (e as Error).message, page: false }) },
+    ).finally(() => {
+      if (!valid()) return
+      loading.current = false
+      setPending(false)
+    })
+    return () => { generation.current.request += 1 }
+  }, [shown, runningKey, retry])
 
   const loadMore = useCallback(async () => {
-    if (loading.current || !rows) return
+    if (loading.current || !rows || !more) return
+    const ticket = { ...generation.current }
+    const valid = () => isCurrentRequest(ticket, generation.current)
     loading.current = true
+    setPending(true)
+    setError(null)
     try {
       const page = await api<OutsideRow[]>(query(shown, rows.length))
-      setRows(old => {
-        const have = new Set((old || []).map(r => r.id))
-        return [...(old || []), ...page.filter(r => !have.has(r.id))]
-      })
+      if (!valid()) return
+      setRows(old => appendPage(old || [], page))
       setMore(page.length === PAGE)
     } catch (e) {
-      portal.setError((e as Error).message)
+      if (valid()) setError({ message: (e as Error).message, page: true })
     } finally {
-      loading.current = false
+      if (valid()) {
+        loading.current = false
+        setPending(false)
+      }
     }
-  }, [rows, shown, portal])
+  }, [rows, shown, more])
 
   // The next page loads as the end of the list scrolls into view.
   useEffect(() => {
     const el = end.current
-    if (!el || !more) return
+    if (!el || !more || pending || error) return
     const observer = new IntersectionObserver(entries => entries.some(e => e.isIntersecting) && loadMore(), { rootMargin: "400px" })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [more, loadMore])
+  }, [more, loadMore, pending, error])
 
   const pick = (next: string | null) => {
     if (next === shown) return
+    generation.current.request += 1
+    setError(null)
+    setPending(true)
     setRows(null)
     setMore(false)
     setSource(next)
@@ -143,6 +160,11 @@ export function Elsewhere({ portal }: { portal: Portal }) {
               </div>
             )
           })}
+          {pending && <p className="px-2 py-2 text-muted-foreground text-sm" role="status">Loading…</p>}
+          {error && <div className="flex items-center gap-2 px-2 py-2 text-sm" role="alert">
+            <span>{error.message}</span>
+            <button className="underline" type="button" onClick={() => error.page ? void loadMore() : setRetry(n => n + 1)}>Retry</button>
+          </div>}
           <div aria-hidden ref={end} />
         </div>
       </div>

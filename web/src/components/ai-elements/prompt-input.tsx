@@ -3,6 +3,8 @@
 import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { InputGroup, InputGroupButton, InputGroupTextarea } from "@/components/ui/input-group";
+import { editDraft, remainingAttachments, submittedDraftIsCurrent, type Draft } from "@/lib/draft-state";
+import { holdReload } from "@/lib/reload-state";
 import { cn } from "@/lib/utils";
 import { attachmentDataUrl, validateAttachments, type AttachmentFile, type AttachmentLimits } from "@/lib/attachments";
 import { CornerDownLeftIcon, Loader2Icon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
@@ -18,7 +20,7 @@ type FileUIPart = AttachmentFile;
 type ChatStatus = "submitted" | "streaming" | "ready" | "error";
 type AttachedFile = AttachmentFile & { id: string; file: File };
 type AttachmentsContext = ReturnType<typeof useAttachmentController>;
-type TextInputContext = { value: string; setInput: (value: string) => void; clear: () => void };
+type TextInputContext = { value: string; setInput: (value: string) => void; snapshot: () => Draft; clearSubmitted: (submitted: Draft) => boolean };
 type PromptInputControllerProps = { textInput: TextInputContext; attachments: AttachmentsContext };
 const PromptInputController = createContext<PromptInputControllerProps | null>(null);
 const AttachmentsContext = createContext<AttachmentsContext | null>(null);
@@ -56,7 +58,7 @@ function useAttachmentController() {
   const remove = useCallback((id: string) => {
     const removed = current.current.find(file => file.id === id);
     if (removed) URL.revokeObjectURL(removed.url);
-    current.current = current.current.filter(file => file.id !== id);
+    current.current = remainingAttachments(current.current, [{ id }]);
     setFiles(current.current);
   }, []);
   const clear = useCallback(() => {
@@ -72,12 +74,26 @@ function useAttachmentController() {
     [files, add, remove, clear, openFileDialog, configure]);
 }
 
-export type PromptInputProviderProps = PropsWithChildren<{ initialInput?: string }>;
-export function PromptInputProvider({ initialInput = "", children }: PromptInputProviderProps) {
-  const [value, setInput] = useState(initialInput);
-  const clear = useCallback(() => setInput(""), []);
+export type PromptInputProviderProps = PropsWithChildren<{ initialInput?: string; onInputChange?: (value: string) => void }>;
+export function PromptInputProvider({ initialInput = "", onInputChange, children }: PromptInputProviderProps) {
+  const [value, setValue] = useState(initialInput);
+  const draft = useRef<Draft>({ value: initialInput, revision: 0 });
+  const onChange = useRef(onInputChange);
+  onChange.current = onInputChange;
+  const setInput = useCallback((next: string) => {
+    draft.current = editDraft(draft.current, next);
+    onChange.current?.(next);
+    setValue(next);
+  }, []);
+  const snapshot = useCallback(() => draft.current, []);
+  const clearSubmitted = useCallback((submitted: Draft) => {
+    if (!submittedDraftIsCurrent(draft.current, submitted)) return false;
+    setInput("");
+    return true;
+  }, [setInput]);
   const attachments = useAttachmentController();
-  const controller = useMemo(() => ({ textInput: { value, setInput, clear }, attachments }), [value, clear, attachments]);
+  useLayoutEffect(() => attachments.files.length ? holdReload() : undefined, [attachments.files.length]);
+  const controller = useMemo(() => ({ textInput: { value, setInput, snapshot, clearSubmitted }, attachments }), [value, setInput, snapshot, clearSubmitted, attachments]);
   return (
     <PromptInputController.Provider value={controller}>
       <AttachmentsContext.Provider value={attachments}>{children}</AttachmentsContext.Provider>
@@ -134,7 +150,7 @@ export function PromptInputAttachment({
             </div>
             <Button
               aria-label="Remove attachment"
-              className="absolute inset-0 size-5 cursor-pointer rounded p-0 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 [&>svg]:size-2.5"
+              className="absolute inset-0 size-5 cursor-pointer rounded p-0 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:opacity-100 [&>svg]:size-2.5"
               onClick={(e) => {
                 e.stopPropagation();
                 attachments.remove(data.id);
@@ -153,7 +169,7 @@ export function PromptInputAttachment({
       <PromptInputHoverCardContent className="w-auto p-2">
         <div className="w-auto space-y-3">
           {isImage && (
-            <div className="flex max-h-96 w-96 items-center justify-center overflow-hidden rounded-md border">
+            <div className="flex max-h-96 w-96 max-w-[calc(100vw-2rem)] items-center justify-center overflow-hidden rounded-md border">
               <img
                 alt={filename || "attachment preview"}
                 className="max-h-full max-w-full object-contain"
@@ -215,7 +231,7 @@ export type PromptInputMessage = { text: string; files: AttachmentFile[] };
 export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, "onSubmit" | "onError"> & AttachmentLimits & {
   multiple?: boolean;
   globalDrop?: boolean;
-  onSubmit: (message: PromptInputMessage, event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  onSubmit: (message: PromptInputMessage, event: FormEvent<HTMLFormElement>) => void | string | Promise<void | string>;
 };
 
 export const PromptInput = ({ className, accept, multiple, globalDrop, maxFiles, maxFileSize, onError, onSubmit, children, ...props }: PromptInputProps) => {
@@ -225,8 +241,14 @@ export const PromptInput = ({ className, accept, multiple, globalDrop, maxFiles,
   const { files, add, remove, fileInputRef, configure } = attachments;
   const formRef = useRef<HTMLFormElement | null>(null);
   const submitting = useRef(false);
-  const latestController = useRef(controller);
-  latestController.current = controller;
+  const inputRevision = useRef(0);
+  useLayoutEffect(() => {
+    const form = formRef.current;
+    const changed = () => { inputRevision.current += 1; };
+    form?.addEventListener("input", changed);
+    return () => form?.removeEventListener("input", changed);
+  }, []);
+  useLayoutEffect(() => !controller && files.length ? holdReload() : undefined, [controller, files.length]);
   // Configure the shared controller before any picker, paste, drop or external add can run.
   useLayoutEffect(() => configure({ accept, maxFiles, maxFileSize, onError }),
     [configure, accept, maxFiles, maxFileSize, onError]);
@@ -260,7 +282,10 @@ export const PromptInput = ({ className, accept, multiple, globalDrop, maxFiles,
     if (submitting.current) return;
     submitting.current = true;
     const form = event.currentTarget;
-    const text = controller?.textInput.value ?? String(new FormData(form).get("message") ?? "");
+    const submitted = controller?.textInput.snapshot();
+    const revision = inputRevision.current;
+    const text = submitted?.value ?? String(new FormData(form).get("message") ?? "");
+    const releaseReload = holdReload();
     try {
       let converted: AttachmentFile[];
       try {
@@ -271,18 +296,19 @@ export const PromptInput = ({ className, accept, multiple, globalDrop, maxFiles,
         onError?.({ code: "file_read", message: (error as Error).message });
         return;
       }
-      await onSubmit({ text, files: converted }, event);
+      const prefill = await onSubmit({ text, files: converted }, event);
       // Remove only what was sent; edits and new attachments made while waiting survive.
       for (const file of files) remove(file.id);
       if (controller) {
-        if (latestController.current?.textInput.value === text) controller.textInput.clear();
+        if (submitted && controller.textInput.clearSubmitted(submitted) && prefill) controller.textInput.setInput(prefill);
       } else {
         const textarea = form.elements.namedItem("message");
-        if (textarea instanceof HTMLTextAreaElement && textarea.value === text) textarea.value = "";
+        if (textarea instanceof HTMLTextAreaElement && textarea.value === text && inputRevision.current === revision) textarea.value = prefill || "";
       }
     } catch {
       // The caller reports send failures; retain the text and files for retry.
     } finally {
+      releaseReload();
       submitting.current = false;
     }
   };

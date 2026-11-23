@@ -1,8 +1,10 @@
+import { reloadPending } from "./reload-state"
+
 // Long-lived pages (the apps' floating panels, a tab left open for days) keep the bundle they first
 // loaded, so a deploy never reaches them and new kinds of cards show as unanswerable. Whenever the
 // page comes back into view, and now and then while it's up, compare our bundle with the one the
-// server hands out and reload onto the new one. Drafts live in localStorage, so a reload loses
-// nothing; it only waits while a secret is half-typed, the one value deliberately never saved.
+// server hands out and reload onto the new one. Text drafts live in localStorage; wait for unsaved attachments, submissions,
+// and half-typed secrets before reloading.
 
 const BUNDLE = /\/assets\/index-[\w-]+\.js/
 /** Don't ask the server more often than this, however many triggers fire. */
@@ -37,7 +39,7 @@ export async function checkBuild(now = false): Promise<void> {
     const response = await fetch("/", { cache: "no-store", credentials: "same-origin" })
     if (!response.ok) return
     const theirs = servedBundle(await response.text())
-    if (theirs && theirs !== ours && !typingSecret()) location.reload()
+    if (theirs && theirs !== ours && !typingSecret() && !reloadPending()) location.reload()
   } catch {
     // Offline or mid-restart: the next trigger tries again.
   }

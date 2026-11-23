@@ -4,10 +4,12 @@
 import {
   createContext,
   type PointerEvent as ReactPointerEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -97,7 +99,13 @@ function useDesktopSidebar() {
     handle.addEventListener("pointercancel", end)
   }
 
-  return { width, collapsed, dragging, toggle, startResize, reset: () => setWidth(WIDTH.initial) }
+  const resizeWithKeyboard = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+    e.preventDefault()
+    setWidth(value => clamp(value + (e.key === "ArrowLeft" ? -16 : 16)))
+  }
+
+  return { width, collapsed, dragging, toggle, startResize, resizeWithKeyboard, reset: () => setWidth(WIDTH.initial) }
 }
 
 const pushedDrawer = () => (history.state as { drawer?: boolean } | null)?.drawer === true
@@ -115,6 +123,8 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
   const rootRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const shadeRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const focusBeforeOpen = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const sync = () => setPushed(pushedDrawer())
@@ -149,6 +159,48 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
 
   const state = useRef({ open, show, hide })
   state.current = { open, show, hide }
+
+  // Remember the trigger before React makes the underlying content inert.
+  useEffect(() => {
+    if (!phone || open) return
+    const remember = () => { focusBeforeOpen.current = document.activeElement instanceof HTMLElement ? document.activeElement : null }
+    remember()
+    document.addEventListener("focusin", remember)
+    return () => document.removeEventListener("focusin", remember)
+  }, [phone, open])
+
+  useLayoutEffect(() => {
+    const panel = panelRef.current
+    const content = contentRef.current
+    if (!phone || !open || !panel || !content) return
+    const previous = focusBeforeOpen.current ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+    const focusable = () => [...panel.querySelectorAll<HTMLElement>('a[href], button, input, textarea, select, [tabindex]:not([tabindex="-1"])')]
+      .filter(el => !el.matches(':disabled') && !el.closest('[inert]') && el.getClientRects().length)
+    ;(focusable()[0] ?? panel).focus()
+    const keydown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
+      if (e.key === "Escape") {
+        e.preventDefault()
+        state.current.hide()
+      } else if (e.key === "Tab") {
+        const items = focusable()
+        const first = items[0] ?? panel
+        const last = items.at(-1) ?? panel
+        if (!panel.contains(document.activeElement) || (e.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+          e.preventDefault()
+          ;(e.shiftKey ? last : first).focus()
+        }
+      }
+    }
+    document.addEventListener("keydown", keydown)
+    return () => {
+      document.removeEventListener("keydown", keydown)
+      // React may still be committing the inert change during cleanup.
+      queueMicrotask(() => {
+        if (previous?.isConnected && !previous.closest('[inert]')) previous.focus()
+      })
+    }
+  }, [phone, open])
 
   useEffect(() => {
     const root = rootRef.current
@@ -243,6 +295,10 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
             desk.dragging && "md:transition-none",
             open ? "max-md:shadow-xl" : "max-md:-translate-x-full",
           )}
+          role={phone && open ? "dialog" : undefined}
+          aria-modal={phone && open ? true : undefined}
+          aria-label={phone && open ? "Chat list" : undefined}
+          tabIndex={-1}
           inert={phone ? !open : collapsed}
           ref={panelRef}
           style={phone ? undefined : { width: collapsed ? 0 : desk.width }}
@@ -254,6 +310,11 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
             <div
               aria-label="Resize chat list"
               aria-orientation="vertical"
+              aria-valuemin={WIDTH.min}
+              aria-valuemax={WIDTH.max}
+              aria-valuenow={desk.width}
+              tabIndex={collapsed ? -1 : 0}
+              onKeyDown={desk.resizeWithKeyboard}
               className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-border data-dragging:bg-border"
               data-dragging={desk.dragging ? "" : undefined}
               onDoubleClick={desk.reset}
@@ -268,7 +329,7 @@ export function DrawerLayout({ list, sidebar, children }: { list: boolean; sideb
           onClick={hide}
           ref={shadeRef}
         />
-        {children}
+        <div className="contents" inert={phone && open} ref={contentRef}>{children}</div>
       </div>
     </DrawerContext.Provider>
   )
