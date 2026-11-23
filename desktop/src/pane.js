@@ -3,11 +3,13 @@
 //
 // Every chat has a browser of its own, with tabs (tabs.js). Each tab is a view of its own; only the
 // one on screen is shown, the rest are hidden and frozen, and chats left a while ago are unloaded.
-import { WebContentsView } from "electron"
+import { WebContentsView, session } from "electron"
 
 import { addressOrSearch, isEngine } from "./address.js"
 import { DEFAULT_SHARE, DIVIDER_WIDTH, dragRange, shareFor, split } from "./layout.js"
 import { LIVE_CHATS, Tabs, tabName } from "./tabs.js"
+import { BROWSER_PARTITION, restrictBrowserSession } from "./browser-session.js"
+import { setPageVisibility } from "./page-visibility.js"
 
 const BAR_HEIGHT = 40
 /** The row of tabs under the toolbar, shown once a chat has more than one. */
@@ -21,8 +23,6 @@ export function status(shown, strip) {
     tabs: strip.map(t => ({ id: t.id, name: tabName(t) })),
   }
 }
-
-const PAUSE_MEDIA = "document.querySelectorAll('video, audio').forEach(m => m.pause())"
 
 export class Pane {
   tabs = new Tabs()
@@ -186,11 +186,9 @@ export class Pane {
     this.visible = shown?.id ?? null
     for (const [id, view] of this.views) {
       if (id === this.visible) {
-        view.setVisible(true)
-        thaw(view)
+        setPageVisibility(view, true)
       } else if (id === before) {
-        view.setVisible(false)
-        freeze(view)
+        setPageVisibility(view, false)
       }
     }
     this.bar?.setVisible(Boolean(shown))
@@ -214,7 +212,8 @@ export class Pane {
 
   /** A view for `tab`, loading its address (a new tab starts blank). */
   #page(tab) {
-    const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true } })
+    const browserSession = restrictBrowserSession(session.fromPartition(BROWSER_PARTITION))
+    const view = new WebContentsView({ webPreferences: { session: browserSession, sandbox: true, contextIsolation: true } })
     view.setBackgroundColor("#ffffff")
     const page = view.webContents
     page.setUserAgent(this.userAgent)
@@ -312,26 +311,4 @@ export class Pane {
     this.tabs = new Tabs()
     this.sync()
   }
-}
-
-// A tab out of sight stops: its videos pause and Chromium freezes the page (no scripts, no timers)
-// until it's shown again.
-function lifecycle(view, state) {
-  const page = view.webContents
-  if (page.isDestroyed()) return
-  try {
-    if (!page.debugger.isAttached()) page.debugger.attach("1.3")
-    page.debugger.sendCommand("Page.setWebLifecycleState", { state }).catch(() => {})
-  } catch {}
-}
-
-function freeze(view) {
-  view.webContents
-    .executeJavaScript(PAUSE_MEDIA)
-    .catch(() => {})
-    .finally(() => lifecycle(view, "frozen"))
-}
-
-function thaw(view) {
-  lifecycle(view, "active")
 }

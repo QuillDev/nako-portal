@@ -102,6 +102,29 @@ class BrowserTabsTest {
     }
 
     @Test
+    fun liveTabsAreBoundedWithinEachChatAndEvictedTabsCanReload() {
+        val tabs = BrowserTabs()
+        tabs.switch("a")
+        val ids = (1..10).map { number ->
+            val id = tabs.openLink("https://example.com/$number")
+            tabs.tab(id)!!.live = true
+            tabs.discard()
+            id
+        }
+        assertEquals(BrowserTabs.LIVE_TABS, tabs.strip().count { it.live })
+        assertFalse(tabs.tab(ids.first())!!.live)
+        assertEquals("https://example.com/1", tabs.tab(ids.first())!!.url)
+        tabs.select(ids.first())
+        tabs.shown()!!.live = true
+        tabs.discard()
+        assertTrue(tabs.shown()!!.live)
+        assertEquals(BrowserTabs.LIVE_TABS, tabs.strip().count { it.live })
+        tabs.hide()
+        tabs.discard(keepTabs = 1)
+        assertEquals(1, tabs.strip().count { it.live })
+    }
+
+    @Test
     fun tabsAreNamedByTitleThenHost() {
         val tab = BrowserTabs.Tab(1, "https://docs.example/a", "  ")
         assertEquals("docs.example", tab.name)

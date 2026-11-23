@@ -44,6 +44,9 @@ class AlertService : Service() {
     private val ids = AtomicInteger(100)
     @Volatile private var sticker = Sticker.IDLE
     private var bubble: Bubble? = null
+    private var bubbleOrigin: String? = null
+    private var serverOrigin: String? = null
+    private var generation = 0L
     private var night = 0
     private val handler by lazy { android.os.Handler(mainLooper) }
     private val network = object : ConnectivityManager.NetworkCallback() {
@@ -90,6 +93,11 @@ class AlertService : Service() {
     /** Nako's floating sticker: on when switched on and allowed, and only while the app itself is out of sight. */
     fun refreshBubble() {
         val server = origin(this)
+        if (bubbleOrigin != server?.value) {
+            bubble?.destroy()
+            bubble = null
+            bubbleOrigin = server?.value
+        }
         if (server == null || !Bubble.enabled(this) || MainActivity.visible) {
             bubble?.hide()
             return
@@ -100,12 +108,30 @@ class AlertService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (socket == null) connect(reset = true)
+        if (serverOrigin != origin(this)?.value) serverChanged()
+        else if (socket == null) connect(reset = true)
         return START_STICKY
+    }
+
+    /** The activity saved a different origin: no socket, retry or bubble may keep the old one. */
+    fun serverChanged() {
+        generation++
+        handler.removeCallbacksAndMessages(null)
+        socket?.cancel()
+        socket = null
+        serverOrigin = origin(this)?.value
+        attempts = 0
+        sticker = Sticker.IDLE
+        bubble?.destroy()
+        bubble = null
+        refreshBubble()
+        connect(reset = true)
     }
 
     override fun onDestroy() {
         stopped = true
+        generation++
+        handler.removeCallbacksAndMessages(null)
         if (running === this) running = null
         bubble?.destroy()
         bubble = null
@@ -118,6 +144,7 @@ class AlertService : Service() {
         if (stopped) return
         if (reset) attempts = 0
         val origin = origin(this) ?: return stop("no server set")
+        serverOrigin = origin.value
         val cookie = CookieManager.getInstance().getCookie(origin.value)
         if (cookie.isNullOrEmpty()) return stop("signed out")
         val request = Request.Builder()
@@ -125,7 +152,7 @@ class AlertService : Service() {
             .header("Cookie", cookie)
             .header("Origin", origin.value)
             .build()
-        socket = client.newWebSocket(request, Listener(origin))
+        socket = client.newWebSocket(request, Listener(origin, generation))
     }
 
     private fun stop(why: String) {
@@ -136,37 +163,43 @@ class AlertService : Service() {
     private fun retryLater() {
         socket = null
         if (stopped) return
-        handler.postDelayed({ if (socket == null) connect() }, backoffSeconds(attempts++) * 1000)
+        val expected = generation
+        handler.postDelayed({ if (!stopped && generation == expected && socket == null) connect() }, backoffSeconds(attempts++) * 1000)
     }
 
-    private inner class Listener(private val origin: ServerOrigin) : WebSocketListener() {
+    private inner class Listener(private val origin: ServerOrigin, private val expected: Long) : WebSocketListener() {
+        private fun current(webSocket: WebSocket): Boolean = !stopped && expected == generation && socket === webSocket
+
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            attempts = 0
+            handler.post { if (current(webSocket)) attempts = 0 }
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
-            Sticker.parse(text)?.let { shown ->
-                sticker = shown
-                handler.post { bubble?.status(shown.mood, shown.counts) }
-                return
-            }
-            parseAlert(text)?.let { alert ->
-                show(origin, alert)
-                handler.post { bubble?.alert(alert.session) }
+            handler.post {
+                if (!current(webSocket)) return@post
+                Sticker.parse(text)?.let { shown ->
+                    sticker = shown
+                    bubble?.status(shown.mood, shown.counts)
+                    return@post
+                }
+                parseAlert(text)?.let { alert ->
+                    show(origin, alert)
+                    bubble?.alert(alert.session)
+                }
             }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             // Signed out (cookie expired or passkey removed): stop until the app signs in again.
-            if (response?.code == 401 || response?.code == 403) {
-                handler.post { stop("server answered ${response.code}") }
-                return
+            handler.post {
+                if (!current(webSocket)) return@post
+                if (response?.code == 401 || response?.code == 403) stop("server answered ${response.code}")
+                else retryLater()
             }
-            handler.post { retryLater() }
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-            handler.post { retryLater() }
+            handler.post { if (current(webSocket)) retryLater() }
         }
     }
 

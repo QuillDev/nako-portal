@@ -34,12 +34,15 @@ if gh release view "$tag" -R "$repo" >/dev/null 2>&1; then
   exit 1
 fi
 
-# Installed apps only take a higher version code: one more than the newest published APK's.
-last=$(gh release list -R "$repo" -L 50 --json tagName -q '[.[].tagName | select(startswith("android-v"))][0] // empty')
+# Codes need not follow tag order. Inspect every published Android manifest, on every page.
+releases=$(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft | not) | select(.tag_name | test("^android-v[0-9]+\\.[0-9]+\\.[0-9]+$")) | select(any(.assets[]; .name == "android-release.json")) | .tag_name')
 code=1
-if [ -n "$last" ]; then
-  code=$(($(gh release download "$last" -R "$repo" -p android-release.json -O - | jq .versionCode) + 1))
-fi
+while IFS= read -r released; do
+  [ -n "$released" ] || continue
+  previous=$(gh release download "$released" -R "$repo" -p android-release.json -O - |
+    jq -er '.versionCode | select(type == "number" and . == floor and . > 0 and . < 2100000000)')
+  if (( previous >= code )); then code=$((previous + 1)); fi
+done <<<"$releases"
 
 export PORTAL_ANDROID_KEYSTORE=${PORTAL_ANDROID_KEYSTORE:-$HOME/.config/hermes-portal/android-release.jks}
 if [ -z "${PORTAL_ANDROID_KEYSTORE_PASSWORD:-}" ]; then

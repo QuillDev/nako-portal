@@ -11,6 +11,7 @@ class BrowserTabs {
     class Tab(val id: Long, var url: String?, var title: String? = null) {
         /** Whether a WebView holds this tab right now. */
         var live = false
+        internal var used = 0L
 
         /** What the tab strip calls it: the page's title, else its host. */
         val name: String
@@ -44,6 +45,7 @@ class BrowserTabs {
     private fun push(url: String?): Long {
         val chat = chat()
         val tab = Tab(++next, url)
+        tab.used = ++clock
         chat.tabs += tab
         chat.active = chat.tabs.lastIndex
         chat.open = true
@@ -56,6 +58,7 @@ class BrowserTabs {
         val i = chat.tabs.indexOfFirst { it.url == url }
         if (i < 0) return push(url)
         chat.active = i
+        chat.tabs[i].used = ++clock
         chat.open = true
         return chat.tabs[i].id
     }
@@ -65,7 +68,10 @@ class BrowserTabs {
     fun select(id: Long) {
         val chat = chat()
         val i = chat.tabs.indexOfFirst { it.id == id }
-        if (i >= 0) chat.active = i
+        if (i >= 0) {
+            chat.active = i
+            chat.tabs[i].used = ++clock
+        }
     }
 
     /** Closes tab [id] in the chat on screen; the browser closes with its last tab. */
@@ -100,18 +106,23 @@ class BrowserTabs {
 
     /**
      * Unloads the pages of every chat but the [keep] most recently used (the one on screen is
-     * always kept). Returns the tabs whose WebViews should go.
+     * always kept), and bounds live tabs within those chats. URLs and titles remain available
+     * for reloading evicted tabs. Returns the tabs whose WebViews should go.
      */
-    fun discard(keep: Int = LIVE_CHATS): List<Long> {
+    fun discard(keep: Int = LIVE_CHATS, keepTabs: Int = LIVE_TABS): List<Long> {
         val loaded = chats.entries.filter { (_, chat) -> chat.tabs.any { it.live } }
             .sortedWith(compareBy<Map.Entry<String?, Chat>> { it.key != current }.thenByDescending { it.value.used })
-        return loaded.drop(keep.coerceAtLeast(1)).flatMap { (_, chat) ->
-            chat.tabs.filter { it.live }.onEach { it.live = false }.map { it.id }
+        return loaded.flatMapIndexed { index, (_, chat) ->
+            val live = chat.tabs.filter { it.live }
+                .sortedWith(compareBy<Tab> { it.id != chat.tabs.getOrNull(chat.active)?.id }.thenByDescending { it.used })
+            val discard = if (index >= keep.coerceAtLeast(1)) live else live.drop(keepTabs.coerceAtLeast(1))
+            discard.onEach { it.live = false }.map { it.id }
         }
     }
 
     companion object {
         /** How many chats keep their pages loaded; older ones reload their tabs when you come back. */
         const val LIVE_CHATS = 3
+        const val LIVE_TABS = 3
     }
 }
