@@ -19,8 +19,8 @@ def _seed(hermes):
     hermes.add_session(DISCORD, "Book club picks", source="discord", last_active=1_000, messages=[("user", "picks?"), ("assistant", "three of them")])
     hermes.add_session(SLACK, "Shipping export", source="slack", last_active=3_000, messages=[("user", "is the export short?"), ("assistant", "4 orders moved to tonight")])
     hermes.add_session(CRON, "Morning digest", source="cron", last_active=2_000, messages=[("user", "digest"), ("assistant", "five links")])
-    # A cron run that never wrote anything, and a turn's helper session: neither is worth listing.
-    hermes.add_session("local-empty000000000000000", "", source="cron", last_active=4_000)
+    # A cron run with nothing saved yet still lists; a turn's helper session doesn't.
+    hermes.add_session("local-empty000000000000000", "Inbox check", source="cron", last_active=4_000)
     hermes.add_session("20261116_110000_tool01", "helper", source="tool", last_active=5_000, messages=[("user", "x")])
 
 
@@ -35,12 +35,13 @@ async def test_sessions_from_elsewhere_list_latest_first_and_stay_out_of_the_sid
     _seed(world.hermes)
 
     assert await _outside(world) == [
+        ("Inbox check", "cron", False),
         ("Shipping export", "slack", False),
         ("Morning digest", "cron", False),
         ("Book club picks", "discord", False),
     ]
-    assert await _outside(world, "?source=cron") == [("Morning digest", "cron", False)]
-    assert await _outside(world, "?offset=2") == [("Book club picks", "discord", False)]
+    assert await _outside(world, "?source=cron") == [("Inbox check", "cron", False), ("Morning digest", "cron", False)]
+    assert await _outside(world, "?offset=3") == [("Book club picks", "discord", False)]
 
     sidebar = await (await world.http.get(world.url("/api/sessions"))).json()
     assert [row["title"] for row in sidebar] == ["Trip budget"]
@@ -60,6 +61,7 @@ async def test_the_app_hears_which_sessions_elsewhere_are_running_without_any_al
     started = await next_message(ws, lambda m: m.get("kind") == "outside")
     assert started["running"] == [SLACK]
     assert await _outside(world) == [
+        ("Inbox check", "cron", False),
         ("Shipping export", "slack", True),
         ("Morning digest", "cron", False),
         ("Book club picks", "discord", False),

@@ -225,7 +225,7 @@ class FakeGateway:
 
     def outside_sessions(self, source=None, offset=0, page=50):
         rows = sorted(
-            (s for s in self.sessions.values() if s.get("source", "portal") not in ("portal", "tool") and s["profile"] == self.profile and s["rows"] and (not source or s.get("source") == source)),
+            (s for s in self.sessions.values() if s.get("source", "portal") not in ("portal", "tool") and s["profile"] == self.profile and (not source or s.get("source") == source)),
             key=lambda s: -s.get("last_active", 0),
         )
         return [{"id": s["id"], "title": s["title"], "source": s["source"], "last_active": s.get("last_active", 0)} for s in rows[offset : offset + page]]
