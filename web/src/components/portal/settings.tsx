@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useState } from "react"
 import { BellIcon, BoxesIcon, ChartLineIcon, ChevronRightIcon, KeyRoundIcon, type LucideIcon, BlocksIcon, NetworkIcon, PlugIcon, SlidersHorizontalIcon, SparklesIcon, UserIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,13 +22,14 @@ import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
 import { McpSettings } from "./mcp"
 import { ProvidersSettings } from "./providers"
-import { SecretsSettings } from "./secrets"
 import { SignOffSettings } from "./sign-off-settings"
 import { EnvironmentsSettings } from "./environments"
 import { MeshSettings } from "./mesh"
 import { UsageSettings, useUsage } from "./usage-settings"
 import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
 import { ModelPresetSettings } from "./model-preset-settings"
+
+const SecretsSettings = lazy(() => import("./secrets-settings").then(m => ({ default: m.SecretsSettings })))
 
 const THEMES: Theme[] = ["system", "light", "dark"]
 
@@ -288,7 +289,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     ),
     usage: usage !== "unsupported" && <UsageSettings state={usage} />,
     providers: <ProvidersSettings onError={setError} />,
-    secrets: <SecretsSettings onError={setError} />,
+    secrets: <Suspense><SecretsSettings onError={setError} /></Suspense>,
     mcp: <McpSettings onError={setError} />,
     gateway: <GatewayRestart />,
     mesh: <MeshSettings portal={portal} />,

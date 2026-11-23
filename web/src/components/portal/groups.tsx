@@ -28,7 +28,7 @@ export function GroupSwatch({ color, className }: { color: GroupColor; className
 }
 
 /** "Move to group…": pick a group for a chat, make one from the search text, or take it out of its group. */
-export function useGroupPicker(portal: Portal) {
+export function useGroupPicker(portal: Pick<Portal, "sessions" | "setError" | "setGroup" | "createGroup">) {
   const [target, setTarget] = useState<{ session: string; group: string | null } | null>(null)
   const [groups, setGroups] = useState<ChatGroup[]>([])
   const [query, setQuery] = useState("")
@@ -104,7 +104,7 @@ export function useGroupPicker(portal: Portal) {
 }
 
 /** Rename a group. */
-export function useGroupRename(portal: Portal) {
+export function useGroupRename(portal: Pick<Portal, "updateGroup">) {
   const [target, setTarget] = useState<{ id: string; name: string } | null>(null)
   const start = useCallback((group: ChatGroup) => setTarget({ id: group.id, name: group.name }), [])
   const dialog = (

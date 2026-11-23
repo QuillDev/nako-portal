@@ -23,7 +23,7 @@ export function sessionActions({ pin, archive, rename, group }: ChatActions, ses
 }
 
 /** The chat being renamed, if any, and the dialog that renames it. */
-export function useRenameDialog(portal: Portal) {
+export function useRenameDialog(portal: Pick<Portal, "rename" | "sessions"> & { current: Pick<NonNullable<Portal["current"]>, "session" | "title"> | null }) {
   const [target, setTarget] = useState<{ session: string; title: string } | null>(null)
   const latest = useRef(portal)
   latest.current = portal

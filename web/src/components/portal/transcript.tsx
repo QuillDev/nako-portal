@@ -1,5 +1,5 @@
 import { CheckIcon, CornerDownLeftIcon, FileIcon, ForwardIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
-import { createContext, memo, type ReactNode, useContext, useMemo, useRef, useState } from "react"
+import { createContext, lazy, Suspense, memo, type ReactNode, useContext, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
@@ -8,7 +8,6 @@ import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { downloadUrl, fileUrl } from "@/lib/api"
-import { ImageViewer } from "./image-viewer"
 import { SharedSecret } from "./secrets"
 import { markdownComponents } from "./markdown-link"
 import { isImage, splitReply, splitUserTurn } from "@/lib/media"
@@ -16,6 +15,10 @@ import { type ReplyPart, splitSecrets } from "@/lib/secrets"
 import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
 import { dayLabel, dayOf, fullTime, timeOf } from "@/lib/times"
 import type { HistoryMessage, Live, Sender } from "@/lib/types"
+
+const ImageViewer = lazy(() => import("./image-viewer").then(m => ({ default: m.ImageViewer })))
+
+const LINK_SAFETY = { enabled: false }
 
 type Step = { key: string; name: string; context: string; state: "done" | "running" | "failed"; summary?: string }
 
@@ -182,14 +185,14 @@ function Files({ urls }: { urls: Item[] }) {
           {shown && (
             <>
               <DialogTitle className="sr-only">{shown.name}</DialogTitle>
-              <ImageViewer
+              <Suspense><ImageViewer
                 download={shown.download}
                 key={shown.url}
                 name={shown.name}
                 onNext={open! < pictures.length - 1 ? () => step(1) : undefined}
                 onPrev={open! > 0 ? () => step(-1) : undefined}
                 src={shown.url}
-              />
+              /></Suspense>
             </>
           )}
         </DialogContent>
@@ -318,7 +321,7 @@ const Assistant = memo(function Assistant({
                   components={markdownComponents}
                   isAnimating={streaming && i === parts.length - 1}
                   key={i}
-                  linkSafety={{ enabled: false }}
+                  linkSafety={LINK_SAFETY}
                   mode={streaming ? "streaming" : "static"}
                 >
                   {part.text}
