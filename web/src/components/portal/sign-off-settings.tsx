@@ -3,10 +3,10 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { Row } from "./settings"
 import { modelChoice, ModelPicker } from "./model-picker"
-import { z } from "zod"
+import { d, type Infer } from "@/lib/decode"
 
-const signOff = modelChoice.extend({ on: z.boolean() })
-type SignOff = z.infer<typeof signOff>
+const signOff = modelChoice.extend({ on: d.boolean() })
+type SignOff = Infer<typeof signOff>
 
 // Nako's line after a turn: whether she says it, and which model writes it. Kept on the server,
 // so every device and Desktop's Models page agree.

@@ -1,26 +1,26 @@
 import { useEffect, useSyncExternalStore } from "react"
-import { z } from "zod"
+import { d, type Infer } from "@/lib/decode"
 import { api } from "@/lib/api"
 
 // What the owner's environments command reports (dashboard/portal/environments.py), shared by the
 // sidebar row and the page.
-const Link = z.object({ label: z.string(), url: z.string() })
-const Environment = z.object({
-  name: z.string(),
-  status: z.enum(["running", "partial", "stopped"]),
-  detail: z.string().optional(),
-  session: z.string().optional(),
-  memory: z.number().optional(),
-  links: z.array(Link),
+const Link = d.object({ label: d.string(), url: d.string() })
+const Environment = d.object({
+  name: d.string(),
+  status: d.enum(["running", "partial", "stopped"]),
+  detail: d.string().optional(),
+  session: d.string().optional(),
+  memory: d.number().optional(),
+  links: d.array(Link),
 })
-export const Environments = z.object({
-  title: z.string(),
-  environments: z.array(Environment),
-  links: z.array(Link),
-  can_stop: z.boolean().default(false),
+export const Environments = d.object({
+  title: d.string(),
+  environments: d.array(Environment),
+  links: d.array(Link),
+  can_stop: d.boolean().default(false),
 })
-export type Environment = z.infer<typeof Environment>
-export type Environments = z.infer<typeof Environments>
+export type Environment = Infer<typeof Environment>
+export type Environments = Infer<typeof Environments>
 
 export const STATUS_DOT: Record<Environment["status"], string> = {
   running: "bg-emerald-500",

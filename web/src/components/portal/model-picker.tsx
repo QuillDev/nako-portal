@@ -1,7 +1,7 @@
 import { BrainIcon, CheckIcon, ChevronDownIcon, GaugeIcon, RabbitIcon, RocketIcon, StarIcon, TurtleIcon } from "lucide-react"
 import { Popover } from "radix-ui"
 import { useEffect, useRef, useState } from "react"
-import { z } from "zod"
+import { d, type Infer } from "@/lib/decode"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/ui/searchable-dropdown"
@@ -9,13 +9,13 @@ import { api, ApiError } from "@/lib/api"
 import { presetDetails, presetMatches, refreshModelPicks, toggleModelFavorite, useModelFavorites, useModelPresets } from "@/lib/model-presets"
 import { favoriteId, type ModelFavorite } from "@/lib/model-favorites"
 
-export const modelChoice = z.object({
-  provider: z.string(), model: z.string(),
-  providers: z.array(z.object({ provider: z.string(), label: z.string(), models: z.array(z.string()) })),
-  effort: z.string().optional(), speed: z.string().optional(),
-  efforts: z.array(z.string()).optional(), speeds: z.array(z.string()).optional(), overridden: z.boolean().optional(),
+export const modelChoice = d.object({
+  provider: d.string(), model: d.string(),
+  providers: d.array(d.object({ provider: d.string(), label: d.string(), models: d.array(d.string()) })),
+  effort: d.string().optional(), speed: d.string().optional(),
+  efforts: d.array(d.string()).optional(), speeds: d.array(d.string()).optional(), overridden: d.boolean().optional(),
 })
-export type ModelChoice = z.infer<typeof modelChoice>
+export type ModelChoice = Infer<typeof modelChoice>
 export type ModelSelection = { provider?: string; model?: string; effort?: string; speed?: string; reset?: true }
 type Pick = ModelSelection
 
@@ -206,7 +206,7 @@ export function SessionModel({ session, running }: { session: string; running: b
   if (!value) return null
   return <ModelPicker label="this chat" session chips disabled={running} value={value} onPick={async body => {
     let raw = await api<unknown>(path, { method: "POST", body })
-    const warning = z.object({ confirmation: z.string(), message: z.string() }).safeParse(raw)
+    const warning = d.object({ confirmation: d.string(), message: d.string() }).safeParse(raw)
     if (warning.success) {
       if (!window.confirm(warning.data.message)) return
       raw = await api<unknown>(path, { method: "POST", body: { ...body, confirm: warning.data.confirmation } })

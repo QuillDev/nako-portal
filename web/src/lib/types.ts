@@ -1,12 +1,12 @@
-import { z } from "zod"
+import { d, type Infer } from "@/lib/decode"
 
 export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; name?: string; environments?: boolean; machine_load?: boolean }
 
 // A named, colored set of chats the sidebar shows together (`/api/groups`); a chat is in one at most.
 export const GROUP_COLORS = ["blue", "green", "yellow", "orange", "red", "teal", "purple", "grey"] as const
 export type GroupColor = (typeof GROUP_COLORS)[number]
-export const ChatGroup = z.object({ id: z.string(), name: z.string(), color: z.enum(GROUP_COLORS) })
-export type ChatGroup = z.infer<typeof ChatGroup>
+export const ChatGroup = d.object({ id: d.string(), name: d.string(), color: d.enum(GROUP_COLORS) })
+export type ChatGroup = Infer<typeof ChatGroup>
 
 export type SessionRow = {
   id: string

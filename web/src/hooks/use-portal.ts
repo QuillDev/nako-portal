@@ -2,7 +2,7 @@
 // Transcripts are never stored here; every open reads Hermes's own history.
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ModelSelection } from "@/components/portal/model-picker"
-import { z } from "zod"
+import { d } from "@/lib/decode"
 import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
 import { reloadMcp } from "@/lib/mcp"
 import { reloadProviders } from "@/lib/providers"
@@ -395,10 +395,10 @@ export function usePortal() {
           setCurrent(c => sentMessage(c, open.session, { role: "user", text, row_id: `pending-${Date.now()}`, timestamp: Date.now() / 1000, images: attachments.filter(a => a.mediaType.startsWith("image/") && a.url.startsWith("data:")).map(a => a.url) }))
           if (currentRef.current?.session === open.session) setLive(l => l || emptyLive())
         } else {
-          const created = z.object({ session: z.string(), confirmation: z.string().optional(), message: z.string().optional() }).parse(await api<unknown>("/api/sessions", { method: "POST", form }))
+          const created = d.object({ session: d.string(), confirmation: d.string().optional(), message: d.string().optional() }).parse(await api<unknown>("/api/sessions", { method: "POST", form }))
           if (created.confirmation) {
             if (!window.confirm(created.message)) throw new Error("Message not sent")
-            const selected = z.object({ confirmation: z.string().optional() }).parse(await api<unknown>(sessionPath(created.session, "/model"), { method: "POST", body: { ...model, confirm: created.confirmation } }))
+            const selected = d.object({ confirmation: d.string().optional() }).parse(await api<unknown>(sessionPath(created.session, "/model"), { method: "POST", body: { ...model, confirm: created.confirmation } }))
             if (selected.confirmation) throw new Error("Model selection changed. Pick it again before sending.")
             await api(sessionPath(created.session, "/messages"), { method: "POST", form })
           }

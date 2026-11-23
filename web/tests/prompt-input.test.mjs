@@ -20,7 +20,7 @@ async function setup(t) {
     cn: (...args) => args.filter(Boolean).join(" "),
     validateAttachments: files => files,
     attachmentDataUrl: async file => `data:text/plain;base64,${file.name}`,
-    nanoid: () => `file-${++sequence}`,
+    id: () => `file-${++sequence}`,
     InputGroup: "div",
   }
   const originalURL = { createObjectURL: URL.createObjectURL, revokeObjectURL: URL.revokeObjectURL }

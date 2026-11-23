@@ -8,7 +8,7 @@ import { holdReload } from "@/lib/reload-state";
 import { cn } from "@/lib/utils";
 import { attachmentDataUrl, validateAttachments, type AttachmentFile, type AttachmentLimits } from "@/lib/attachments";
 import { CornerDownLeftIcon, Loader2Icon, PaperclipIcon, SquareIcon, XIcon } from "lucide-react";
-import { nanoid } from "nanoid";
+import { id } from "@/lib/id";
 import {
   type ChangeEvent, type ChangeEventHandler, Children, type ClipboardEventHandler,
   type ComponentProps, createContext, type FormEvent, type FormEventHandler, Fragment,
@@ -49,7 +49,7 @@ function useAttachmentController() {
     const accepted = validateAttachments(Array.from(incoming), current.current.length, limits.current);
     if (!accepted.length) return;
     const added = accepted.map(file => ({
-      id: nanoid(), type: "file" as const, file, url: URL.createObjectURL(file),
+      id: id(), type: "file" as const, file, url: URL.createObjectURL(file),
       mediaType: file.type, filename: file.name,
     }));
     current.current = [...current.current, ...added];
