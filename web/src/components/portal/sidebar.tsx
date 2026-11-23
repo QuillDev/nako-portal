@@ -1,3 +1,4 @@
+import { age } from "@/lib/times";
 import {
   ArrowDownToLineIcon,
   BellIcon,
@@ -43,15 +44,6 @@ import {
   sessionActions,
   useRenameDialog,
 } from "./session-actions";
-
-export function age(seconds: number) {
-  const days = (Date.now() / 1000 - seconds) / 86400;
-  if (days < 1) return "today";
-  if (days < 2) return "yesterday";
-  if (days < 7) return "this week";
-  if (days < 30) return "this month";
-  return "older";
-}
 
 // A line in the list: one chat, or a chat group with its chats (newest first).
 type Entry =

@@ -10,7 +10,6 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   usePromptInputAttachments,
-  usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
 import { InputGroupAddon } from "@/components/ui/input-group"
 import { navigate, type Portal } from "@/hooks/use-portal"
@@ -138,7 +137,8 @@ type ComposerProps = Pick<Portal, "send" | "command" | "stop" | "setError" | "co
 
 export const Composer = memo(function Composer(props: ComposerProps) {
   return (
-    <PromptInputProvider initialInput={localStorage.getItem(props.draftKey) || ""} key={props.draftKey}>
+    <PromptInputProvider initialInput={localStorage.getItem(props.draftKey) || ""} key={props.draftKey}
+      onInputChange={value => value ? localStorage.setItem(props.draftKey, value) : localStorage.removeItem(props.draftKey)}>
       <ComposerBody {...props} />
     </PromptInputProvider>
   )
@@ -146,11 +146,10 @@ export const Composer = memo(function Composer(props: ComposerProps) {
 
 const NO_COMMANDS: ComposerProps["commands"] = []
 
-function ComposerBody({ draftKey, session, placeholder, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
+function ComposerBody({ session, placeholder, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
   const [sending, setSending] = useState(false)
   const [model, setModel] = useState<ModelSelection>({})
   const box = useRef<HTMLDivElement>(null)
-  const { textInput } = usePromptInputController()
   const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
   useTuneFit(box)
 
@@ -170,7 +169,6 @@ function ComposerBody({ draftKey, session, placeholder, running, inChat, command
         onSubmit={async message => {
           if (!message.text.trim() && !message.files.length) return
           if (message.text.trim() === "!restart" && !message.files.length) {
-            localStorage.removeItem(draftKey)
             navigate("#/settings/gateway")
             return
           }
@@ -178,18 +176,13 @@ function ComposerBody({ draftKey, session, placeholder, running, inChat, command
           setSending(true)
           try {
             if (inChat && isCommand(message.text) && !message.files.length) {
-              const prefill = await command(message.text)
-              localStorage.removeItem(draftKey)
-              // The composer clears itself once this returns; put /undo's text back after that.
-              if (prefill) setTimeout(() => textInput.setInput(prefill))
-              return
+              return await command(message.text)
             }
             await send(
               message.text,
               message.files.map(f => ({ url: f.url, filename: f.filename, mediaType: f.mediaType })),
               !inChat && Object.keys(model).length ? model : undefined,
             )
-            localStorage.removeItem(draftKey)
           } finally {
             setSending(false)
           }
@@ -204,9 +197,6 @@ function ComposerBody({ draftKey, session, placeholder, running, inChat, command
           className={TALL.text}
           enterKeyHint="send"
           onKeyDownCapture={slash.onKeyDownCapture}
-          onChange={e => {
-            localStorage.setItem(draftKey, e.currentTarget.value)
-          }}
           placeholder={running ? "Steer or queue a message" : placeholder || "Message"}
           rows={1}
         />
