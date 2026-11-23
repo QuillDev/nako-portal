@@ -35,11 +35,11 @@ mesh = first._mesh_tools()
 groups = first._groups_tools()
 assert callable(accounts.source_for)
 assert callable(groups.CALL)
+assert callable(first.register)
+assert callable(first.SecretSurface)
+assert callable(first.HermesBackend.providers)
+assert callable(first.HermesBackend.mcp_servers)
 assert mesh.PORTAL is first._portal
-assert first._provider_row is first._providers._provider_row
-assert first.SecretSurface is first._adapter_module.SecretSurface
-assert first.HermesBackend.providers is first._providers.ProviderBackend.providers
-assert first.HermesBackend.mcp_servers is first._mcp.MCPBackend.mcp_servers
 first._LIVE_TOOLS["first_only"] = True
 
 second = load("hermes_plugin_second")

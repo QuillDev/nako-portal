@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import struct
 
+MAX_DEPTH = 32
+
 
 class CborError(ValueError):
     pass
 
 
-def decode(data: bytes, offset: int = 0):
+def decode(data: bytes, offset: int = 0, _depth: int = 0):
     """Decode one item at ``offset``. Returns (value, offset just past it)."""
+    if _depth > MAX_DEPTH:
+        raise CborError("CBOR nesting too deep")
     if offset >= len(data):
         raise CborError("truncated CBOR")
     initial = data[offset]
@@ -28,19 +32,27 @@ def decode(data: bytes, offset: int = 0):
         if end > len(data):
             raise CborError("truncated CBOR string")
         raw = data[offset:end]
-        return (raw if major == 2 else raw.decode("utf-8")), end
+        if major == 2:
+            return raw, end
+        try:
+            return raw.decode("utf-8"), end
+        except UnicodeDecodeError as error:
+            raise CborError("invalid UTF-8 in CBOR text string") from error
     if major == 4:
         items = []
         for _ in range(length):
-            item, offset = decode(data, offset)
+            item, offset = decode(data, offset, _depth + 1)
             items.append(item)
         return items, offset
     if major == 5:
         mapping = {}
         for _ in range(length):
-            key, offset = decode(data, offset)
-            value, offset = decode(data, offset)
-            mapping[key] = value
+            key, offset = decode(data, offset, _depth + 1)
+            value, offset = decode(data, offset, _depth + 1)
+            try:
+                mapping[key] = value
+            except TypeError as error:
+                raise CborError("unhashable CBOR map key") from error
         return mapping, offset
     raise CborError(f"unsupported CBOR major type {major}")
 
@@ -64,12 +76,12 @@ def _simple(data, offset, info):
         return True, offset
     if info in (22, 23):
         return None, offset
-    if info == 25:
-        return struct.unpack(">e", data[offset : offset + 2])[0], offset + 2
-    if info == 26:
-        return struct.unpack(">f", data[offset : offset + 4])[0], offset + 4
-    if info == 27:
-        return struct.unpack(">d", data[offset : offset + 8])[0], offset + 8
+    floats = {25: (">e", 2), 26: (">f", 4), 27: (">d", 8)}
+    if info in floats:
+        fmt, size = floats[info]
+        if offset + size > len(data):
+            raise CborError("truncated CBOR float")
+        return struct.unpack(fmt, data[offset : offset + size])[0], offset + size
     raise CborError("unsupported CBOR simple value")
 
 
