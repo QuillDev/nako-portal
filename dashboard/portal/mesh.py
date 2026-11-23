@@ -182,18 +182,18 @@ def _joined(data, name):
         _save_nodes(data, nodes)
 
 
-def setup_page(*, name, address, token, code, plugin):
+def setup_page(*, name, address, token, code, plugin, agent="hermes"):
     """What a stock Hermes on the new machine reads and follows to join."""
     source = (plugin or {}).get("source")
     ref = (plugin or {}).get("ref")
-    install = f"hermes plugins install {source}" + (f" --ref {ref}" if ref else "") + " --enable --yes-deps --force"
+    install = f"{agent} plugins install {source}" + (f" --ref {ref}" if ref else "") + " --enable --yes-deps --force"
     status = f"curl -fsSL {address}{SETUP_PATH.format(code=code)}/status"
     return f"""# Join the Nako mesh as "{name}"
 
 The user wants this machine to join their Nako mesh, so their main Hermes (the hub at {address}) can hand it tasks.
 Do every step yourself, in order, with your terminal. If a step fails, stop and tell the user which one and what it printed.
 Never repeat the token below to the user or write it anywhere except through these commands.
-On Windows, type curl.exe wherever these steps say curl (PowerShell's curl is something else), and ~/.hermes is %USERPROFILE%\\.hermes.
+On Windows, type curl.exe wherever these steps say curl (PowerShell's curl is something else), and ~/.{agent} is %USERPROFILE%\\.{agent}.
 
 1. Install the Nako Portal plugin:
 
@@ -201,16 +201,16 @@ On Windows, type curl.exe wherever these steps say curl (PowerShell's curl is so
 
 2. Join the mesh. This saves the token in this Hermes's .env, adds the hub's synced skills folder, and names the machine:
 
-   hermes mesh join {address} {token} --name {name}
+   {agent} mesh join {address} {token} --name {name}
 
 3. Keep the gateway running in the background so the machine stays reachable:
-   run `hermes gateway status`. If no background service is installed, run `hermes gateway install` first.
-   On Windows, start it through its scheduled task, `schtasks /Run /TN Hermes_Gateway` (after `hermes gateway stop` if one runs),
-   never with `hermes gateway start` or `restart`, which run it outside the task. Elsewhere run `hermes gateway restart`.
+   run `{agent} gateway status`. If no background service is installed, run `{agent} gateway install` first.
+   On Windows, start it through its scheduled task, `schtasks /Run /TN {agent.capitalize()}_Gateway` (after `{agent} gateway stop` if one runs),
+   never with `{agent} gateway start` or `restart`, which run it outside the task. Elsewhere run `{agent} gateway restart`.
    If you are running inside that gateway and can't restart it, ask the user to do it in a terminal, then continue.
 
 4. Check that it joined: run `{status}` every 10 seconds for up to 2 minutes until it prints "online": true.
-   If it never does, show the user the end of ~/.hermes/logs/gateway.log and ~/.hermes/nako-portal/server.log.
+   If it never does, show the user the end of ~/.{agent}/logs/gateway.log and ~/.{agent}/nako-portal/server.log.
 
 5. Tell the user in one line that "{name}" joined the mesh.
 """
@@ -247,33 +247,47 @@ def skill_manifest(root, exclude=()):
     files = {}
     if not root.is_dir():
         return files
-    skill_dirs = {p.parent for p in root.rglob("SKILL.md") if p.is_file()}
-    for path in root.rglob("*"):
-        if not path.is_file() or path.is_symlink():
-            continue
-        rel = path.relative_to(root)
-        if _excluded(rel.parts, exclude):
-            continue
-        in_skill = any(parent in skill_dirs for parent in path.parents)
-        if not in_skill and path.name != "DESCRIPTION.md":
-            continue
-        try:
-            if path.stat().st_size > SKILL_FILE_MAX:
+    skill_dirs = set()
+    for folder, dirs, names in os.walk(root):
+        folder = Path(folder)
+        dirs[:] = [d for d in dirs if not _excluded((d,), exclude) and not (folder / d).is_symlink()]
+        marker = folder / "SKILL.md"
+        in_skill = folder.parent in skill_dirs or ("SKILL.md" in names and not marker.is_symlink())
+        if in_skill:
+            skill_dirs.add(folder)
+        for name in names:
+            path = folder / name
+            if _excluded((name,), exclude) or path.is_symlink() or (not in_skill and name != "DESCRIPTION.md"):
                 continue
-            files[rel.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-        except OSError:
-            continue
+            try:
+                if path.stat().st_size <= SKILL_FILE_MAX:
+                    files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            except OSError:
+                continue
     return files
 
 
 def read_skill_files(root, wanted, exclude=()):
     root = Path(root).resolve()
-    shared = skill_manifest(root, exclude)
+    exclude = set(exclude or ())
     out, size = {}, 0
     for rel in wanted:
-        if rel not in shared:
+        if not _safe_rel(rel) or _excluded(Path(rel).parts, exclude):
             continue
-        data = (root / rel).read_bytes()
+        path = root / rel
+        if any(p.is_symlink() for p in (path, *path.parents) if p != root and root in p.parents):
+            continue
+        if not path.resolve().is_relative_to(root):
+            continue
+        markers = (p / "SKILL.md" for p in path.parents if p == root or root in p.parents)
+        if path.name != "DESCRIPTION.md" and not any(p.is_file() and not p.is_symlink() for p in markers):
+            continue
+        try:
+            if path.stat().st_size > SKILL_FILE_MAX:
+                continue
+            data = path.read_bytes()
+        except OSError:
+            continue
         if out and size + len(data) > SKILL_BATCH:
             break
         out[rel] = base64.b64encode(data).decode()
@@ -290,23 +304,33 @@ async def mirror_skills(target, manifest, fetch):
     """Make `target` hold exactly the hub's skills. `fetch(paths)` -> {path: base64}. Files are
     left read-only, so an edit on this machine fails loudly instead of being lost on the next sync."""
     target = Path(target)
-    target.mkdir(parents=True, exist_ok=True)
     state_path = target / MIRROR_STATE
-    try:
-        have = json.loads(state_path.read_text())
-    except (OSError, ValueError):
-        have = {}
     manifest = {rel: sha for rel, sha in manifest.items() if _safe_rel(rel)}
-    stale = [rel for rel, sha in manifest.items() if have.get(rel) != sha or not (target / rel).is_file()]
+
+    def prepare():
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            have = json.loads(state_path.read_text())
+        except (OSError, ValueError):
+            have = {}
+        stale = [rel for rel, sha in manifest.items() if have.get(rel) != sha or not (target / rel).is_file()]
+        return have, stale
+
+    have, stale = await asyncio.to_thread(prepare)
     changed = 0
-    while stale:
-        got = await fetch(stale)
-        if not got:
-            break
+
+    def write_batch(got):
+        written = 0
         for rel, encoded in got.items():
             if rel not in manifest:
                 continue
-            data = base64.b64decode(encoded)
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError):
+                continue
+            if len(data) > SKILL_FILE_MAX or hashlib.sha256(data).hexdigest() != manifest[rel]:
+                log.warning("portal: skill digest mismatch for %s; will retry next sync", rel)
+                continue
             path = target / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.exists():
@@ -316,21 +340,35 @@ async def mirror_skills(target, manifest, fetch):
             os.replace(temp, path)
             path.chmod(stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
             have[rel] = manifest[rel]
-            changed += 1
+            written += 1
+        return written
+
+    while stale:
+        got = await fetch(stale)
+        if not got or not set(stale).intersection(got):
+            break
+        changed += await asyncio.to_thread(write_batch, got)
         stale = [rel for rel in stale if rel not in got]
-    for rel in [rel for rel in have if rel not in manifest]:
-        path = target / rel
-        if path.exists():
-            path.chmod(stat.S_IWRITE | stat.S_IREAD)
-            path.unlink()
-        have.pop(rel)
-        changed += 1
-    for folder in sorted((p for p in target.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
-        try:
-            folder.rmdir()
-        except OSError:
-            pass
-    state_path.write_text(json.dumps(have, sort_keys=True))
+
+    def finish():
+        removed = 0
+        for rel in [rel for rel in have if rel not in manifest]:
+            if _safe_rel(rel):
+                path = target / rel
+                if path.exists():
+                    path.chmod(stat.S_IWRITE | stat.S_IREAD)
+                    path.unlink()
+            have.pop(rel)
+            removed += 1
+        for folder in sorted((p for p in target.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+        state_path.write_text(json.dumps(have, sort_keys=True))
+        return removed
+
+    changed += await asyncio.to_thread(finish)
     return changed
 
 
@@ -403,6 +441,7 @@ class Mesh:
         self.store = store
         # The hub's own Hermes, for its version in the machine list (`machine_ops.MachineOps`).
         self.ops = ops
+        self.agent = ops.agent if ops is not None else "hermes"
         self.clock = clock
         self.peers = {}
         self.info = {}
@@ -448,7 +487,7 @@ class Mesh:
         if not self.address:
             raise ValueError("Machines need an address for this hub: set the portal's origin (or mesh_address)")
         token = add_node(self.data, name)
-        command = f"hermes mesh join {self.address or '<this hub>'} {token} --name {name}"
+        command = f"{self.agent} mesh join {self.address or '<this hub>'} {token} --name {name}"
         code = start_setup(self.data, name, token, self.clock())
         url = f"{self.address}{SETUP_PATH.format(code=code)}"
         prompt = f'Set this machine up as "{name}" in my Nako mesh: run `curl -fsSL {url}` (curl.exe on Windows) and follow the steps it prints, exactly and in order.'
@@ -475,6 +514,7 @@ class Mesh:
             "status": f"{self.address}{SETUP_PATH.format(code=code)}/status",
             "source": plugin.get("source") or "",
             "ref": plugin.get("ref") or "",
+            "agent": self.agent,
         }
         text = shell_script(**values) if kind == "sh" else powershell_script(**values)
         return web.Response(text=text, content_type="text/plain", headers={"Cache-Control": "no-store"})
@@ -486,7 +526,7 @@ class Mesh:
             return web.Response(status=404, text="This setup link expired or was never made. Add the machine again in Settings.\n")
         if not setup.get("token"):
             return web.Response(text=f'"{name}" already joined the mesh. Nothing to do.\n')
-        page = setup_page(name=name, address=self.address, token=setup["token"], code=request.match_info["code"], plugin=self.install_from())
+        page = setup_page(name=name, address=self.address, token=setup["token"], code=request.match_info["code"], plugin=self.install_from(), agent=self.agent)
         return web.Response(text=page, content_type="text/plain", headers={"Cache-Control": "no-store"})
 
     async def setup_status(self, request):
@@ -819,7 +859,18 @@ class Mesh:
             return web.json_response({"error": "bad machine or token"}, status=401)
         ws = web.WebSocketResponse(heartbeat=HEARTBEAT, max_msg_size=MAX_FRAME)
         await ws.prepare(request)
-        peer = Peer(ws, self._methods(name))
+        async def authorized():
+            entry = (await asyncio.to_thread(load_nodes, self.data)).get(name)
+            return bool(entry and secrets.compare_digest(_digest(token), str(entry.get("token_sha256"))))
+
+        peer = Peer(ws, self._methods(name), authorize=authorized)
+
+        async def check_revocation():
+            while True:
+                await asyncio.sleep(HEARTBEAT)
+                await peer._authorized()
+
+        checking = asyncio.create_task(check_revocation())
         old, self.peers[name] = self.peers.get(name), peer
         if old is not None:
             await old.ws.close()
@@ -828,17 +879,25 @@ class Mesh:
         await self.hub.broadcast({"kind": "machines.changed"})
         try:
             await peer.run()
+        except ConnectionError:
+            pass
         finally:
+            checking.cancel()
             if self.peers.get(name) is peer:
                 self.peers.pop(name, None)
                 seen = self.clock()
                 self.info.setdefault(name, {})["last_seen"] = seen
                 if self.store is not None:
                     self.store.set_meta(f"mesh:seen:{name}", seen)
-                await self._settle(name)
-                log.info("portal: %s left the mesh", name)
-                await self.hub.broadcast({"kind": "sessions.changed"})
-                await self.hub.broadcast({"kind": "machines.changed"})
+
+                async def departed():
+                    await self._settle(name)
+                    log.info("portal: %s left the mesh", name)
+                    await self.hub.broadcast({"kind": "sessions.changed"})
+                    await self.hub.broadcast({"kind": "machines.changed"})
+
+                await asyncio.shield(departed())
+            await asyncio.gather(checking, return_exceptions=True)
         return ws
 
     def app(self):
@@ -889,8 +948,8 @@ class Node:
         async with self.upload_lock:
             await self._upload_files(peer, opened)
 
-    async def _opened(self, session, results=False):
-        opened = await self.hub.open(session, results)
+    async def _opened(self, session, results=False, cache=True):
+        opened = await self.hub.open(session, results, cache=cache)
         try:
             opened["archived"] = await asyncio.to_thread(self.hub.backend.is_archived, session)
         except ConnectionError:
@@ -1057,7 +1116,8 @@ class Node:
             try:
                 for row in [*await self.hub.sessions(), *await self.hub.archived()]:
                     try:
-                        opened = await self._opened(row["id"])
+                        # Bulk reads must not evict the transcripts currently open in the app.
+                        opened = await self._opened(row["id"], cache=False)
                         if shown_files(opened.get("messages") or []):
                             await self._upload(peer, opened)
                     except (ValueError, OSError):

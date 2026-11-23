@@ -240,7 +240,6 @@ def _mesh(entry, home, origin=None):
             # Off: the server leaves a gateway that went away alone instead of starting it again.
             "watchdog": str(entry.get("mesh_gateway_watchdog", True)).lower() not in ("false", "0", "no", "off"),
         }
-    return {}
 
 
 def _plugin_origin(entry):
@@ -480,18 +479,19 @@ class HermesBackend:
         return self.profiles()
 
     def _home(self, profile=None):
-        return self.homes().get(profile or self.profile, self.root)
+        selected = profile or self.profile
+        return self.homes().get(selected, self.root)
 
     def home_of(self, profile):
         """The home a turn for ``profile`` runs in (None is the default profile)."""
         return self.homes().get(profile or DEFAULT_PROFILE, self.root)
 
-    def _scoped(self, fn, *args, profile=None):
+    def _scoped(self, fn, *args, profile=None, home=None):
         """Run ``fn`` with Hermes pointed at one profile's home, so the store reads its state.db.
         Reach ``self.db`` inside ``fn``: it resolves to the profile's store only once scoped."""
         from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
-        token = set_hermes_home_override(str(self._home(profile)))
+        token = set_hermes_home_override(str(home if home is not None else self._home(profile)))
         try:
             return fn(*args)
         finally:
@@ -600,7 +600,7 @@ class HermesBackend:
             return []
         return sorted(sid for (sid,) in rows)
 
-    def thread(self, session):
+    def thread(self, session, cache=True):
         from tui_gateway.server import _history_to_messages  # bound copy; the session_history original lacks server globals
 
         found = self._read("SELECT source FROM sessions WHERE id=?", (session,))
@@ -635,7 +635,7 @@ class HermesBackend:
                     except TypeError:  # a Hermes from before display reads
                         history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
                     messages = _portal("offline").with_results(_history_to_messages(history, profile_home=home), history)
-                if revision is not None:
+                if cache and revision is not None:
                     with self.threads_lock:
                         self.threads.pop(key, None)
                         self.threads[key] = (revision, messages)
@@ -662,7 +662,7 @@ class HermesBackend:
         units = runner._describe_active_work()
         active = []
         for profile in self.homes():
-            rows = self._read("SELECT s.id,s.session_key,s.title,a.admission_id FROM sessions s "
+            rows = await asyncio.to_thread(self._read, "SELECT s.id,s.session_key,s.title,a.admission_id FROM sessions s "
                 "JOIN session_admissions a ON a.target_session_id=s.id WHERE s.source='portal' "
                 "AND s.ended_at IS NULL AND a.status='started'", (), profile)
             active.extend(dict(session=sid, key=key, title=title or sid, turn=turn, profile=profile)
@@ -679,7 +679,7 @@ class HermesBackend:
 
     async def restart_thread(self, row, resume):
         profile, session, turn = row['profile'], row['session'], row['turn']
-        matches = self._read("SELECT s.chat_id,a.status,a.outcome FROM sessions s JOIN session_admissions a "
+        matches = await asyncio.to_thread(self._read, "SELECT s.chat_id,a.status,a.outcome FROM sessions s JOIN session_admissions a "
             "ON a.target_session_id=s.id WHERE s.id=? AND a.admission_id=? AND s.ended_at IS NULL "
             "AND s.source='portal'", (session, turn), profile)
         if not matches:
@@ -687,7 +687,7 @@ class HermesBackend:
         chat, status, outcome = matches[0]
         request = 'portal-restart:' + turn
         if resume:
-            prior = self._read('SELECT status,outcome FROM session_admissions WHERE target_session_id=? AND request_id=?',
+            prior = await asyncio.to_thread(self._read, 'SELECT status,outcome FROM session_admissions WHERE target_session_id=? AND request_id=?',
                                (session, request), profile)
             if prior:
                 state, result = prior[0]
@@ -704,7 +704,7 @@ class HermesBackend:
             return 'Needs review'
         if not resume and status != 'started':
             return 'Finished before pause'
-        if resume and self._read('SELECT 1 FROM session_admissions WHERE target_session_id=? AND seq > '
+        if resume and await asyncio.to_thread(self._read, 'SELECT 1 FROM session_admissions WHERE target_session_id=? AND seq > '
                 '(SELECT seq FROM session_admissions WHERE admission_id=?) LIMIT 1', (session, turn), profile):
             return 'Newer turn exists'
         self.owner[chat] = profile
@@ -764,9 +764,21 @@ class HermesBackend:
     def ensure_chat(self, chat, title=None):
         return _ensure_chat(self.store, chat, title, self.profile)
 
-    async def new_thread(self, chat, title):
-        self.owner[chat] = self.profile
-        return await asyncio.to_thread(self.ensure_chat, chat, title)
+    async def new_thread(self, chat, title, cwd=None):
+        profile = self.profile
+        self.owner[chat] = profile
+
+        def create():
+            directory = Path(cwd).expanduser().resolve() if cwd else None
+            if directory is not None and not directory.is_dir():
+                raise ValueError("Working directory does not exist")
+            session = _ensure_chat(self.store, chat, title, profile)
+            if directory is not None:
+                entry = self.store.get_or_create_session(_source(chat, profile), touch_activity=False)
+                self.store.set_session_metadata(entry.session_key, "terminal_cwd", str(directory))
+            return session
+
+        return await asyncio.to_thread(create)
 
     async def adopt(self, chat, session):
         return await asyncio.to_thread(self._adopt, chat, session)
@@ -877,11 +889,11 @@ class HermesBackend:
 
     # Providers: the catalog `hermes model` offers, and the two ways to sign one in.
 
-    def providers(self):
+    def providers(self, *, home=None):
         """What the shown profile can run on and whether it's already set up. Read inside that
         profile's own scope, the way its turns see keys: another profile's key in the gateway's
         environment must not count. Nothing secret comes back."""
-        with self._profile_scope():
+        with self._profile_scope(home):
             env = _ScopedEnv()
             accounts = _account_status()
             rows = [row for row in (_provider_row(entry, env, accounts) for entry in _provider_catalog()) if row is not None]
@@ -892,26 +904,28 @@ class HermesBackend:
 
     def set_provider_key(self, slug, value):
         """Save an API key to the profile on screen, under the provider's own variable name."""
+        home = self._home()
         from hermes_cli.config import save_env_value
 
-        row = self._provider_for_key(slug)
+        row = self._provider_for_key(slug, home=home)
         key = str(value or "").strip()
         if not key:
             raise ValueError("Paste a key first")
-        self._scoped(lambda: save_env_value(row["env_var"], key))
+        self._scoped(lambda: save_env_value(row["env_var"], key), home=home)
 
     def remove_provider_key(self, slug):
+        home = self._home()
         from hermes_cli.config import remove_env_value
 
-        row = self._provider_for_key(slug)
+        row = self._provider_for_key(slug, home=home)
         for name in row["env_vars"]:
             try:
-                self._scoped(remove_env_value, name)
+                self._scoped(remove_env_value, name, home=home)
             except Exception:  # a variable that was never set is already the goal
                 log.debug("portal: provider %s: nothing to remove for %s", slug, name)
 
-    def _provider_for_key(self, slug):
-        row = next((r for r in self.providers() if r["slug"] == slug), None)
+    def _provider_for_key(self, slug, *, home=None):
+        row = next((r for r in self.providers(home=home) if r["slug"] == slug), None)
         if row is None:
             raise ValueError("That provider isn't one this page can set up")
         if row["kind"] != "key":
@@ -1345,11 +1359,11 @@ class HermesBackend:
 
     # The shown profile's own model: what its turns run on (config.yaml `model:`).
 
-    def _profile_scope(self):
+    def _profile_scope(self, home=None):
         """Config, credentials and paths of the shown profile, the way a turn there sees them."""
         from gateway.run import _profile_runtime_scope
 
-        return _profile_runtime_scope(Path(self._home()))
+        return _profile_runtime_scope(Path(home if home is not None else self._home()))
 
     def models(self):
         with self._profile_scope():
@@ -1539,18 +1553,14 @@ def _model_providers():
 
 async def _forward_inbox(store, adapter):
     """Posts written while no gateway ran (`_deliver`) are sent once it's back."""
-    last = store.meta("inbox_pushed", None)
-    if last is None:
-        newest = store.inbox(1)
-        last = newest[0]["id"] if newest else 0
+    last = await asyncio.to_thread(store.meta, "inbox_pushed", 0) or 0
     while True:
         await asyncio.sleep(INBOX_POLL)
-        fresh = [row for row in reversed(store.inbox(50)) if row["id"] > last]
+        fresh = await asyncio.to_thread(store.inbox_after, last)
         for row in fresh:
             await adapter.send(row["chat"], row["text"])
             last = row["id"]
-        if fresh:
-            store.set_meta("inbox_pushed", last)
+            await asyncio.to_thread(store.set_meta, "inbox_pushed", last)
 
 
 def _check():

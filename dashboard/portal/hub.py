@@ -57,6 +57,8 @@ NEEDS_YOU = "needs you"
 DONE = "done"
 FAILED = "failed"
 MAX_FILE = 25 * 1024 * 1024
+SEND_TIMEOUT = 5
+SEND_CONCURRENCY = 32
 PREVIEW_CHARS = 280
 # The thread cron posts and other deliveries to `portal` land in, like a bot's DM elsewhere.
 INBOX = "inbox"
@@ -103,6 +105,7 @@ class Hub:
         self.alert = alert or (lambda session, title, text: None)
         self.clients = set()
         self.subscribers = {}
+        self.send_slots = asyncio.Semaphore(SEND_CONCURRENCY)
         # The chat each socket shows, and the sockets whose page is on screen and focused.
         self.viewing = {}
         self.looking = set()
@@ -154,8 +157,10 @@ class Hub:
         self.clients.discard(client)
         self.viewing.pop(client, None)
         self.looking.discard(client)
-        for watchers in self.subscribers.values():
+        for session, watchers in list(self.subscribers.items()):
             watchers.discard(client)
+            if not watchers:
+                self.subscribers.pop(session, None)
 
     def watch(self, client, session):
         """The chat a socket shows now. It hears that chat's live events and no longer the last
@@ -184,11 +189,14 @@ class Hub:
         return any(self.viewing.get(client) == session for client in self.looking)
 
     async def _send(self, clients, message):
-        for client in list(clients):
-            try:
-                await client.send(message)
-            except Exception:
-                self.leave(client)
+        async def send(client):
+            async with self.send_slots:
+                try:
+                    await asyncio.wait_for(client.send(message), SEND_TIMEOUT)
+                except Exception:
+                    self.leave(client)
+
+        await asyncio.gather(*(send(client) for client in list(clients)))
 
     def _tap(self, frame):
         for tap in list(self.taps):
@@ -316,13 +324,15 @@ class Hub:
             for row in rows
         ]
 
-    async def open(self, session, results=False):
+    async def open(self, session, results=False, cache=True):
         """A chat's transcript and where it stands. `results`: keep the start of each tool call's
         result on its row (an agent following the chat reads them; the app doesn't).
 
         It reads with no gateway connected too (the server reads the session store itself), so
-        `gateway` says whether one is, and `last_active` when the chat last moved."""
-        thread = await asyncio.to_thread(self.backend.thread, session)
+        `gateway` says whether one is, and `last_active` when the chat last moved. Bulk readers
+        use `cache=False` to leave the interactive transcript cache undisturbed."""
+        args = (session,) if cache else (session, False)
+        thread = await asyncio.to_thread(self.backend.thread, *args)
         if thread is None:
             raise ValueError("No such chat")
         title = thread.get("title") or ""
@@ -354,7 +364,8 @@ class Hub:
 
     async def create(self, text, files=(), title=None, cwd=None, yolo=False, archived=False, sender=None, model=None):
         chat = uuid.uuid4().hex[:16]
-        session = await self.backend.new_thread(chat, title)
+        args = (chat, title, cwd) if cwd else (chat, title)
+        session = await self.backend.new_thread(*args)
         if model:
             selected = await self.set_session_model(session, model)
             if selected.get("confirmation"):

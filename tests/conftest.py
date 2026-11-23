@@ -241,7 +241,7 @@ class FakeGateway:
         s = self.sessions.get(sid)
         return s if s and s["profile"] == self.profile else None
 
-    def thread(self, sid):
+    def thread(self, sid, cache=True):
         s = self._shown(sid)
         return None if s is None or s.get("source") == "tool" else {"title": s["title"], "messages": list(s["rows"]), "source": s.get("source", "portal")}
 
@@ -332,9 +332,10 @@ class FakeGateway:
     def session_of(self, chat):
         return next((s["id"] for s in self.sessions.values() if s["chat"] == chat), None)
 
-    async def new_thread(self, chat, title):
+    async def new_thread(self, chat, title, cwd=None):
         sid = f"20261024_000000_{len(self.sessions):06x}"
         self.add_session(sid, title or "", chat=chat)
+        self.sessions[sid]["cwd"] = cwd
         return sid
 
     async def adopt(self, chat, sid):

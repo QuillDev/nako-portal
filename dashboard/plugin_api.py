@@ -1,8 +1,8 @@
-"""Backend half: nothing runs here any more.
+"""Compatibility status route for the gateway dashboard's plugin listing.
 
 The portal is a messaging platform now, so its web server, sign-in and chat hub
-run inside the gateway with the adapter (see `__init__.py`). This route stays so
-the dashboard can still show the plugin.
+run in the standalone server (`dashboard/serve.py`). Only the adapter runs inside
+the gateway; this route does not inspect the standalone server's health.
 """
 
 from __future__ import annotations
@@ -14,4 +14,4 @@ router = APIRouter()
 
 @router.get("/status")
 async def status():
-    return {"running": False, "served_by": "gateway"}
+    return {"running": False, "served_by": "standalone"}

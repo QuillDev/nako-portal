@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from conftest import until
 from portal.environments import Environments
 
 pytestmark = pytest.mark.asyncio
@@ -227,7 +228,9 @@ async def test_stop_ignores_an_in_flight_poll_started_before_it_finished(world, 
         f"state = pathlib.Path({str(state)!r}).read_text()\n"
         f"if pathlib.Path({str(stop_started)!r}).exists() and not pathlib.Path({str(release_poll)!r}).exists():\n"
         f"    pathlib.Path({str(poll_started)!r}).write_text('1')\n"
+        f"    deadline = time.monotonic() + 5\n"
         f"    while not pathlib.Path({str(release_poll)!r}).exists():\n"
+        f"        assert time.monotonic() < deadline, 'poll was never released'\n"
         f"        time.sleep(0.02)\n"
         f"sys.stdout.write(state)\n"
     )
@@ -235,7 +238,9 @@ async def test_stop_ignores_an_in_flight_poll_started_before_it_finished(world, 
     stop_script.write_text(
         f"import json, pathlib, time\n"
         f"pathlib.Path({str(stop_started)!r}).write_text('1')\n"
+        f"deadline = time.monotonic() + 5\n"
         f"while not pathlib.Path({str(release_stop)!r}).exists():\n"
+        f"    assert time.monotonic() < deadline, 'stop was never released'\n"
         f"    time.sleep(0.02)\n"
         f"pathlib.Path({str(state)!r}).write_text(json.dumps({{'environments': [{{'name': 'a', 'status': 'stopped'}}]}}))\n"
     )
@@ -250,13 +255,11 @@ async def test_stop_ignores_an_in_flight_poll_started_before_it_finished(world, 
     # Prime the cache, then start a stop that pauses mid-command.
     assert (await _get(world))[1]["environments"][0]["status"] == "running"
     stop_task = asyncio.create_task(_stop(world, "a"))
-    while not stop_started.exists():
-        await asyncio.sleep(0.01)
+    await until(stop_started.exists)
     # Expire the cache and start a poll that reads the pre-stop "running" state and pauses.
     now[0] = 10.0
     stale_poll = asyncio.create_task(_get(world))
-    while not poll_started.exists():
-        await asyncio.sleep(0.01)
+    await until(poll_started.exists)
     # Finish the stop while that pre-stop poll is still in flight.
     release_stop.write_text("1")
     assert await stop_task == (200, {"stopped": "a"})

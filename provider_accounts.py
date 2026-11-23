@@ -159,8 +159,14 @@ class CodexAccounts:
                 return
             tokens = routes._codex_exchange_tokens(httpx, code)
             with scope():
-                result = self._link(tokens, target)
-            state.update(status="done", result=result)
+                # Cancellation and committing credentials are serialized. In particular an
+                # exchange that finishes after cancellation must never resurrect the login.
+                with self._lock:
+                    if state["cancelled"]:
+                        state["status"] = "cancelled"
+                        return
+                    result = self._link(tokens, target)
+                    state.update(status="done", result=result)
         except Exception as error:
             log.warning("portal: codex sign-in failed: %s", error)
             state.update(status="error", error=str(error) or "That sign-in failed")
@@ -220,8 +226,8 @@ class CodexAccounts:
     def cancel(self, attempt):
         with self._lock:
             state = self._attempts.pop(str(attempt), None)
-        if state is not None:
-            state["cancelled"] = True
+            if state is not None:
+                state["cancelled"] = True
 
     def _sweep(self):
         now = time.monotonic()
