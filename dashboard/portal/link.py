@@ -107,16 +107,23 @@ def decode_files(files):
 class Peer:
     """One open link: calls the other side's methods and answers its calls, until it closes."""
 
-    def __init__(self, ws, methods):
+    def __init__(self, ws, methods, authorize=None):
         self.ws = ws
         self.methods = methods
+        self.authorize = authorize
         self.pending = {}
         self.tasks = set()
         self.lock = asyncio.Lock()
 
     async def _write(self, frame):
         async with self.lock:
+            await self._authorized()
             await self.ws.send_str(json.dumps(frame, default=str))
+
+    async def _authorized(self):
+        if self.authorize is not None and not await self.authorize():
+            await self.ws.close(code=1008, message=b"Machine revoked")
+            raise ConnectionError("machine revoked")
 
     async def call(self, method, *args, timeout=CALL_TIMEOUT):
         cid = secrets.token_hex(8)
@@ -134,6 +141,7 @@ class Peer:
     async def run(self):
         try:
             async for message in self.ws:
+                await self._authorized()
                 if message.type != WSMsgType.TEXT:
                     continue
                 try:
@@ -164,6 +172,7 @@ class Peer:
     async def _answer(self, frame):
         method = self.methods.get(str(frame["call"]))
         try:
+            await self._authorized()
             if method is None:
                 raise ValueError(f"no such call: {frame['call']}")
             reply = {"id": frame.get("id"), "result": await method(*(frame.get("args") or []))}
@@ -244,7 +253,9 @@ class GatewayLink:
                 self.peer = None
                 self.hub.hermes_build = None
                 log.info("portal: gateway went away")
-                await self._changed(False)
+                # The HTTP handler may be cancelled as its socket closes. Finish notifying
+                # subscribers even when a concurrent broadcast has to yield to senders.
+                await asyncio.shield(self._changed(False))
         return ws
 
     async def _changed(self, connected):

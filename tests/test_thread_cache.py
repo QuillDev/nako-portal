@@ -97,3 +97,46 @@ def test_a_compacted_chat_still_reads_as_the_whole_conversation(backend):
 def test_a_chat_that_isnt_a_portal_thread_reads_as_missing(backend):
     backend, _ = backend
     assert backend.thread("someone-elses") is None
+
+
+async def test_periodic_attachment_backfill_preserves_the_open_transcript_cache(backend):
+    import asyncio
+    from portal.hub import Hub
+    from portal.mesh import Node
+
+    backend, store = backend
+    store.add('user', 'hello')
+    store.add('assistant', 'done')
+    with sqlite3.connect(backend.root / 'state.db') as db:
+        db.executemany("INSERT INTO sessions VALUES (?, 'portal')", [(f'chat-{i}',) for i in range(2, 14)])
+    reads = []
+    original = store.get_messages_as_conversation
+
+    def read(session, **kwargs):
+        reads.append(session)
+        return original(session, **kwargs)
+
+    store.get_messages_as_conversation = read
+    backend.chat_of = lambda session: session
+    backend.is_archived = lambda session: False
+
+    class BackfillHub(Hub):
+        async def sessions(self):
+            return [{'id': f'chat-{i}'} for i in range(1, 14)]
+
+        async def archived(self):
+            return []
+
+    hub = BackfillHub(backend)
+    node = Node('http://example.test/mesh', 'node', 'token', hub)
+    assert (await hub.open('chat-1'))['messages'][0]['text'] == 'hello'
+    task = asyncio.create_task(node._sync_attachments(None))
+    try:
+        from conftest import until
+        await until(lambda: 'chat-13' in reads)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    after_backfill = reads.count('chat-1')
+    assert (await hub.open('chat-1'))['messages'][0]['text'] == 'hello'
+    assert reads.count('chat-1') == after_backfill

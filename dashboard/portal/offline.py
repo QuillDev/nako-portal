@@ -200,7 +200,7 @@ class Offline:
                 return rows[0][0] or ""
         return None
 
-    def thread(self, session):
+    def thread(self, session, cache=True):
         home = self._home_of(session)
         if home is None:
             return None

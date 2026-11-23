@@ -984,3 +984,68 @@ async def test_mesh_refuses_unattached_unsafe_and_oversized_uploads_without_deli
             json={"text": text, "from": sid}, headers=AUTH)
         assert refused.status == 400
         assert mesh.hermes.sessions[target]["rows"] == []
+
+
+@pytest.mark.parametrize('revoke', ['remove', 'rotate'])
+async def test_cli_token_changes_reject_an_active_peers_next_frame(mesh, revoke):
+    await _join(mesh)
+    peer = mesh.machine.node.peer
+    if revoke == 'remove':
+        remove_node(mesh.mesh_data, MACHINE)
+    else:
+        add_node(mesh.mesh_data, MACHINE)
+    with pytest.raises(ConnectionError):
+        await asyncio.wait_for(peer.call('machines'), 2)
+    await until(lambda: MACHINE not in mesh.mesh.peers)
+
+
+async def test_cli_revocation_disconnects_an_idle_peer_at_heartbeat(mesh, monkeypatch):
+    monkeypatch.setattr(mesh_module, 'HEARTBEAT', 0.05)
+    await _join(mesh)
+    remove_node(mesh.mesh_data, MACHINE)
+    await until(lambda: MACHINE not in mesh.mesh.peers, timeout=2)
+
+
+async def test_mesh_creation_keeps_requested_working_directory(mesh, tmp_path):
+    await _join(mesh)
+    directory = str(tmp_path / 'project')
+    response = await _run(mesh, 'work here', cwd=directory)
+    assert response.status == 200, await response.text()
+    sid = mesh_module.parse((await response.json())['session'])[1]
+    assert mesh.machine.hermes.sessions[sid]['cwd'] == directory
+
+
+async def test_rebranded_enrollment_uses_detected_agent_and_service(world, tmp_path):
+    import subprocess
+    import types
+    from portal.mesh_setup import powershell_script, shell_script
+
+    mesh = Mesh(tmp_path / 'data', world.hub, address='https://hub.example.test',
+                plugin={'source': 'https://example.test/portal.git', 'ref': 'a' * 40},
+                ops=types.SimpleNamespace(agent='aurora'))
+    added = mesh.add('laptop')
+    assert added['command'].startswith('aurora mesh join ')
+    code = added['lines']['unix'].split('/setup/')[1].split('/')[0]
+    page = await mesh.setup(types.SimpleNamespace(match_info={'code': code}))
+    assert 'aurora plugins install' in page.text
+    assert 'schtasks /Run /TN Aurora_Gateway' in page.text
+    values = dict(hub=mesh.address, name='laptop', token=added['token'],
+                  status=mesh.address + '/mesh/setup/code/status', source=mesh.plugin['source'],
+                  ref=mesh.plugin['ref'], agent='aurora')
+    ps = powershell_script(**values)
+    assert "$Task = 'Aurora_Gateway'" in ps and 'aurora gateway stop' in ps
+    assert 'hermes gateway' not in ps
+    # Run the shell script with a fake executable and HTTP endpoint, observing the actual argv.
+    commands = tmp_path / 'commands'
+    executable = tmp_path / 'aurora'
+    executable.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{commands}"\n')
+    executable.chmod(0o700)
+    curl = tmp_path / 'curl'
+    curl.write_text('#!/bin/sh\nprintf \'{"gateway": true}\\n\'\n')
+    curl.chmod(0o700)
+    done = await asyncio.to_thread(subprocess.run, ['bash'], input=shell_script(**values), text=True,
+                                   capture_output=True, env={**os.environ, 'PATH': f'{tmp_path}:/usr/bin:/bin'}, timeout=5)
+    assert done.returncode == 0, done.stderr
+    lines = commands.read_text().splitlines()
+    assert any(line.startswith('mesh join ') for line in lines)
+    assert 'gateway restart' in lines

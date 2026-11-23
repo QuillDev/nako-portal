@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 LOGIN_TTL = 30 * 24 * 3600
+LOGIN_RENEW_INTERVAL = 5 * 60
 # The colors a chat group can have, in the order new groups take them.
 GROUP_COLORS = ("blue", "green", "yellow", "orange", "red", "teal", "purple", "grey")
 GROUP_NAME_MAX = 60
@@ -162,17 +163,19 @@ class Store:
         return token
 
     def login(self, token: str | None):
-        """The signed-in passkey for a cookie token, or None. Use renews the session."""
+        """The signed-in passkey, renewing at most once per five minutes of use."""
         if not token:
             return None
         now = self.clock()
-        rows = self._run("SELECT credential_id, expires_at FROM logins WHERE token_hash=?", (_hash(token),))
+        rows = self._run(
+            "SELECT l.credential_id, l.expires_at FROM logins l "
+            "JOIN credentials c ON c.id=l.credential_id WHERE l.token_hash=?", (_hash(token),)
+        )
         if not rows or rows[0][1] < now:
             return None
         credential_id = rows[0][0]
-        if self.credential(credential_id) is None:
-            return None
-        self._run("UPDATE logins SET expires_at=? WHERE token_hash=?", (now + LOGIN_TTL, _hash(token)))
+        if rows[0][1] <= now + LOGIN_TTL - LOGIN_RENEW_INTERVAL:
+            self._run("UPDATE logins SET expires_at=? WHERE token_hash=?", (now + LOGIN_TTL, _hash(token)))
         return credential_id
 
     def end_login(self, token: str | None) -> None:
@@ -364,4 +367,11 @@ class Store:
 
     def inbox(self, limit=200):
         rows = self._run("SELECT id, chat, text, created_at FROM inbox ORDER BY id DESC LIMIT ?", (limit,))
+        return [{"id": r[0], "chat": r[1], "text": r[2], "created_at": r[3]} for r in rows]
+
+    def inbox_after(self, cursor=0, limit=50):
+        """The next replay batch, oldest first, without skipping an older backlog."""
+        rows = self._run(
+            "SELECT id, chat, text, created_at FROM inbox WHERE id>? ORDER BY id ASC LIMIT ?", (cursor, limit)
+        )
         return [{"id": r[0], "chat": r[1], "text": r[2], "created_at": r[3]} for r in rows]

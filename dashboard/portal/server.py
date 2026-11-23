@@ -117,6 +117,8 @@ class Portal:
         self.web_root = Path(web_root).resolve()
         self.clock = clock
         self.challenges = {}
+        # Keep every open socket, including ones the hub dropped after a send timeout.
+        self._clients = set()
         # __Host- cookies need https; plain http is only ever a local test.
         self.cookie = "__Host-portal" if parsed.scheme == "https" else "portal"
         self.secure = parsed.scheme == "https"
@@ -154,6 +156,7 @@ class Portal:
             return
         self.hub.connected = False
         self.hub.running.clear()
+        self.hub.progress.clear()
         self.hub.requests.clear()
         # Nothing says what runs elsewhere without a gateway; it says again once one is back.
         await self.hub.outside({"sources": self.hub.outside_now["sources"], "running": []})
@@ -794,7 +797,9 @@ class Portal:
         return response
 
     async def logout(self, request):
-        self.store.end_login(request.cookies.get(self.cookie))
+        token = request.cookies.get(self.cookie)
+        self.store.end_login(token)
+        await self._revoke_clients(lambda client: client.token == token)
         response = web.json_response({"ok": True})
         response.del_cookie(self.cookie, path="/")
         return response
@@ -814,7 +819,15 @@ class Portal:
         if target == current:
             raise ValueError("Sign in with another passkey to remove this one")
         self.store.remove_credential(target)
+        await self._revoke_clients(lambda client: client.credential == target)
         return web.json_response({"ok": True})
+
+    async def _revoke_clients(self, matches):
+        clients = [c for c in self._clients if matches(c)]
+        for client in clients:
+            client.revoked = True
+            self.hub.leave(client)
+        await asyncio.gather(*(c.ws.close(code=1008, message=b"Login revoked") for c in clients))
 
     # Conversations
 
@@ -845,10 +858,10 @@ class Portal:
     async def open(self, request):
         self._require(request)
         session = self._session(request)
-        hub, inner = await self._target(session)
+        hub, inner = await self._target(session) if remote(session) else (self.hub, session)
         opened = await hub.open(inner)
         # Only the Notifications and Reviews chats keep a read mark, so other chats skip relisting every chat.
-        if hub is self.hub and (hub.inboxes is None or session in hub.inboxes):
+        if hub is self.hub and hub.connected and (hub.inboxes is None or session in hub.inboxes):
             listed = next((row for row in await hub.sessions() if row["id"] == session), None)
             if listed and (listed["notifications"] or listed["reviews"]):
                 self.store.set_meta(f"seen:{session}", listed["message_count"])
@@ -1457,22 +1470,31 @@ class Portal:
         )
 
     async def socket(self, request):
-        self._require(request)
+        credential = self._require(request)
+        token = request.cookies.get(self.cookie)
         ws = web.WebSocketResponse(heartbeat=25, max_msg_size=1024 * 1024)
         await ws.prepare(request)
-        client = _Client(ws)
+        # The handshake yields: logout may have revoked this login while it was preparing.
+        if self.store.login(token) != credential:
+            await ws.close(code=1008, message=b"Login revoked")
+            return ws
+        client = _Client(ws, token, credential)
+        self._clients.add(client)
         self.hub.join(client)
         try:
-            await ws.send_json(self._gateway_frame())
+            await client.send(self._gateway_frame())
             # Where every chat stands now; a socket that joins mid-turn would otherwise wait for the next change.
             for frame in self.hub.status_frames() + (self.mesh.status_frames() if self.mesh is not None else []):
-                await ws.send_json(frame)
+                await client.send(frame)
             # That's all of them: apps from before the sticker frame drop anything else they hold.
-            await ws.send_json({"kind": "status.synced"})
-            await ws.send_json(self.hub.sticker())
+            await client.send({"kind": "status.synced"})
+            await client.send(self.hub.sticker())
             # What runs elsewhere (Slack, cron...), which the app only watches.
-            await ws.send_json(self.hub.outside_frame())
+            await client.send(self.hub.outside_frame())
             async for message in ws:
+                if client.revoked or self.store.login(token) != credential:
+                    await ws.close(code=1008, message=b"Login revoked")
+                    break
                 if message.type != WSMsgType.TEXT:
                     continue
                 try:
@@ -1490,6 +1512,7 @@ class Portal:
                 if isinstance(data.get("looking"), bool):
                     self.hub.look(client, data["looking"])
         finally:
+            self._clients.discard(client)
             self.hub.leave(client)
         return ws
 
@@ -1512,10 +1535,15 @@ class Portal:
 
 
 class _Client:
-    def __init__(self, ws):
+    def __init__(self, ws, token=None, credential=None):
         self.ws = ws
+        self.token = token
+        self.credential = credential
+        self.revoked = False
         self.lock = asyncio.Lock()
 
     async def send(self, message):
         async with self.lock:
+            if self.revoked:
+                return
             await self.ws.send_json(message)
