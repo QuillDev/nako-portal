@@ -19,6 +19,7 @@ from aiohttp import WSMsgType, web
 from . import webauthn
 from .hub import NEEDS_YOU, WORKING, for_app, from_thread_line, page
 from .link import GATEWAY_PATH
+from .restart_panel import RestartPanel
 from .environments import EnvironmentsError
 from .media import media_paths, shown_files
 from .mesh import parse as remote
@@ -127,6 +128,14 @@ class Portal:
         self.node = None
         # This machine's Hermes as the server looks after it (`machine_ops.MachineOps`), else None.
         self.ops = None
+        self.restart_panel = RestartPanel(self)
+
+    async def gateway_restart(self, request):
+        self._require(request)
+        if self.ops is None:
+            raise ValueError('Gateway management is not available here')
+        body = await request.json() if request.method == 'POST' else None
+        return web.json_response(await self.restart_panel.request(body))
 
     async def gateway_changed(self, connected):
         """A gateway connected (show the saved profile, then say so) or went away. Turns and
@@ -164,6 +173,9 @@ class Portal:
     def app(self):
         app = web.Application(client_max_size=MAX_BODY, middlewares=[self._guard])
         r = app.router
+        app.cleanup_ctx.append(self.restart_panel.lifecycle)
+        r.add_get('/api/gateway/restart', self.gateway_restart)
+        r.add_post('/api/gateway/restart', self.gateway_restart)
         r.add_get("/api/me", self.me)
         r.add_post("/api/me/name", self.set_name)
         r.add_get("/api/signoff", self.sign_off)

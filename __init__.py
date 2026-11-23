@@ -658,6 +658,62 @@ class HermesBackend:
             self.owner[chat] = self.profile
         return chat
 
+    async def restart_work(self):
+        runner = self.adapter.gateway_runner
+        units = runner._describe_active_work()
+        active = []
+        for profile in self.homes():
+            rows = self._read("SELECT s.id,s.session_key,s.title,a.admission_id FROM sessions s "
+                "JOIN session_admissions a ON a.target_session_id=s.id WHERE s.source='portal' "
+                "AND s.ended_at IS NULL AND a.status='started'", (), profile)
+            active.extend(dict(session=sid, key=key, title=title or sid, turn=turn, profile=profile)
+                          for sid, key, title, turn in rows)
+        by_key = {r['key']: r for r in active}
+        for unit in units:
+            row = by_key.get(unit.get('session')) if unit['kind'] == 'chat' else None
+            if row:
+                row['tool'] = unit.get('current_tool')
+            else:
+                active.append({'title': str(unit.get('job_id') or unit.get('session') or unit['kind']),
+                               'tool': unit['kind']})
+        return {'instance': str(os.getpid()), 'work': active}
+
+    async def restart_thread(self, row, resume):
+        profile, session, turn = row['profile'], row['session'], row['turn']
+        matches = self._read("SELECT s.chat_id,a.status,a.outcome FROM sessions s JOIN session_admissions a "
+            "ON a.target_session_id=s.id WHERE s.id=? AND a.admission_id=? AND s.ended_at IS NULL "
+            "AND s.source='portal'", (session, turn), profile)
+        if not matches:
+            return 'Needs review'
+        chat, status, outcome = matches[0]
+        request = 'portal-restart:' + turn
+        if resume:
+            prior = self._read('SELECT status,outcome FROM session_admissions WHERE target_session_id=? AND request_id=?',
+                               (session, request), profile)
+            if prior:
+                state, result = prior[0]
+                if state == 'started' or result == 'completed':
+                    return 'Resumed'
+                return 'Resume queued' if state == 'queued' else 'Needs review'
+            if resume == 'check':
+                return 'Needs review'
+            if row.get('tool'):
+                return 'Needs review'
+        if resume and outcome == 'completed':
+            return 'Finished before pause'
+        if resume and (status != 'terminal' or outcome not in ('interrupted', 'cancelled')):
+            return 'Needs review'
+        if not resume and status != 'started':
+            return 'Finished before pause'
+        if resume and self._read('SELECT 1 FROM session_admissions WHERE target_session_id=? AND seq > '
+                '(SELECT seq FROM session_admissions WHERE admission_id=?) LIMIT 1', (session, turn), profile):
+            return 'Newer turn exists'
+        self.owner[chat] = profile
+        await self._inbound_event(chat, ('Continue the interrupted task from the existing conversation. Check the outcome '
+            'of any pending action before proceeding. Never repeat an uncertain external action; ask instead.'
+            if resume else '/stop'), [], message_id=request if resume else None)
+        return await self.restart_thread(row, 'check') if resume else 'Pause requested'
+
     def running_turns(self):
         """Every portal chat with a turn Hermes is running right now, in every served profile, by
         the admission that turn runs: Hermes's own record, so a turn it starts without the adapter
@@ -749,6 +805,9 @@ class HermesBackend:
         return session
 
     async def inbound(self, chat, text, files):
+        return await self._inbound_event(chat, text, files)
+
+    async def _inbound_event(self, chat, text, files, *, message_id=None):
         from gateway.platforms.base import cache_document_from_bytes, cache_image_from_bytes
         from gateway.platforms.event import MessageEvent, MessageType
 
@@ -767,7 +826,7 @@ class HermesBackend:
             kind = MessageType.COMMAND
         source = self.adapter.build_source(chat_id=chat, chat_type="dm", **PERSON)
         source = dataclasses.replace(source, profile=_named(self.owner.get(chat, self.profile)))
-        event = MessageEvent(text=text, message_type=kind, source=source, message_id=uuid.uuid4().hex, media_urls=paths, media_types=kinds)
+        event = MessageEvent(text=text, message_type=kind, source=source, message_id=message_id or uuid.uuid4().hex, media_urls=paths, media_types=kinds)
         await self._carrier(source.profile).handle_message(event)
 
     def _carrier(self, profile):

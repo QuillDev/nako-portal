@@ -84,7 +84,7 @@ BACKEND_SYNC = (
     "session_model",
 )
 # These are awaited.
-BACKEND_ASYNC = ("new_thread", "adopt", "inbound", "resolve", "set_session_model")
+BACKEND_ASYNC = ("restart_work", "restart_thread", "new_thread", "adopt", "inbound", "resolve", "set_session_model")
 # Reads the server answers itself from the session store while no gateway is connected.
 OFFLINE_READS = ("thread", "chat_of", "title_of")
 # What the gateway tells the hub.

@@ -13,7 +13,7 @@ import {
   usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
 import { InputGroupAddon } from "@/components/ui/input-group"
-import type { Portal } from "@/hooks/use-portal"
+import { navigate, type Portal } from "@/hooks/use-portal"
 import { burstHearts, saysThanks } from "@/lib/hearts"
 import { isCommand, SlashMenu, useSlashMenu } from "./slash-menu"
 import { type ModelSelection, NewChatModel, SessionModel } from "./model-picker"
@@ -169,6 +169,11 @@ function ComposerBody({ draftKey, session, placeholder, running, inChat, command
         onError={e => setError(e.message)}
         onSubmit={async message => {
           if (!message.text.trim() && !message.files.length) return
+          if (message.text.trim() === "!restart" && !message.files.length) {
+            localStorage.removeItem(draftKey)
+            navigate("#/settings/gateway")
+            return
+          }
           if (saysThanks(message.text)) burstHearts(box.current?.querySelector("form"))
           setSending(true)
           try {
