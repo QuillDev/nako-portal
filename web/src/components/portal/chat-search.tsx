@@ -3,7 +3,7 @@
 // screen (input over the row, list unfolding below), else it sits near the top of the window.
 import { ArchiveIcon, BellIcon, GitPullRequestIcon, MessageSquareIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
-import { type CSSProperties, memo, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   Command,
   CommandEmpty,
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { navigate, type Portal } from "@/hooks/use-portal";
 import { api } from "@/lib/api";
+import { mergeMessageMatches, type MessageMatch } from "@/lib/chat-search";
 import type { SessionRow } from "@/lib/types";
 
 type Archived = Pick<SessionRow, "id" | "title" | "started_at">;
@@ -60,6 +61,9 @@ export const ChatSearch = memo(function ChatSearch({
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState<Archived[]>([]);
   const [at, setAt] = useState<CSSProperties | null>(null);
+  const [results, setResults] = useState<MessageMatch[]>([]);
+  const [searchState, setSearchState] = useState("");
+  const generation = useRef(0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -98,6 +102,24 @@ export const ChatSearch = memo(function ChatSearch({
   }, [open]);
 
   const q = query.trim().toLowerCase();
+  useEffect(() => {
+    const current = ++generation.current;
+    const controller = new AbortController();
+    setResults([]);
+    setSearchState("");
+    if (!open || q.length < 2) return;
+    setSearchState("Searching messages…");
+    const timer = setTimeout(() => {
+      void api<MessageMatch[]>(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal }).then(rows => {
+        if (current !== generation.current || controller.signal.aborted) return;
+        setResults(rows);
+        setSearchState("");
+      }).catch(() => {
+        if (current === generation.current && !controller.signal.aborted) setSearchState("Message search is unavailable");
+      });
+    }, 180);
+    return () => { ++generation.current; clearTimeout(timer); controller.abort(); };
+  }, [open, q]);
   const chats = useMemo(
     () => sessions.filter((s) => matches(s.title, q)),
     [sessions, q],
@@ -116,6 +138,7 @@ export const ChatSearch = memo(function ChatSearch({
     if (wasArchived) unarchive(session);
     else navigate(`#/c/${session}`);
   };
+  const messageMatches = mergeMessageMatches(results, [...chats, ...shelved]);
 
   return (
     <Dialog onOpenChange={setOpen} open={open}>
@@ -144,7 +167,7 @@ export const ChatSearch = memo(function ChatSearch({
             value={query}
           />
           <CommandList className="max-h-[min(20rem,55vh)]">
-            <CommandEmpty>no chats match</CommandEmpty>
+            <CommandEmpty>{searchState || "no chats match"}</CommandEmpty>
             {chats.length > 0 && (
               <CommandGroup heading="chats">
                 {chats.map((s) => (
@@ -176,6 +199,16 @@ export const ChatSearch = memo(function ChatSearch({
                 ))}
               </CommandGroup>
             )}
+            {messageMatches.length > 0 && <CommandGroup heading="messages">
+              {messageMatches.map(s => <CommandItem key={s.id} value={`message:${s.id}`} onSelect={() => pick(s.id, s.archived)}>
+                {s.archived ? <ArchiveIcon /> : <MessageSquareIcon />}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{s.title}</span>
+                  <span className="truncate text-xs text-muted-foreground">{s.snippet}</span>
+                </span>
+              </CommandItem>)}
+            </CommandGroup>}
+            {searchState && (chats.length > 0 || shelved.length > 0) && <p role="status" className="px-2 py-1 text-xs text-muted-foreground">{searchState}</p>}
           </CommandList>
         </Command>
         </DialogPrimitive.Content>

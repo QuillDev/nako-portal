@@ -26,8 +26,8 @@ async function takeEarly(path: string) {
   return response?.ok ? response : null
 }
 
-export async function api<T = unknown>(path: string, { method = "GET", body, form }: { method?: string; body?: unknown; form?: FormData } = {}): Promise<T> {
-  const init: RequestInit = { method, credentials: "same-origin", headers: {} }
+export async function api<T = unknown>(path: string, { method = "GET", body, form, signal }: { method?: string; body?: unknown; form?: FormData; signal?: AbortSignal } = {}): Promise<T> {
+  const init: RequestInit = { method, credentials: "same-origin", headers: {}, signal }
   if (form) {
     init.body = form
   } else if (body !== undefined) {

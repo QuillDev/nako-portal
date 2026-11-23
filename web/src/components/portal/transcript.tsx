@@ -1,5 +1,5 @@
-import { CheckIcon, CornerDownLeftIcon, FileIcon, ForwardIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
-import { createContext, lazy, Suspense, memo, type ReactNode, useContext, useMemo, useRef, useState } from "react"
+import { CheckIcon, CopyIcon, CornerDownLeftIcon, FileIcon, ForwardIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
+import { createContext, lazy, Suspense, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
@@ -10,7 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { downloadUrl, fileUrl } from "@/lib/api"
 import { SharedSecret } from "./secrets"
 import { markdownComponents } from "./markdown-link"
-import { isImage, splitReply, splitUserTurn } from "@/lib/media"
+import { copyReplyText, isImage, splitReply, splitUserTurn } from "@/lib/media"
 import { type ReplyPart, splitSecrets } from "@/lib/secrets"
 import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
 import { dayLabel, dayOf, fullTime, timeOf } from "@/lib/times"
@@ -242,7 +242,7 @@ const User = memo(function User({ session, text, at, images, steered }: { sessio
   const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => sessionFile(session, path))]
   return (
     <Message from="user">
-      <MessageContent className="whitespace-pre-wrap">
+      <MessageContent className="whitespace-pre-wrap" data-find-text>
         <Files urls={shown} />
         {turn.body}
       </MessageContent>
@@ -284,6 +284,27 @@ function From({ sender, steered }: { sender: Sender; steered?: boolean }) {
   )
 }
 
+function CopyReply({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => clearTimeout(timer.current), [])
+  return <>
+    <button type="button" className="copy-reply rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:outline focus-visible:outline-ring" aria-label={copied ? "Copied" : "Copy reply"} onClick={async () => {
+      try {
+        await navigator.clipboard.writeText(text)
+        setFailed(false)
+        setCopied(true)
+        clearTimeout(timer.current)
+        timer.current = setTimeout(() => setCopied(false), 1500)
+      } catch { setFailed(true) }
+    }}>
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+    </button>
+    {failed && <span role="status" className="text-xs text-muted-foreground">Couldn’t copy. Select the reply to copy it.</span>}
+  </>
+}
+
 const Assistant = memo(function Assistant({
   session,
   text,
@@ -298,10 +319,11 @@ const Assistant = memo(function Assistant({
   // A shared secret's card sits where its SECRET: line was, between the text around it.
   const parts = useMemo(() => splitSecrets(raw, streaming).map((p): ReplyPart => (p.text === undefined ? p : { text: linkSessionRefs(p.text) })), [raw, streaming])
   const body = parts.length === 1 ? (parts[0].text ?? "") : raw
+  const copyable = useMemo(() => copyReplyText(text), [text])
   const stopScroll = useContext(StopScroll)
   return (
     <Message from="assistant">
-      <MessageContent className="w-full">
+      <MessageContent className="w-full" data-find-text>
         {label && <p className="text-muted-foreground text-xs">{label}</p>}
         {sender && <From sender={sender} steered={steered} />}
         {/* Another thread's message: a pink rule down its side, however long it runs. */}
@@ -315,7 +337,7 @@ const Assistant = memo(function Assistant({
           {body &&
             parts.map((part, i) =>
               part.secret !== undefined ? (
-                <SharedSecret key={`${i}:${part.secret}`} name={part.secret} />
+                <div data-find-ignore key={`${i}:${part.secret}`}><SharedSecret name={part.secret} /></div>
               ) : (
                 <MessageResponse
                   components={markdownComponents}
@@ -331,7 +353,10 @@ const Assistant = memo(function Assistant({
           <Files urls={files.map(path => sessionFile(session, path))} />
         </div>
       </MessageContent>
-      {at !== undefined && <Stamp at={at} />}
+      {(at !== undefined || (!streaming && copyable)) && <div className="flex min-h-6 items-center gap-2">
+        {at !== undefined && <Stamp at={at} />}
+        {!streaming && copyable && <CopyReply text={copyable} />}
+      </div>}
     </Message>
   )
 })

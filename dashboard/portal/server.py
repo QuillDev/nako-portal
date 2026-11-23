@@ -204,6 +204,7 @@ class Portal:
         r.add_get("/api/passkeys", self.passkeys)
         r.add_post("/api/passkeys/{id}/remove", self.remove_passkey)
         r.add_get("/api/sessions", self.sessions)
+        r.add_get("/api/search", self.search)
         r.add_post("/api/sessions", self.create)
         r.add_get("/api/sessions/{session}", self.open)
         r.add_get("/api/outside", self.outside)
@@ -830,6 +831,10 @@ class Portal:
         await asyncio.gather(*(c.ws.close(code=1008, message=b"Login revoked") for c in clients))
 
     # Conversations
+
+    async def search(self, request):
+        self._require(request)
+        return web.json_response(await self.hub.search_sessions(request.query.get("q", "")))
 
     async def sessions(self, request):
         self._require(request)

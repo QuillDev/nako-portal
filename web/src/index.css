@@ -339,3 +339,9 @@ html.bubble {
     stroke-dashoffset: 0;
   }
 }
+/* Message actions stay quiet until approached; touch has no hover state. */
+.copy-reply { opacity: 0; }
+.group:hover .copy-reply, .copy-reply:focus-visible { opacity: 1; }
+@media (pointer: coarse), (hover: none) { .copy-reply { opacity: 0.6; } }
+::highlight(chat-find) { background-color: color-mix(in srgb, var(--primary) 25%, transparent); color: var(--foreground); }
+::highlight(chat-find-current) { background-color: color-mix(in srgb, var(--primary) 50%, transparent); color: var(--foreground); }

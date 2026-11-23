@@ -260,6 +260,11 @@ class Hub:
 
     # Sessions
 
+    async def search_sessions(self, query):
+        if len(query.strip()) < 2:
+            return []
+        return await asyncio.to_thread(self.backend.search_sessions, query)
+
     async def sessions(self):
         rows = []
         inboxes = set()
