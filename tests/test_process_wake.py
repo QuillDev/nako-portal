@@ -30,12 +30,13 @@ class Ctx:
 async def gateway(tmp_path, monkeypatch):
     """A real gateway runner and session authority with the portal platform registered."""
     pytest.importorskip("gateway.session_authority")
+    import inspect
+
     from gateway.config import GatewayConfig, Platform, PlatformConfig
     from gateway.platform_registry import PlatformEntry, platform_registry
     from gateway.run import GatewayRunner
     from gateway.session_authority import SessionAuthority, initialize_session_authority
     from gateway.session_ingress_context import register_transport_home
-    import inspect
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr(SessionAuthority, "_schedule", lambda self, ref: None)
@@ -157,7 +158,7 @@ async def test_a_turn_hermes_runs_from_its_queue_shows_working_then_done(tmp_pat
         return turn["admission_id"], turn["generation"]
 
     def settle(turn, outcome):
-        args = dict(epoch=authority.epoch, admission_id=turn[0], generation=turn[1], outcome=outcome)
+        args = {"epoch": authority.epoch, "admission_id": turn[0], "generation": turn[1], "outcome": outcome}
         if store is not None:
             store.admissions.settle(**args)
         else:

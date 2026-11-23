@@ -10,7 +10,6 @@ import json
 import types
 
 import pytest
-
 from conftest import ROOT
 
 config = pytest.importorskip("hermes_cli.config")

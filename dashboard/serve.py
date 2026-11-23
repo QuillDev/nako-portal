@@ -16,7 +16,6 @@ from pathlib import Path
 
 import aiohttp
 from aiohttp import web
-
 from portal import push
 from portal.environments import Environments
 from portal.hub import Hub
@@ -44,7 +43,7 @@ async def listen(runner, port, host="127.0.0.1"):
             return
         except OSError as error:
             if waited >= BIND_GIVE_UP:
-                raise SystemExit(f"portal: {host}:{port} stays taken ({error}); another server is running")
+                raise SystemExit(f"portal: {host}:{port} stays taken ({error}); another server is running") from error
             log.info("portal: %s:%s is taken (%s); waiting", host, port, error)
             await asyncio.sleep(BIND_RETRY)
             waited += BIND_RETRY

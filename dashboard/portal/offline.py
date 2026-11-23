@@ -207,7 +207,7 @@ class Offline:
         if self.projection:
             try:
                 done = subprocess.run(
-                    [self.python, str(Path(__file__).resolve()), str(home), str(session), self.agent],
+                    [self.python, str(Path(__file__).resolve()), str(home), str(session), self.agent], check=False,
                     capture_output=True,
                     text=True,
                     timeout=READ_TIMEOUT,
@@ -229,7 +229,7 @@ def main(argv):
     sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != here]
     try:
         thread = hermes_thread(home, session, agent)
-    except Exception:
+    except Exception:  # noqa: BLE001 - The parent falls back to raw history on any projection failure.
         return 1
     sys.stdout.write(json.dumps(thread, default=str))
     return 0

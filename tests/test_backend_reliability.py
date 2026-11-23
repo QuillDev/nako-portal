@@ -14,7 +14,6 @@ from pathlib import Path
 
 import aiohttp
 import pytest
-
 from conftest import ORIGIN, ROOT, next_message, until
 from portal import hub as hub_module
 from portal.hub import Hub
@@ -28,6 +27,42 @@ def load_plugin():
     plugin = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(plugin)
     return plugin
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_removing_a_provider_key_only_ignores_missing_files(tmp_path, monkeypatch, missing):
+    plugin = load_plugin()
+    config = types.ModuleType("hermes_cli.config")
+    config.remove_env_value = lambda name: None
+    monkeypatch.setitem(sys.modules, "hermes_cli.config", config)
+
+    def remove(*args, **kwargs):
+        if missing:
+            raise FileNotFoundError("no .env")
+        raise PermissionError("read-only .env")
+
+    backend = types.SimpleNamespace(
+        _home=lambda: tmp_path,
+        _provider_for_key=lambda slug, **kwargs: {"env_vars": ["API_KEY"]},
+        _scoped=remove,
+    )
+    with contextlib.nullcontext() if missing else pytest.raises(PermissionError, match="read-only"):
+        plugin.HermesBackend.remove_provider_key(backend, "example")
+
+
+async def test_unsupported_account_removal_remains_a_validation_error(world, monkeypatch):
+    spec = importlib.util.spec_from_file_location("account_removal_test", ROOT / "provider_accounts.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    accounts = module.PluginAccounts(types.SimpleNamespace())
+    await world.gateway.stop(world.hub)
+    monkeypatch.setattr(world.hermes, "remove_account", lambda slug, account: accounts.remove(account))
+    await world.gateway.start(world.hub)
+
+    await world.sign_up()
+    response = await world.post("/api/providers/example/accounts/account/remove")
+    assert response.status == 400
+    assert await response.json() == {"error": "That provider can't remove accounts here"}
 
 
 async def socket_ready(http, world, **kwargs):
@@ -380,7 +415,7 @@ async def test_restart_sqlite_reads_leave_event_loop_responsive(tmp_path, monkey
             assert release.wait(2)
             return super()._read(*args)
 
-    adapter = types.SimpleNamespace(gateway_runner=types.SimpleNamespace(_describe_active_work=lambda: []))
+    adapter = types.SimpleNamespace(gateway_runner=types.SimpleNamespace(_describe_active_work=list))
     backend = Backend(adapter, tmp_path)
     task = asyncio.create_task(backend.restart_work())
     try:

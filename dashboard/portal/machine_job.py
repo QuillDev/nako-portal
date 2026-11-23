@@ -46,7 +46,7 @@ def parse_version(text):
 
 def hermes_version(hermes, timeout=60):
     try:
-        done = subprocess.run([*hermes, "--version"], capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+        done = subprocess.run([*hermes, "--version"], check=False, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return None
     return parse_version(done.stdout)
@@ -74,7 +74,7 @@ class Job:
         self.say("$ " + " ".join(str(a) for a in argv))
         try:
             with open(self.log_path, "a", encoding="utf-8") as log:
-                done = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=timeout, creationflags=NO_WINDOW)
+                done = subprocess.run(argv, check=False, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, timeout=timeout, creationflags=NO_WINDOW)
             self.say(f"exit {done.returncode}")
             return done.returncode
         except subprocess.TimeoutExpired:
@@ -88,7 +88,7 @@ class Job:
 
     def _task_registered(self, task):
         try:
-            done = subprocess.run(["schtasks", "/Query", "/TN", task], capture_output=True, timeout=30, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+            done = subprocess.run(["schtasks", "/Query", "/TN", task], check=False, capture_output=True, timeout=30, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
         except (OSError, subprocess.SubprocessError):
             return False
         return done.returncode == 0

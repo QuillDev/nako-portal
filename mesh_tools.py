@@ -51,7 +51,7 @@ def _api(missing="the portal server isn't running here, so other machines can't 
         base = (data / "local-url").read_text().strip()
         token = (data / "local-token").read_text().strip()
     except FileNotFoundError:
-        raise RuntimeError(missing)
+        raise RuntimeError(missing) from None
     return base, token
 
 
@@ -69,18 +69,18 @@ def _call(method, path, body=None, timeout=60, missing=None):
     except urllib.error.HTTPError as error:
         try:
             message = json.loads(error.read()).get("error")
-        except Exception:
+        except (OSError, ValueError, AttributeError):
             message = None
-        raise RuntimeError(message or f"HTTP {error.code}")
+        raise RuntimeError(message or f"HTTP {error.code}") from error
     except urllib.error.URLError as error:
-        raise RuntimeError(f"the portal server didn't answer ({error.reason})")
+        raise RuntimeError(f"the portal server didn't answer ({error.reason})") from error
 
 
 def _wrap(fn):
     def handler(args, **kwargs):
         try:
             return json.dumps(fn(args or {}, kwargs.get("session_id") or os.environ.get("HERMES_SESSION_ID") or None))
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Tool failures are returned to the agent as JSON.
             return json.dumps({"error": str(error)})
 
     return handler
@@ -309,18 +309,18 @@ TOOLS = [
     (
         "mesh_send",
         send,
-        "Send a follow-up or steer to a task running on another machine (queues or steers if it is busy). "
+        ("Send a follow-up or steer to a task running on another machine (queues or steers if it is busy). "
         "From a node to a hub chat, include MEDIA:<absolute local path> tags to upload files and deliver them "
-        "into that chat (up to 32 files totaling 25 MiB; quote paths with spaces).",
+        "into that chat (up to 32 files totaling 25 MiB; quote paths with spaces)."),
         {"session": {"type": "string"}, "text": {"type": "string"}, "wait_seconds": WAIT},
         ["session", "text"],
     ),
     (
         "mesh_read",
         read,
-        "Read where a task on another machine stands: running or done, any question it is waiting on, its latest reply, "
+        ("Read where a task on another machine stands: running or done, any question it is waiting on, its latest reply, "
         "and its latest tool calls with the start of each result. Works while that machine's gateway is down: it then "
-        "says so and when the chat last moved.",
+        "says so and when the chat last moved."),
         {"session": {"type": "string"}, "wait_seconds": WAIT},
         ["session"],
     ),
@@ -336,19 +336,19 @@ TOOLS = [
     (
         "mesh_restart_gateway",
         restart_gateway,
-        f"Restart the {TITLE} gateway on another machine (its portal server does it, so this works when the gateway "
+        (f"Restart the {TITLE} gateway on another machine (its portal server does it, so this works when the gateway "
         f"is down or stuck). Waits until it's back and returns its {TITLE} version and the restart log. Use it when "
-        "mesh_machines shows the machine online but its gateway down.",
+        "mesh_machines shows the machine online but its gateway down."),
         {"machine": {"type": "string"}, "wait_seconds": {**WAIT, "description": f"Seconds to wait for the gateway to come back (default 120, max {MAX_WAIT})."}},
         ["machine"],
     ),
     (
         "mesh_update",
         update,
-        f"Update {TITLE} on another machine: its portal server runs `{AGENT} update --yes` in a process of its own, "
+        (f"Update {TITLE} on another machine: its portal server runs `{AGENT} update --yes` in a process of its own, "
         "then restarts the gateway, so the machine comes back even though the gateway stops on the way. Returns "
         "the version before and after (and whether it now matches the hub's) and the end of the update log. "
-        f"Never run `{AGENT} update` inside a chat on that machine instead.",
+        f"Never run `{AGENT} update` inside a chat on that machine instead."),
         {
             "machine": {"type": "string"},
             "channel": {"type": "string", "description": "Update channel for this run (stable, main, ...). Default: the machine's own."},
@@ -359,9 +359,9 @@ TOOLS = [
     (
         "mesh_answer",
         answer,
-        "Answer an approval or question a chat on another machine is waiting on (from mesh_read's waiting_on). "
+        ("Answer an approval or question a chat on another machine is waiting on (from mesh_read's waiting_on). "
         "Approvals take a choice from the request's choices; questions take answers keyed by question id. "
-        "Only answer what you're sure the user would; otherwise leave it for them in the portal.",
+        "Only answer what you're sure the user would; otherwise leave it for them in the portal."),
         {
             "session": {"type": "string"},
             "request": {"type": "string", "description": "The request id from waiting_on."},
@@ -380,7 +380,7 @@ TOOL_HANDLERS = {name: _wrap(fn) for name, fn, *_ in TOOLS}
 def register(ctx):
     # No availability check: a chat's tools are fixed when it starts, and a machine can join the
     # mesh while it runs. With no machines yet, mesh_machines says so.
-    for name, fn, description, properties, required in TOOLS:
+    for name, _fn, description, properties, required in TOOLS:
         ctx.register_tool(
             name=name,
             toolset=TOOLSET,

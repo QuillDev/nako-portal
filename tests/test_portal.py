@@ -2,7 +2,6 @@ import asyncio
 
 import aiohttp
 import pytest
-
 from conftest import ORIGIN, ROOT, Authenticator, next_message, until
 
 pytestmark = pytest.mark.asyncio
@@ -301,7 +300,7 @@ async def test_a_tab_hears_live_events_only_for_the_chat_it_shows(world):
     await asyncio.sleep(0.05)
     for session in (left, shown):
         await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go"}, headers={"Origin": ORIGIN})
-        await until(lambda: session not in world.hub.running and world.hermes.sessions[session]["rows"][-1]["role"] == "assistant")
+        await until(lambda session=session: session not in world.hub.running and world.hermes.sessions[session]["rows"][-1]["role"] == "assistant")
     heard = []
     await next_message(ws, lambda m: heard.append(m) or (m.get("session") == shown and m.get("type") == "message.complete"))
     assert [m["session"] for m in heard if m.get("kind") == "event"] == [shown] * len([m for m in heard if m.get("kind") == "event"])
@@ -353,7 +352,10 @@ async def test_the_sticker_shows_the_chats_working_and_the_ones_finished_unseen(
     c = world.hermes.add_session("20261101_030000_cccccc", "notes")
     await world.sign_up()
     sticker = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
-    shows = lambda **want: next_message(sticker, lambda m: m.get("kind") == "sticker" and all(m[k] == v for k, v in want.items()))
+
+    def shows(**want):
+        return next_message(sticker, lambda m: m.get("kind") == "sticker" and all(m[k] == v for k, v in want.items()))
+
     await shows(mood="idle", working=0, finished=0)
 
     await world.http.post(world.url(f"/api/sessions/{c}/messages"), data={"text": "jot this"}, headers={"Origin": ORIGIN})
@@ -383,7 +385,7 @@ async def test_the_sticker_shows_the_chats_working_and_the_ones_finished_unseen(
     assert (await world.post(f"/api/sessions/{d}/archive", {"archived": True})).status == 200
     for session in (d, b):
         await world.http.post(world.url(f"/api/sessions/{session}/messages"), data={"text": "go on"}, headers={"Origin": ORIGIN})
-        await next_message(sticker, lambda m: m.get("kind") == "status" and m.get("session") == session and m["status"] == "done")
+        await next_message(sticker, lambda m, session=session: m.get("kind") == "status" and m.get("session") == session and m["status"] == "done")
     now = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
     joined = await next_message(now, lambda m: m.get("kind") == "sticker")
     assert (joined["working"], joined["finished"]) == (0, 1)

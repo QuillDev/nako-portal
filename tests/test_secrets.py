@@ -6,7 +6,6 @@ import json
 import sys
 
 import pytest
-
 from conftest import ORIGIN, ROOT, next_message
 
 VALUE = "sk_test_51Hx-not-a-real-key"

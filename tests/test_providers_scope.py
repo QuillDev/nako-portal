@@ -5,10 +5,8 @@ Needs a real Hermes to import, so CI skips it; run it with Hermes's own interpre
 
 import importlib.util
 import types
-from pathlib import Path
 
 import pytest
-
 from conftest import ROOT
 
 config = pytest.importorskip("hermes_cli.config")

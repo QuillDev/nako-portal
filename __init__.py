@@ -248,7 +248,7 @@ def _plugin_origin(entry):
 
     def git(*args):
         try:
-            done = subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True, text=True, timeout=10)
+            done = subprocess.run(["git", "-C", str(ROOT), *args], check=False, capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.SubprocessError):
             return ""
         return done.stdout.strip() if done.returncode == 0 else ""
@@ -316,7 +316,7 @@ def _hermes_build():
         # Hermes's display version measures distance from stable, even on a tagged canary.
         try:
             tags = subprocess.run(
-                ["git", "tag", "--points-at", info.commit, "--list", f"v{info.base_version}+canary.*"],
+                ["git", "tag", "--points-at", info.commit, "--list", f"v{info.base_version}+canary.*"], check=False,
                 cwd=Path(hermes_cli.__file__).resolve().parent,
                 capture_output=True, text=True, timeout=3,
             ).stdout.splitlines()
@@ -364,7 +364,7 @@ def _spawn_server(config_path, data):
         unit = f"nako-portal-{int(time.time())}"
         try:
             started = subprocess.run(
-                ["systemd-run", "--user", "--collect", "--quiet", f"--unit={unit}", "--description=Nako portal", f"--setenv=PYTHONPATH={path}", *command],
+                ["systemd-run", "--user", "--collect", "--quiet", f"--unit={unit}", "--description=Nako portal", f"--setenv=PYTHONPATH={path}", *command], check=False,
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -601,7 +601,9 @@ class HermesBackend:
         return sorted(sid for (sid,) in rows)
 
     def thread(self, session, cache=True):
-        from tui_gateway.server import _history_to_messages  # bound copy; the session_history original lacks server globals
+        from tui_gateway.server import (
+            _history_to_messages,  # bound copy; the session_history original lacks server globals
+        )
 
         found = self._read("SELECT source FROM sessions WHERE id=?", (session,))
         # Any session reads (one from Slack or cron opens read-only); a turn's tool sessions don't.
@@ -665,7 +667,7 @@ class HermesBackend:
             rows = await asyncio.to_thread(self._read, "SELECT s.id,s.session_key,s.title,a.admission_id FROM sessions s "
                 "JOIN session_admissions a ON a.target_session_id=s.id WHERE s.source='portal' "
                 "AND s.ended_at IS NULL AND a.status='started'", (), profile)
-            active.extend(dict(session=sid, key=key, title=title or sid, turn=turn, profile=profile)
+            active.extend({"session": sid, "key": key, "title": title or sid, "turn": turn, "profile": profile}
                           for sid, key, title, turn in rows)
         by_key = {r['key']: r for r in active}
         for unit in units:
@@ -921,7 +923,7 @@ class HermesBackend:
         for name in row["env_vars"]:
             try:
                 self._scoped(remove_env_value, name, home=home)
-            except Exception:  # a variable that was never set is already the goal
+            except FileNotFoundError:  # a variable that was never set is already the goal
                 log.debug("portal: provider %s: nothing to remove for %s", slug, name)
 
     def _provider_for_key(self, slug, *, home=None):
@@ -1084,7 +1086,7 @@ class HermesBackend:
             with self.mcp_lock:
                 self.mcp_installs.pop(key, None)
             self._mcp_apply(home)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - MCP installers can fail with plugin-defined exceptions.
             log.warning("portal: MCP install of %s failed: %s", entry.name, error)
             with self.mcp_lock:
                 self.mcp_installs[key] = {"status": "failed", "error": _mcp_redact(error) or "The install failed"}
@@ -1106,7 +1108,7 @@ class HermesBackend:
             auth=spec.get("auth") or ("header" if token else None), bearer_token=SecretStr(token) if token else None)
         name, server_config, bearer = _normalize_mcp_server_create(body)
         with self._profile_scope():
-            servers, plugins = _mcp_configs()
+            servers, _plugins = _mcp_configs()
             if name in servers:
                 raise ValueError(f"There's already a server named {name}")
             if bearer is not None:
@@ -1161,7 +1163,7 @@ class HermesBackend:
             try:
                 with suppress_interactive_oauth():
                     tools = _probe_single_server(name, cfg)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - A failed third-party probe becomes a result for the UI.
                 return {"ok": False, "error": _mcp_redact(error) or "It didn't connect", "tools": []}
             if cfg.get("auth") == "oauth" and not _oauth_tokens_present(name):
                 return {"ok": False, "error": "Sign in first", "tools": []}
@@ -1237,7 +1239,7 @@ class HermesBackend:
         threading.Thread(target=_run_dashboard_mcp_oauth, args=(flow, cfg), daemon=True, name=f"portal-mcp-oauth-{name}").start()
         try:
             asyncio.run(flow.wait_for_authorization_url(timeout=30))
-        except Exception as error:
+        except (TimeoutError, RuntimeError) as error:
             flow.mark_error(exception_message(error))
         return flow.snapshot()
 
@@ -1652,7 +1654,11 @@ def _account_status():
     Built the way Hermes's own Accounts page builds it, so the command shown is the one Hermes shows.
     """
     try:
-        from hermes_cli.web_routers.oauth import _build_oauth_catalog, _external_process_cli_command, _resolve_provider_status
+        from hermes_cli.web_routers.oauth import (
+            _build_oauth_catalog,
+            _external_process_cli_command,
+            _resolve_provider_status,
+        )
 
         return {
             entry["id"]: {
@@ -1689,7 +1695,7 @@ def _codex_runtime():
         from hermes_cli.config import load_config
 
         return get_current_runtime(load_config()) == "codex_app_server"
-    except Exception:
+    except Exception:  # noqa: BLE001 - Optional runtime discovery must not prevent MCP management.
         return False
 
 
@@ -1699,7 +1705,7 @@ def _mcp_redact(error):
         from hermes_cli.mcp_config import redact_mcp_probe_text
 
         return str(redact_mcp_probe_text(error) or "").strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 - Fail closed if redaction fails; never expose the raw error.
         return ""
 
 
@@ -1806,12 +1812,12 @@ def _default_endpoint(slug):
         from hermes_cli.auth import PROVIDER_REGISTRY
 
         config = PROVIDER_REGISTRY.get(slug)
-    except Exception:
+    except ImportError:
         return None
     return None if config is None else str(getattr(config, "inference_base_url", "") or "")
 
 
-LOOPBACK = re.compile(r"^https?://(localhost|127\.|0\.0\.0\.0|\[::1\])", re.I)
+LOOPBACK = re.compile(r"^https?://(localhost|127\.|0\.0\.0\.0|\[::1\])", re.IGNORECASE)
 
 
 def _provider_row(entry, env, accounts, endpoint=_default_endpoint):
@@ -1876,7 +1882,7 @@ class SecretSurface:
             from gateway.session_context import get_session_env
 
             chat = get_session_env("HERMES_SESSION_CHAT_ID", "")
-        except Exception:
+        except ImportError:
             chat = ""
         backend = self.adapter.backend
         if not chat and backend is not None and session_id:
@@ -2156,9 +2162,8 @@ def _adapter(config):
             except Exception:
                 log.warning("portal: could not read sessions from other platforms", exc_info=True)
                 return last
-            if now != last or sweeps % OUTSIDE_REPEAT_EVERY == 0:
-                if not await self._hub("outside", now):
-                    return None
+            if (now != last or sweeps % OUTSIDE_REPEAT_EVERY == 0) and not await self._hub("outside", now):
+                return None
             return now
 
         async def _send_exec_approval_prompt(self, prompt):
@@ -2233,7 +2238,7 @@ def _tool_context(name, args):
         from agent.display import build_tool_preview
 
         return build_tool_preview(name, args if isinstance(args, dict) else {}, max_len=80) or ""
-    except Exception:
+    except Exception:  # noqa: BLE001 - A display preview must not interrupt an agent tool call.
         return ""
 
 
@@ -2241,12 +2246,12 @@ def _forward_tool(state):
     def hook(tool_name="", args=None, session_id=None, tool_call_id=None, status=None, **_):
         link, loop = _LIVE_TOOLS.get("link"), _LIVE_TOOLS.get("loop")
         if link is None or loop is None or link.peer is None or not session_id:
-            return None
+            return
         ended = "failed" if status == "error" else "done"
         payload = (session_id, str(tool_call_id or ""), tool_name, _tool_context(tool_name, args), state or ended)
         # The hub keeps only calls in a portal turn it shows as running.
         loop.call_soon_threadsafe(link.tell, "tool", *payload)
-        return None
+        return
 
     return hook
 

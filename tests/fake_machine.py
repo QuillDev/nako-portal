@@ -53,13 +53,14 @@ def _stop_gateway():
 
 def _start_gateway():
     _stop_gateway()
-    process = subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "gateway"],
-        stdin=subprocess.DEVNULL,
-        stdout=open(STATE / "gateway.log", "ab"),
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    with open(STATE / "gateway.log", "ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "gateway"],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     (STATE / "gateway.pid").write_text(str(process.pid))
 
 
@@ -113,7 +114,6 @@ def gateway():
     """Dial the machine's portal server like the adapter does, answer its calls with nothing."""
     sys.path.insert(0, str(HERE.parent / "dashboard"))
     import aiohttp
-
     from portal.link import GatewayClient
 
     class Quiet:

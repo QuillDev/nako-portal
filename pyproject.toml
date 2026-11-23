@@ -3,3 +3,19 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 addopts = "-n auto"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E4", "E7", "E9", "F", "I", "UP", "B", "BLE", "C4",
+    "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC222", "ASYNC230", "ASYNC251",
+    "ISC004", "N999", "PIE", "PLW1510", "RET501", "RUF012", "RUF059", "RUF100",
+    "SIM102", "SIM115", "SIM117", "SIM905", "TRY004", "FURB167",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The plugin is loaded by path; checkout directory names need not be Python identifiers.
+"__init__.py" = ["N999"]

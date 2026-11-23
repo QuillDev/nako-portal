@@ -1,7 +1,21 @@
 """Settings > MCP servers through the portal's own routes: who may read and change the list,
 every open tab hears about a change, and a server's sign-in page can send the browser back."""
 
+import pytest
 from conftest import ORIGIN, next_message
+
+
+@pytest.mark.parametrize("path, body, error", [
+    ("/api/mcp/servers", [], "bad server"),
+    ("/api/mcp/servers/docs/tools", {"tools": "search", "on": []}, "bad tool list"),
+    ("/api/mcp/servers/docs/tools", {"tools": [], "on": "search"}, "bad tool list"),
+])
+async def test_wrong_json_types_are_validation_errors(world, path, body, error):
+    await world.sign_up()
+    response = await world.http.post(world.url(path), json=body, headers={"Origin": ORIGIN})
+    assert response.status == 400
+    assert await response.json() == {"error": error}
+    assert world.hermes.mcp == {}
 
 
 async def test_signed_out_callers_can_neither_read_nor_change_servers(world):

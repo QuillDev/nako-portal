@@ -7,11 +7,12 @@ import re
 
 # Hermes's own MEDIA_DELIVERY_EXTS (gateway/platforms/base.py), longest first.
 EXTS = sorted(
-    (
-        "png jpg jpeg gif webp bmp tiff svg mp4 mov avi mkv webm 3gp mp3 m2a wav ogg opus m4a flac "
-        "pdf docx doc odt rtf txt md epub xlsx xls ods csv tsv json xml yaml yml kmz kml geojson gpx "
-        "pptx ppt odp key zip tar gz tgz bz2 xz 7z rar apk ipa html htm"
-    ).split(),
+    [
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "svg", "mp4", "mov", "avi", "mkv", "webm", "3gp",
+        "mp3", "m2a", "wav", "ogg", "opus", "m4a", "flac", "pdf", "docx", "doc", "odt", "rtf", "txt", "md",
+        "epub", "xlsx", "xls", "ods", "csv", "tsv", "json", "xml", "yaml", "yml", "kmz", "kml", "geojson", "gpx",
+        "pptx", "ppt", "odp", "key", "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "apk", "ipa", "html", "htm",
+    ],
     key=len,
     reverse=True,
 )

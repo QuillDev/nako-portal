@@ -10,12 +10,12 @@ from pathlib import Path
 from aiohttp import web
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import ROOT, Backend, FakeGateway  # noqa: E402
-from portal.environments import Environments  # noqa: E402
-from portal.machine_load import MachineLoad  # noqa: E402
-from portal.hub import Hub  # noqa: E402
-from portal.server import Portal  # noqa: E402
-from portal.store import Store  # noqa: E402
+from conftest import ROOT, Backend, FakeGateway
+from portal.environments import Environments
+from portal.hub import Hub
+from portal.machine_load import MachineLoad
+from portal.server import Portal
+from portal.store import Store
 
 
 class DemoGateway(FakeGateway):
@@ -37,9 +37,9 @@ class DemoGateway(FakeGateway):
 
     def usage(self):
         time.sleep(0.8)
-        from datetime import datetime, timedelta, timezone
+        from datetime import UTC, datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         resets = (now + timedelta(days=4)).isoformat()
         session = (now + timedelta(hours=3)).isoformat()
         return [
@@ -188,7 +188,7 @@ async def main(port):
         ],
     )
     # A thread that started a review, and the review's report handed back to it (`nako-spawn --to`).
-    from portal.hub import from_thread_line  # noqa: E402
+    from portal.hub import from_thread_line
 
     hermes.add_session(
         "20261024_094000_f00001",
@@ -364,7 +364,6 @@ async def _laptop(portal, hub, data, port):
     """Other machines in this portal's mesh, with chats of their own, dialing in like real ones:
     a laptop, a desktop busy on a task, and a homelab box that has been away a while."""
     import aiohttp
-
     from portal.mesh import Mesh, Node, add_node
 
     portal.mesh = Mesh(data, hub, name="hub", address="https://portal.example.com", store=portal.store)

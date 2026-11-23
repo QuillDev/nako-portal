@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from portal.machine_load import MachineLoad
 
 GIB = 1024**3

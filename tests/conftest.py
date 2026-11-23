@@ -22,8 +22,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "dashboard"))
 
-from portal import webauthn  # noqa: E402
 from portal import hub as hub_module  # noqa: E402
+from portal import webauthn  # noqa: E402
 from portal.hub import Hub  # noqa: E402
 from portal.link import GatewayClient, GatewayLink  # noqa: E402
 from portal.server import Portal  # noqa: E402

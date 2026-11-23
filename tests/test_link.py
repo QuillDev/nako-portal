@@ -3,11 +3,9 @@
 import asyncio
 import json
 import socket
-import subprocess
 import sys
 
 import aiohttp
-
 from conftest import LOCAL_TOKEN, ORIGIN, ROOT, SERVER_CODE, Backend, FakeGateway, next_message, until
 from portal.link import GatewayClient
 
@@ -113,7 +111,10 @@ async def test_the_standalone_server_serves_and_takes_a_gateway(tmp_path):
     config = tmp_path / "server.json"
     origin = f"http://127.0.0.1:{port}"
     config.write_text(json.dumps({"data": str(data), "origin": origin, "port": port, "contact": "mailto:owner@localhost", "code": SERVER_CODE}))
-    server = subprocess.Popen([sys.executable, str(ROOT / "dashboard" / "serve.py"), str(config)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    server = await asyncio.create_subprocess_exec(
+        sys.executable, str(ROOT / "dashboard" / "serve.py"), str(config),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
     try:
         async with aiohttp.ClientSession() as http:
 
@@ -142,7 +143,9 @@ async def test_the_standalone_server_serves_and_takes_a_gateway(tmp_path):
             await asyncio.gather(task, return_exceptions=True)
             await wait_for(lambda m: m is not None and m["connected"] is False)
         server.terminate()
-        assert server.wait(10) == 0
+        await asyncio.wait_for(server.communicate(), 10)
+        assert server.returncode == 0
     finally:
-        if server.poll() is None:
+        if server.returncode is None:
             server.kill()
+        await server.communicate()

@@ -17,7 +17,6 @@ import aiohttp
 import pytest
 import pytest_asyncio
 from aiohttp.test_utils import TestServer
-
 from conftest import LOCAL_TOKEN, ORIGIN, SERVER_CODE, FakeGateway, Gateway, next_message, until
 from portal import mesh as mesh_module
 from portal.hub import Hub
@@ -942,6 +941,7 @@ async def test_a_remote_agent_delivers_files_into_its_originating_hub_chat(mesh,
 
 async def test_mesh_refuses_unattached_unsafe_and_oversized_uploads_without_delivering(mesh, tmp_path, monkeypatch):
     import base64
+
     from portal import attachments
 
     await _join(mesh)
@@ -1018,6 +1018,7 @@ async def test_mesh_creation_keeps_requested_working_directory(mesh, tmp_path):
 async def test_rebranded_enrollment_uses_detected_agent_and_service(world, tmp_path):
     import subprocess
     import types
+
     from portal.mesh_setup import powershell_script, shell_script
 
     mesh = Mesh(tmp_path / 'data', world.hub, address='https://hub.example.test',
@@ -1029,9 +1030,9 @@ async def test_rebranded_enrollment_uses_detected_agent_and_service(world, tmp_p
     page = await mesh.setup(types.SimpleNamespace(match_info={'code': code}))
     assert 'aurora plugins install' in page.text
     assert 'schtasks /Run /TN Aurora_Gateway' in page.text
-    values = dict(hub=mesh.address, name='laptop', token=added['token'],
-                  status=mesh.address + '/mesh/setup/code/status', source=mesh.plugin['source'],
-                  ref=mesh.plugin['ref'], agent='aurora')
+    values = {"hub": mesh.address, "name": 'laptop', "token": added['token'],
+                  "status": mesh.address + '/mesh/setup/code/status', "source": mesh.plugin['source'],
+                  "ref": mesh.plugin['ref'], "agent": 'aurora'}
     ps = powershell_script(**values)
     assert "$Task = 'Aurora_Gateway'" in ps and 'aurora gateway stop' in ps
     assert 'hermes gateway' not in ps
