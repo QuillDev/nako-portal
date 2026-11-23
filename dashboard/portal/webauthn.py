@@ -67,7 +67,10 @@ def parse_auth_data(raw: bytes) -> AuthData:
         data.credential_id = raw[55 : 55 + length]
         if len(data.credential_id) != length:
             raise WebAuthnError("credential id truncated")
-        key, _ = cbor.decode(raw, 55 + length)
+        try:
+            key, _ = cbor.decode(raw, 55 + length)
+        except cbor.CborError as error:
+            raise WebAuthnError("malformed credential public key") from error
         if not isinstance(key, dict):
             raise WebAuthnError("credential public key is not a COSE map")
         data.public_key = key
@@ -155,7 +158,10 @@ def verify_assertion(
     _client_data(client_data_json, "webauthn.get", challenge, origin)
     data = parse_auth_data(authenticator_data)
     _check_flags_and_rp(data, rp_id)
-    cose = cbor.loads(cose_key)
+    try:
+        cose = cbor.loads(cose_key)
+    except cbor.CborError as error:
+        raise WebAuthnError("malformed stored key") from error
     if not isinstance(cose, dict):
         raise WebAuthnError("stored key is not a COSE map")
     key = public_key_from_cose(cose)
