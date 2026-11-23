@@ -4,11 +4,13 @@
 // Homebrew's Mac app can't replace itself: it sees the new version in the same manifest and, when
 // you click the update arrow, runs `brew upgrade nako` and reopens.
 import { execFile, spawn } from "node:child_process"
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { createWriteStream, existsSync, readFileSync } from "node:fs"
+import { chmod, copyFile, mkdtemp, rename, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
+import { pipeline } from "node:stream/promises"
 
-import { parsePublicKey, verifySignature } from "./minisign.js"
+import { parsePublicKey, verifyStagedSignature } from "./minisign.js"
 
 /** Coming back to the app checks again once this long has passed since the last check. */
 const RECHECK_AFTER = 10 * 60 * 1000
@@ -81,6 +83,8 @@ export class Updater {
   last = null
   checking = false
   status = { state: "idle" }
+  generation = 0
+  active = null
 
   /** `cookie()` → Cookie header or null, `onReady(version)` once a download is verified, `notify(title, body)` for the tray's check. */
   constructor({
@@ -98,10 +102,12 @@ export class Updater {
     reopen,
     settleAfter = SETTLE_AFTER,
     showInstallFor = SHOW_INSTALL_FOR,
+    fetchTimeout = 30_000,
+    downloadTimeout = 5 * 60_000,
   }) {
-    Object.assign(this, { version, platform, cookie, onReady, onStatus, notify, quit, log, brew, brewRunner, settleAfter, showInstallFor })
+    Object.assign(this, { version, platform, publicKey, cookie, onReady, onStatus, notify, quit, log, brew, brewRunner, settleAfter, showInstallFor, fetchTimeout, downloadTimeout })
     this.reopen = reopen ?? (app => spawn("sh", ["-c", 'sleep 1; exec open "$0"', app], { detached: true, stdio: "ignore" }).unref())
-    this.key = parsePublicKey(publicKey)
+    parsePublicKey(publicKey)
   }
 
   get enabled() {
@@ -116,9 +122,23 @@ export class Updater {
   /** Checks shortly after the portal opens, then every six hours (ten minutes after a failed check). */
   watch(origin) {
     clearTimeout(this.timer)
+    const generation = ++this.generation
+    this.active?.controller.abort()
+    this.active = null
+    this.checking = false
+    if (this.pending?.directory) this.#remove(this.pending.directory)
+    this.pending = null
+    this.last = null
+    this.#set({ state: "idle" })
     this.origin = origin
-    if (!this.enabled) return
-    const next = ms => (this.timer = setTimeout(async () => next((await this.run(false)) === "error" ? 600_000 : 6 * 3600_000), ms))
+    if (!this.enabled || !origin) return
+    const next = ms => {
+      if (generation !== this.generation) return
+      this.timer = setTimeout(async () => {
+        const result = await this.run(false)
+        next(result === "error" ? 600_000 : 6 * 3600_000)
+      }, ms)
+    }
     next(Number(process.env.NAKO_FIRST_CHECK_MS) || 20_000)
   }
 
@@ -163,46 +183,73 @@ export class Updater {
   /** "found", "none" or "error" (the reason in `this.error`); "busy" when another check is running. */
   async run(now) {
     if (this.checking) return "busy"
+    const operation = { generation: this.generation, controller: new AbortController(), origin: this.origin }
+    this.active = operation
     this.checking = true
     this.last = Date.now()
     try {
-      const found = await this.#check()
-      if (!found) return "none"
+      const update = await this.#check(operation)
+      if (operation.generation !== this.generation) {
+        if (update?.directory) await this.#remove(update.directory)
+        return "cancelled"
+      }
+      if (!update) return "none"
+      if (this.pending?.directory) this.#remove(this.pending.directory)
+      this.pending = update
       this.#set({ state: "ready", version: this.pending.version })
       this.onReady(this.pending.version)
       if (now) this.install(false)
       return "found"
     } catch (error) {
+      if (operation.generation !== this.generation) return "cancelled"
       this.error = error.message
       this.log(`no update: ${error.message}`)
       return "error"
     } finally {
-      this.checking = false
+      if (this.active === operation) {
+        this.active = null
+        this.checking = false
+      }
     }
   }
 
-  async #check() {
+  async #remove(directory) {
+    await rm(directory, { recursive: true, force: true }).catch(error => this.log(`update cleanup: ${error.message}`))
+  }
+
+  async #check({ origin, controller }) {
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(this.fetchTimeout)])
     const cookie = await this.cookie()
+    signal.throwIfAborted()
     if (!cookie) throw new Error("not signed in")
-    const response = await fetch(new URL("/api/desktop/release", this.origin.url), { headers: { Cookie: cookie } })
+    const response = await fetch(new URL("/api/desktop/release", origin.url), { headers: { Cookie: cookie }, signal })
     if (response.status === 404) throw new Error("no release")
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const release = await response.json()
     if (this.platform === BREW) {
       if (!newer(release?.version, this.version)) return false
-      this.pending = { version: release.version, brew: true }
-      return true
+      signal.throwIfAborted()
+      return { version: release.version, brew: true }
     }
     const entry = release?.platforms?.[this.platform]
     if (!entry || !newer(release.version, this.version)) return false
     // Only from the portal itself, like the manifest.
-    if (!this.origin.opensInApp(entry.url)) throw new Error("the release isn't on the portal")
-    const file = await fetch(entry.url, { headers: { Cookie: cookie } })
-    if (!file.ok) throw new Error(`HTTP ${file.status}`)
-    const bytes = Buffer.from(await file.arrayBuffer())
-    if (!verifySignature(bytes, entry.signature, this.key)) throw new Error("the download's signature doesn't match")
-    this.pending = { version: release.version, bytes }
-    return true
+    if (!origin.opensInApp(entry.url)) throw new Error("the release isn't on the portal")
+    const downloadSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(this.downloadTimeout)])
+    const directory = await mkdtemp(join(tmpdir(), "nako-update-"))
+    let kept = false
+    try {
+      const file = await fetch(entry.url, { headers: { Cookie: cookie }, signal: downloadSignal })
+      if (!file.ok) throw new Error(`HTTP ${file.status}`)
+      const path = join(directory, this.platform === "windows-x86_64" ? "nako-setup.exe" : "nako.AppImage")
+      await pipeline(file.body, createWriteStream(path, { flags: "wx", mode: 0o600 }), { signal: downloadSignal })
+      if (!await verifyStagedSignature(path, entry.signature, this.publicKey, downloadSignal)) throw new Error("the download's signature doesn't match")
+      downloadSignal.throwIfAborted()
+      kept = true
+      return { version: release.version, path, directory }
+    } finally {
+      if (!kept) await this.#remove(directory)
+    }
   }
 
   /** Homebrew's app: brew builds the new version (a few minutes), then the app reopens as it. */
@@ -250,16 +297,15 @@ export class Updater {
     try {
       if (this.platform === "linux-x86_64") {
         const image = process.env.APPIMAGE
-        writeFileSync(`${image}.new`, update.bytes)
-        chmodSync(`${image}.new`, 0o755)
-        renameSync(`${image}.new`, image)
+        await copyFile(update.path, `${image}.new`)
+        await chmod(`${image}.new`, 0o755)
+        await rename(`${image}.new`, image)
+        await this.#remove(update.directory)
         // Start the new copy after this one has quit, so the single-instance lock is free.
         spawn("sh", ["-c", 'sleep 1; exec "$0" "$@"', image, ...(hidden ? ["--hidden"] : [])], { detached: true, stdio: "ignore" }).unref()
       } else if (this.platform === "windows-x86_64") {
-        const installer = join(tmpdir(), `nako-setup-${update.version}.exe`)
-        writeFileSync(installer, update.bytes)
         // Silent, and the installer starts the new version when it's done.
-        spawn(installer, ["/S", "--force-run"], { detached: true, stdio: "ignore" }).unref()
+        spawn(update.path, ["/S", "--force-run"], { detached: true, stdio: "ignore" }).unref()
       }
       this.quit()
     } catch (error) {

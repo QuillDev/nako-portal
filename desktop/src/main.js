@@ -12,6 +12,8 @@ import { FloatingNako } from "./bubble.js"
 import { toSystemBrowser } from "./links.js"
 import { ServerOrigin } from "./origin.js"
 import { Pane } from "./pane.js"
+import { BROWSER_PARTITION } from "./browser-session.js"
+import { trackNotification } from "./notifications.js"
 import { begin } from "./signin.js"
 import { Updater, announcement, platformKey, readPublicKey } from "./update.js"
 
@@ -401,9 +403,8 @@ function showAlert(alert) {
   if (window.isVisible() && window.isFocused()) return
   if (floating?.isShown) floating.alert(alert.session)
   if (!alert.session) return void notify(alert.title, alert.body)
-  shown.get(alert.session)?.close()
   const note = notify(alert.title, alert.body, () => openChat(alert.session))
-  if (note) shown.set(alert.session, note)
+  if (note) trackNotification(shown, alert.session, note)
 }
 
 // ---- tray, updates, downloads ----
@@ -488,16 +489,18 @@ app.whenReady().then(() => {
   app.setAppUserModelId(IDENTIFIER)
   // Downloads from the portal or the in-app browser go to the Downloads folder.
   const signIn = signInAgent()
-  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: GOOGLE_SIGN_IN }, (details, callback) => {
-    details.requestHeaders["User-Agent"] = signIn
-    callback({ requestHeaders: details.requestHeaders })
-  })
-  session.defaultSession.on("will-download", (_event, item) => {
-    item.setSavePath(join(app.getPath("downloads"), item.getFilename()))
-    item.once("done", (_e, state) => {
-      if (state === "completed") notify(`Saved ${item.getFilename()}`, "In your Downloads folder")
+  for (const browsing of [session.defaultSession, session.fromPartition(BROWSER_PARTITION)]) {
+    browsing.webRequest.onBeforeSendHeaders({ urls: GOOGLE_SIGN_IN }, (details, callback) => {
+      details.requestHeaders["User-Agent"] = signIn
+      callback({ requestHeaders: details.requestHeaders })
     })
-  })
+    browsing.on("will-download", (_event, item) => {
+      item.setSavePath(join(app.getPath("downloads"), item.getFilename()))
+      item.once("done", (_e, state) => {
+        if (state === "completed") notify(`Saved ${item.getFilename()}`, "In your Downloads folder")
+      })
+    })
+  }
   try {
     createTray()
   } catch (error) {

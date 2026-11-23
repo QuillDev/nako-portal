@@ -34,12 +34,14 @@ git worktree add -q --detach "$tree" origin/main
 trap 'git worktree remove --force "$tree"' EXIT
 echo "releasing $(git -C "$tree" log -1 --format='%h %s')"
 
-# One patch version past the newest release of that app.
+# One patch version past the highest published version, across every API page.
 next() {
   local last
-  last=$(gh release list -R "$repo" -L 50 --json tagName -q "[.[].tagName | select(startswith(\"$1-v\"))][0] // \"$1-v0.0.0\"")
-  IFS=. read -r major minor patch <<<"${last#"$1"-v}"
-  echo "$major.$minor.$((patch + 1))"
+  last=$(gh api --paginate "repos/$repo/releases?per_page=100" --jq '.[] | select(.draft | not) | .tag_name' |
+    sed -nE "s/^$1-v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n1) || return
+  local major minor patch
+  IFS=. read -r major minor patch <<<"${last:-0.0.0}"
+  echo "$major.$minor.$((10#$patch + 1))"
 }
 
 for app in desktop android; do

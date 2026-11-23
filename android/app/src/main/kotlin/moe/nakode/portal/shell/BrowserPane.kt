@@ -40,8 +40,8 @@ import kotlin.math.roundToInt
  * [split] is the horizontal row the chat's WebView sits in; the pane joins it while open.
  *
  * Every chat has a browser of its own with tabs ([BrowserTabs]). Each tab is a WebView; only the
- * one on screen is attached and running, the rest are paused, and chats left a while ago are
- * unloaded down to their addresses.
+ * one on screen is attached, the rest pause media and rendering. Retained WebViews are bounded
+ * per chat as well as across chats; evicted tabs keep their addresses for reloading.
  */
 class BrowserPane(
     private val context: Context,
@@ -103,7 +103,10 @@ class BrowserPane(
     fun destroy() {
         chrome?.edge?.let(split::removeView)
         chrome = null
-        pages.values.forEach(WebView::destroy)
+        pages.values.forEach { page ->
+            (page.parent as? ViewGroup)?.removeView(page)
+            page.destroy()
+        }
         pages.clear()
         visible = null
     }
@@ -132,12 +135,6 @@ class BrowserPane(
 
     /** Builds, shows, pauses and drops WebViews to match the tabs. */
     private fun sync() {
-        for (id in tabs.discard()) {
-            pages.remove(id)?.let { page ->
-                (page.parent as? ViewGroup)?.removeView(page)
-                page.destroy()
-            }
-        }
         val shown = tabs.shown()?.takeIf { PaneLayout.fits(widthDp()) }
         val before = visible
         if (shown == null) {
@@ -160,6 +157,14 @@ class BrowserPane(
         visible = shown?.id
         // The page going out of sight stops: its videos pause and the WebView pauses.
         if (before != null && before != visible) pages[before]?.let(::suspend)
+        // onPause does not stop JavaScript. Limit live pages rather than pausing global timers,
+        // which would also stop the portal and the visible tab.
+        for (id in tabs.discard()) {
+            pages.remove(id)?.let { page ->
+                (page.parent as? ViewGroup)?.removeView(page)
+                page.destroy()
+            }
+        }
         report()
         changed()
     }
@@ -412,6 +417,7 @@ class BrowserPane(
         settings.setSupportMultipleWindows(true)
         webViewClient = PaneClient(tab.id)
         webChromeClient = PaneChrome(tab.id)
+        FileDownloads.attach(this, server, openExternally)
         loadUrl(tab.url ?: "about:blank")
     }
 

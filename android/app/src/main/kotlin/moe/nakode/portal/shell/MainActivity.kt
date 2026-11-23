@@ -153,8 +153,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        pane?.destroy()
-        webView?.destroy()
+        destroyWebApp()
         super.onDestroy()
     }
 
@@ -286,7 +285,7 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun showWebApp(server: ServerOrigin, savedInstanceState: Bundle?, startUrl: String? = null) {
-        closePane()
+        destroyWebApp()
         root.removeAllViews()
         val web = WebView(this).apply {
             setBackgroundColor(getColor(R.color.background))
@@ -335,6 +334,7 @@ class MainActivity : ComponentActivity() {
 
         // Signing in sets the cookie the alert service needs; start it as soon as the page has one.
         override fun onPageFinished(view: WebView, url: String) {
+            if (view !== webView) return
             startListening()
             if (server.opensInApp(url)) {
                 view.evaluateJavascript(CHAT_WATCH, null)
@@ -354,7 +354,7 @@ class MainActivity : ComponentActivity() {
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame) {
+            if (view === webView && request.isForMainFrame) {
                 showUnreachable(server, error.description?.toString())
             }
         }
@@ -379,6 +379,17 @@ class MainActivity : ComponentActivity() {
         pane = null
     }
 
+    private fun destroyWebApp() {
+        closePane()
+        val old = webView
+        webView = null
+        old?.let {
+            (it.parent as? ViewGroup)?.removeView(it)
+            it.stopLoading()
+            it.destroy()
+        }
+    }
+
     private fun openExternally(uri: Uri) {
         runCatching { CustomTabsIntent.Builder().build().launchUrl(this, uri) }
             .recoverCatching { startActivity(Intent(Intent.ACTION_VIEW, uri)) }
@@ -399,9 +410,7 @@ class MainActivity : ComponentActivity() {
     private val dark by lazy { android.view.ContextThemeWrapper(this, android.R.style.Theme_Material_NoActionBar) }
 
     private fun showServerPrompt(error: String?) {
-        closePane()
-        webView?.destroy()
-        webView = null
+        destroyWebApp()
         root.removeAllViews()
         showLook(false)
         val input = EditText(dark).apply {
@@ -421,7 +430,9 @@ class MainActivity : ComponentActivity() {
                 message.text = "Enter an address like https://portal.example.com"
                 message.setTextColor(ERROR)
             } else {
+                val changed = origin?.value != parsed.value
                 origin = parsed
+                if (changed) AlertService.running?.serverChanged()
                 showWebApp(parsed, null)
             }
         }
