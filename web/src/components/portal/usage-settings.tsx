@@ -1,20 +1,6 @@
-import { useEffect, useState } from "react"
-import { z } from "zod"
-import { api, ApiError } from "@/lib/api"
+import type { Usage } from "@/lib/usage"
 import { cn } from "@/lib/utils"
 
-const usage = z.object({
-  providers: z.array(z.object({
-    provider: z.string(),
-    label: z.string(),
-    accounts: z.array(z.object({
-      label: z.string(),
-      windows: z.array(z.object({ label: z.string(), used_percent: z.number(), resets_at: z.string().nullable() })),
-      note: z.string().nullable(),
-    })),
-  })),
-})
-export type Usage = z.infer<typeof usage>
 type Window = Usage["providers"][number]["accounts"][number]["windows"][number]
 
 const dateFormat = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -68,23 +54,6 @@ function Limit({ window, now }: { window: Window; now: number }) {
       )}
     </div>
   )
-}
-
-// How much of each signed-in plan is used. "unsupported" when model-controls can't say, so Settings drops the page.
-export function useUsage(onError: (message: string) => void) {
-  const [state, setState] = useState<Usage | null | "unsupported">(null)
-  useEffect(() => {
-    let active = true
-    api<unknown>("/api/usage")
-      .then(raw => active && setState(usage.parse(raw)))
-      .catch(e => {
-        if (!active) return
-        if (e instanceof ApiError && e.status === 404) return setState("unsupported")
-        onError(e instanceof Error ? e.message : String(e))
-      })
-    return () => { active = false }
-  }, [onError])
-  return state
 }
 
 // One block per account.

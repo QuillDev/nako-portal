@@ -1,14 +1,14 @@
 import { useEffect, useSyncExternalStore } from "react"
-import { z } from "zod"
+import { d, type Infer } from "@/lib/decode"
 import { api } from "@/lib/api"
 
 // Memory and CPU use of the machine the portal runs on (dashboard/portal/machine_load.py).
-export const MachineLoad = z.object({
-  memory: z.object({ used: z.number(), total: z.number(), percent: z.number() }),
-  cpu: z.object({ percent: z.number().nullable() }),
-  warn_at: z.number(),
+export const MachineLoad = d.object({
+  memory: d.object({ used: d.number(), total: d.number(), percent: d.number() }),
+  cpu: d.object({ percent: d.number().nullable() }),
+  warn_at: d.number(),
 })
-export type MachineLoad = z.infer<typeof MachineLoad>
+export type MachineLoad = Infer<typeof MachineLoad>
 
 // Past this, the warning turns from amber to red.
 export const CRITICAL_AT = 90

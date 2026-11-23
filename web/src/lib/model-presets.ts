@@ -1,12 +1,12 @@
 import { useEffect, useSyncExternalStore } from "react"
-import { z } from "zod"
+import { d, type Infer, type Decoder } from "@/lib/decode"
 import { api } from "@/lib/api"
 import { favorite, favoriteId, type ModelFavorite } from "@/lib/model-favorites"
 
-const selection = z.object({ provider: z.string().min(1), model: z.string().min(1), effort: z.string(), speed: z.string() })
-const preset = z.object({ id: z.string(), name: z.string().trim().min(1).max(40), icon: z.string().max(32), pick: selection })
-export type ModelPreset = z.infer<typeof preset>
-const picks = z.object({ presets: z.array(z.unknown()), favorites: z.array(z.unknown()) })
+const selection = d.object({ provider: d.string().min(1), model: d.string().min(1), effort: d.string(), speed: d.string() })
+const preset = d.object({ id: d.string(), name: d.string().trim().min(1).max(40), icon: d.string().max(32), pick: selection })
+export type ModelPreset = Infer<typeof preset>
+const picks = d.object({ presets: d.array(d.unknown()), favorites: d.array(d.unknown()) })
 
 // Presets and starred models live on the portal server, so every device shows the same ones.
 let state: { presets: ModelPreset[]; favorites: ModelFavorite[] } = { presets: [], favorites: [] }
@@ -18,7 +18,7 @@ function subscribe(update: () => void) {
   return () => { listeners.delete(update) }
 }
 
-function valid<T>(schema: z.ZodType<T>, entries: unknown[]) {
+function valid<T>(schema: Decoder<T>, entries: unknown[]) {
   return entries.flatMap(entry => {
     const parsed = schema.safeParse(entry)
     return parsed.success ? [parsed.data] : []
@@ -35,7 +35,7 @@ function apply(raw: unknown) {
 // doesn't have yet, then drop the browser copy.
 const LEGACY_PRESETS = "portal:model-presets"
 const LEGACY_FAVORITES = "portal:model-favorites"
-function legacy<T>(schema: z.ZodType<T>, key: string) {
+function legacy<T>(schema: Decoder<T>, key: string) {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(key) ?? "[]")
     return Array.isArray(saved) ? valid(schema, saved) : []

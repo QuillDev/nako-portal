@@ -20,15 +20,16 @@ import { useSecrets } from "@/lib/secrets"
 import { cn } from "@/lib/utils"
 import type { Passkey } from "@/lib/types"
 import { PageHeader } from "./header"
-import { McpSettings } from "./mcp"
-import { ProvidersSettings } from "./providers"
-import { SignOffSettings } from "./sign-off-settings"
-import { EnvironmentsSettings } from "./environments"
-import { MeshSettings } from "./mesh"
-import { UsageSettings, useUsage } from "./usage-settings"
+import { useUsage } from "@/lib/usage"
 import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
-import { ModelPresetSettings } from "./model-preset-settings"
 
+const McpSettings = lazy(() => import("./mcp").then(m => ({ default: m.McpSettings })))
+const ProvidersSettings = lazy(() => import("./providers").then(m => ({ default: m.ProvidersSettings })))
+const SignOffSettings = lazy(() => import("./sign-off-settings").then(m => ({ default: m.SignOffSettings })))
+const EnvironmentsSettings = lazy(() => import("./environments").then(m => ({ default: m.EnvironmentsSettings })))
+const MeshSettings = lazy(() => import("./mesh").then(m => ({ default: m.MeshSettings })))
+const UsageSettings = lazy(() => import("./usage-settings").then(m => ({ default: m.UsageSettings })))
+const ModelPresetSettings = lazy(() => import("./model-preset-settings").then(m => ({ default: m.ModelPresetSettings })))
 const SecretsSettings = lazy(() => import("./secrets-settings").then(m => ({ default: m.SecretsSettings })))
 
 const THEMES: Theme[] = ["system", "light", "dark"]
@@ -289,7 +290,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     ),
     usage: usage !== "unsupported" && <UsageSettings state={usage} />,
     providers: <ProvidersSettings onError={setError} />,
-    secrets: <Suspense><SecretsSettings onError={setError} /></Suspense>,
+    secrets: <SecretsSettings onError={setError} />,
     mcp: <McpSettings onError={setError} />,
     gateway: <GatewayRestart />,
     mesh: <MeshSettings portal={portal} />,
@@ -374,7 +375,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
         <section className={cn("min-w-0 flex-1 overflow-y-auto md:block md:border-l", !page && "hidden")}>
           <div className="flex w-full max-w-xl flex-col gap-2 px-4 pb-6 md:px-6">
             <h3 className="hidden pt-1.5 pb-2 font-semibold text-[15px] md:block">{label}</h3>
-            {pages[shown] ?? pages.general}
+            <Suspense>{pages[shown] ?? pages.general}</Suspense>
             {(error || portal.error) && <p className="pt-4 text-destructive text-sm">{error || portal.error}</p>}
           </div>
         </section>

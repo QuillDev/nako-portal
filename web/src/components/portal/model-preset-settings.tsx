@@ -1,5 +1,5 @@
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
-import { nanoid } from "nanoid"
+import { id } from "@/lib/id"
 import { useEffect, useState } from "react"
 import { api } from "@/lib/api"
 import { EllipsisIcon, PlusIcon } from "lucide-react"
@@ -19,7 +19,7 @@ export function ModelPresetSettings({ value }: { value: ModelChoice }) {
   const edit = (preset?: ModelPreset) => {
     setError("")
     setEditing(preset ?? {
-      id: nanoid(), name: "", icon: "",
+      id: id(), name: "", icon: "",
       pick: { provider: value.provider, model: value.model, effort: value.effort ?? "", speed: value.speed ?? "" },
     })
   }
