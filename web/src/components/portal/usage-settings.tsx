@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { api } from "@/lib/api"
 import type { Provider } from "@/lib/providers"
 import type { Usage } from "@/lib/usage"
+import { UsageSkeleton } from "./usage-skeleton"
 import { cn } from "@/lib/utils"
 
 type Window = Usage["providers"][number]["accounts"][number]["windows"][number]
@@ -73,7 +74,7 @@ export function UsageSettings({ state, providers, session }: { state: Usage | nu
   }, [session])
   const active = selection?.session === session ? selection?.provider : undefined
   const now = Date.now()
-  if (!state) return <p className="text-muted-foreground text-sm">Checking…</p>
+  if (!state) return <UsageSkeleton />
   const sections = state.providers.flatMap(provider => {
     const identities = providers?.find(p => p.slug === provider.provider)?.accounts
     const [title, mark] = brands[provider.provider] ?? [provider.label, null]
