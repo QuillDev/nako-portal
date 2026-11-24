@@ -12,6 +12,9 @@ const picks = d.object({ presets: d.array(d.unknown()), favorites: d.array(d.unk
 let state: { presets: ModelPreset[]; favorites: ModelFavorite[] } = { presets: [], favorites: [] }
 const listeners = new Set<() => void>()
 let loading: Promise<void> | null = null
+let loadState: "pending" | "ready" | "failed" = "pending"
+
+export const usePicksLoadState = () => useSyncExternalStore(subscribe, () => loadState)
 
 function subscribe(update: () => void) {
   listeners.add(update)
@@ -27,6 +30,7 @@ function valid<T>(schema: Decoder<T>, entries: unknown[]) {
 
 function apply(raw: unknown) {
   const parsed = picks.parse(raw)
+  loadState = "ready"
   state = { presets: valid(preset, parsed.presets), favorites: valid(favorite, parsed.favorites) }
   listeners.forEach(update => update())
 }
@@ -56,7 +60,9 @@ async function adoptLegacy() {
 
 // Read the saved picks again, e.g. when the picker opens after another device changed them.
 export function refreshModelPicks() {
-  loading ??= api<unknown>("/api/model-picks").then(apply).then(adoptLegacy).catch(() => {}).finally(() => { loading = null })
+  loading ??= api<unknown>("/api/model-picks").then(apply).then(adoptLegacy).catch(() => {
+    if (loadState !== "ready") { loadState = "failed"; listeners.forEach(update => update()) }
+  }).finally(() => { loading = null })
   return loading
 }
 

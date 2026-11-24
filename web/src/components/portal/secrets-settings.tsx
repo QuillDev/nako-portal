@@ -1,5 +1,6 @@
 import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react"
 import { useState } from "react"
+import { SettingsLoading } from "./settings-loading"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
@@ -205,7 +206,8 @@ export function SecretsSettings({ onError }: { onError: (m: string) => void }) {
   const secrets = useSecrets()
   const [query, setQuery] = useState("")
   const [open, setOpen] = useState<Open>(null)
-  if (!secrets) return null
+  if (secrets === null) return <SettingsLoading page="secrets" />
+  if (!secrets) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
   const typed = words(query)
   const shown = typed ? secrets.filter(s => words(`${s.name} ${s.note}`).includes(typed)) : secrets
   const current = open?.kind === "secret" ? secrets.find(s => s.name === open.name) : undefined

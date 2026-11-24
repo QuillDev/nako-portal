@@ -2,6 +2,7 @@ import { Component, type ComponentType, type ReactNode, lazy, Suspense, useEffec
 import { Chat } from "@/components/portal/chat"
 import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
+import { SettingsFrame, SettingsPlaceholder } from "@/components/portal/settings-frame"
 import { Sidebar } from "@/components/portal/sidebar"
 import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -42,7 +43,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
  * React.lazy suspends on its first render even then, and React holds a suspended screen's reveal
  * for up to 300 ms, which made Settings take a third of a second to open.
  */
-function screen<P extends object>(load: () => Promise<ComponentType<P>>) {
+function screen<P extends object>(load: () => Promise<ComponentType<P>>, fallback?: (props: P) => ReactNode) {
   let loaded: ComponentType<P> | null = null
   const get = () => load().then(component => (loaded = component))
   const makeLazy = () => lazy(() => get().then(component => ({ default: component })))
@@ -52,7 +53,7 @@ function screen<P extends object>(load: () => Promise<ComponentType<P>>) {
     const Loaded = loaded
     if (Loaded) return <Loaded {...props} />
     return (
-      <Suspense fallback={<p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p>}>
+      <Suspense fallback={fallback?.(props) ?? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p>}>
         <Lazy {...props} />
       </Suspense>
     )
@@ -63,7 +64,8 @@ function screen<P extends object>(load: () => Promise<ComponentType<P>>) {
 const Elsewhere = screen(() => import("@/components/portal/elsewhere").then(m => m.Elsewhere))
 const Gate = screen(() => import("@/components/portal/gate").then(m => m.Gate))
 const DesktopLink = screen(() => import("@/components/portal/desktop-link").then(m => m.DesktopLink))
-const Settings = screen(() => import("@/components/portal/settings").then(m => m.Settings))
+const Settings = screen(() => import("@/components/portal/settings").then(m => m.Settings),
+  ({ page, portal }) => <SettingsFrame page={page} hasEnvironments={Boolean(portal.me?.environments)}><SettingsPlaceholder page={page} /></SettingsFrame>)
 
 // Settings is one tap away from every chat; fetch it once things are quiet so it opens at once.
 function useWarmSettings(signedIn: boolean) {

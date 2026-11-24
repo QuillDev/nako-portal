@@ -1,5 +1,6 @@
 import { LoaderCircleIcon, MessageSquareIcon, RotateCwIcon, SquareIcon } from "lucide-react"
 import { useState } from "react"
+import { SettingsLoading } from "./settings-loading"
 import { Button } from "@/components/ui/button"
 import { type Environment, loadEnvironments, STATUS_DOT, stopEnvironment, useEnvironments } from "@/lib/environments"
 import { gigabytes } from "@/lib/machine-load"
@@ -87,6 +88,7 @@ export function EnvironmentsSettings() {
   const { data, error, stopping, stopErrors } = useEnvironments(true, 10_000)
   const [busy, setBusy] = useState(false)
   const onStop = data?.can_stop ? (env: Environment) => void stopEnvironment(env.name) : undefined
+  if (!data && !error) return <SettingsLoading page="environments" />
   const live = data?.environments.filter(env => env.status !== "stopped") ?? []
   const stopped = data?.environments.filter(env => env.status === "stopped") ?? []
   return (

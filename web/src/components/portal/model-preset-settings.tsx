@@ -1,3 +1,4 @@
+import { SettingsLoading } from "./settings-loading"
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { id } from "@/lib/id"
 import { useEffect, useState } from "react"
@@ -7,12 +8,13 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { type ModelPreset, presetDetails, presetMatches, putModelPreset, removeModelPreset, useModelPresets } from "@/lib/model-presets"
+import { type ModelPreset, presetDetails, presetMatches, putModelPreset, removeModelPreset, useModelPresets, usePicksLoadState } from "@/lib/model-presets"
 import { type ModelChoice, PresetIcon } from "./model-picker"
 import { PresetEmoji } from "./preset-emoji"
 
 export function ModelPresetSettings({ value }: { value: ModelChoice }) {
   const presets = useModelPresets()
+  const loadState = usePicksLoadState()
   const [editing, setEditing] = useState<ModelPreset | null>(null)
   const [error, setError] = useState("")
   const active = presets.find(item => presetMatches(item, value))
@@ -28,7 +30,9 @@ export function ModelPresetSettings({ value }: { value: ModelChoice }) {
       <h2 className="font-medium">Model presets</h2>
       <Button type="button" size="sm" variant="outline" onClick={() => edit()}><PlusIcon />Add preset</Button>
     </div>
-    {!presets.length && <p className="py-1 text-muted-foreground">No presets yet.</p>}
+    {loadState === "pending" && <SettingsLoading page="presets" rows={1} />}
+    {loadState === "failed" && <p className="text-muted-foreground">Could not load presets.</p>}
+    {loadState === "ready" && !presets.length && <p className="py-1 text-muted-foreground">No presets yet.</p>}
     {presets.map(preset => <div key={preset.id} className="flex min-h-14 items-center gap-2 border-b last:border-0">
       <PresetIcon icon={preset.icon} />
       <div className="min-w-0 flex-1"><div className="truncate">{preset.name}</div><div className="truncate text-xs text-muted-foreground">{presetDetails(preset)}</div></div>

@@ -289,7 +289,7 @@ function PluginSourceRow({ plugin, onError }: { plugin: PluginSource; onError: (
 
 /** Settings > Mesh: the hub with its machines around it, and the way to add one. */
 export function MeshSettings({ portal }: { portal: Portal }) {
-  const mesh = useMesh(portal.machinesSeen)
+  const mesh = useMesh(portal.machinesSeen) || null
   const [selected, setSelected] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState("")

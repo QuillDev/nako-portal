@@ -2,7 +2,7 @@
 // gateway reads and writes them; the portal only shows the list and takes a key. A saved key
 // never comes back, so this file has no way to read one.
 import { useSyncExternalStore } from "react"
-import { api, ApiError } from "@/lib/api"
+import { api } from "@/lib/api"
 
 export type Provider = {
   slug: string
@@ -30,7 +30,7 @@ export type SignInStatus = { status: "pending" | "approved" | "denied" | "expire
 
 export const providerPath = (slug: string) => `/api/providers/${encodeURIComponent(slug)}`
 
-let list: Provider[] | null = null
+let list: Provider[] | false | null = null
 let loading: Promise<void> | null = null
 const listeners = new Set<() => void>()
 
@@ -40,9 +40,9 @@ export function reloadProviders() {
       list = rows
       for (const l of listeners) l()
     },
-    e => {
+    () => {
       // An install that can't list providers (or a gateway that went away): no page, no error.
-      if (e instanceof ApiError) list = list ?? []
+      list = list || false
       for (const l of listeners) l()
     },
   )

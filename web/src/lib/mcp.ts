@@ -56,7 +56,7 @@ export function reloadMcp() {
     },
     e => {
       // A Hermes that can't run MCP servers (or a gateway that went away): no page.
-      if (e instanceof ApiError) list = list || false
+      list = e instanceof ApiError && e.status === 404 ? false : list || false
       for (const l of listeners) l()
     },
   )
