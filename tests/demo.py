@@ -43,17 +43,26 @@ class DemoGateway(FakeGateway):
         resets = (now + timedelta(days=4)).isoformat()
         session = (now + timedelta(hours=3)).isoformat()
         return [
-            {"provider": "claude", "label": "Claude", "accounts": [
-                {"label": "work", "windows": [
-                    {"label": "Current session", "used_percent": 38.0, "resets_at": session},
+            {"provider": "claude-subscription-directsdk-experimental", "label": "Claude Subscription DirectSDK (Experimental)", "accounts": [
+                {"label": "primary", "windows": [
+                    {"label": "Current session", "used_percent": 58.0, "resets_at": session},
                     {"label": "Current week", "used_percent": 100.0, "resets_at": (now + timedelta(hours=20)).isoformat()},
                 ], "note": None},
-                {"label": "personal", "windows": [
+                {"label": "sam@example.test", "windows": [
                     {"label": "Current session", "used_percent": 4.0, "resets_at": None},
                     {"label": "Current week", "used_percent": 34.0, "resets_at": resets},
                 ], "note": None},
             ]},
-            {"provider": "codex", "label": "OpenAI Codex", "accounts": [
+            {"provider": "openrouter", "label": "OpenRouter", "accounts": [
+                {"label": "", "windows": [{"label": "API key quota", "used_percent": 2.0, "resets_at": None}], "note": None},
+            ]},
+            {"provider": "antigravity-oauth", "label": "Google Antigravity (OAuth)", "accounts": [
+                {"label": "", "windows": [
+                    {"label": "Gemini 7d", "used_percent": 12.0, "resets_at": resets},
+                    {"label": "Gemini 5h", "used_percent": 8.0, "resets_at": session},
+                ], "note": None},
+            ]},
+            {"provider": "openai-codex", "label": "OpenAI Codex", "accounts": [
                 {"label": "", "windows": [{"label": "Weekly", "used_percent": 6.0, "resets_at": resets}], "note": None},
             ]},
         ]
@@ -120,6 +129,7 @@ async def main(port):
     hermes.pause = float(os.environ.get("DEMO_PAUSE", "1"))
     hermes.reply = "Here's the plan:\n\n1. **Rebase** onto `main`\n2. Re-run CI\n\n```bash\ngit rebase origin/main\n```"
     hermes.add_session("20261024_090000_aaaaaa", "Fix the flaky CI shard", messages=[("user", "why is shard 3 failing?")])
+    hermes.sessions["20261024_090000_aaaaaa"]["model_options"] = {"provider": "openai-codex", "model": "codex"}
     hermes._row("20261024_090000_aaaaaa", "tool", "", name="terminal", context="gh run view 123 --log-failed", tool_call_id="h1")
     hermes._row("20261024_090000_aaaaaa", "user", "check shard 1 too while you're in there", display_kind="steer")
     hermes._row("20261024_090000_aaaaaa", "tool", "", name="search_files", context="seed.ts", tool_call_id="h2")
@@ -236,13 +246,13 @@ async def main(port):
     # MCP servers as a profile might have them: one failing sign-in, one switched off, one a plugin brings.
     # Settings > Providers: two subscriptions with several accounts each, and one API key.
     hermes.provider_list = [
-        {"slug": "claude-sub", "label": "Claude Subscription", "description": "", "kind": "cli", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
+        {"slug": "claude-subscription-directsdk-experimental", "label": "Claude Subscription", "description": "", "kind": "cli", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
         {"slug": "openai-codex", "label": "ChatGPT or Codex Subscription", "description": "", "kind": "signin", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
         {"slug": "openrouter", "label": "OpenRouter", "description": "", "kind": "key", "command": "", "env_var": "OPENROUTER_API_KEY", "env_vars": ["OPENROUTER_API_KEY"], "signup_url": "https://openrouter.ai/keys"},
     ]
     hermes.provider_keys = {"openrouter": "demo"}
     hermes.account_logins = {
-        "claude-sub": {"mode": "paste", "accounts": [
+        "claude-subscription-directsdk-experimental": {"mode": "paste", "accounts": [
             {"id": "primary", "label": "alex@example.test", "email": "alex@example.test", "plan": "Claude Max", "signed_in": True, "removable": True},
             {"id": "sam@example.test", "label": "sam@example.test", "email": "sam@example.test", "plan": "Claude Pro", "signed_in": True, "removable": True},
             {"id": "secondary", "label": "secondary", "email": "", "plan": "", "signed_in": False, "removable": True}]},

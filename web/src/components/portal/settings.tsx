@@ -288,7 +288,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
         <SignOffSettings onError={setError} />
       </>
     ),
-    usage: usage !== "unsupported" && <UsageSettings state={usage} />,
+    usage: usage !== "unsupported" && <UsageSettings state={usage} providers={providers} session={portal.route.view === "settings" ? portal.route.fromChat : undefined} />,
     providers: <ProvidersSettings onError={setError} />,
     secrets: <SecretsSettings onError={setError} />,
     mcp: <McpSettings onError={setError} />,

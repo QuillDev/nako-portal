@@ -14,7 +14,7 @@ import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor,
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null } | { view: "chat"; session: string } | { view: "outside" } | { view: "desktop"; query: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null; fromChat?: string } | { view: "chat"; session: string } | { view: "outside" } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -306,7 +306,12 @@ export function usePortal() {
   useEffect(() => {
     whenSignedOut(() => setMe(m => ({ ...(m || { has_passkeys: true, connected: true }), signed_in: false })))
     boot().catch(e => setError((e as Error).message))
-    const onHash = () => setRoute(parseRoute(location.hash))
+    const onHash = () => {
+      const next = parseRoute(location.hash)
+      setRoute(previous => next.view !== "settings" ? next : {
+        ...next, fromChat: previous.view === "chat" ? previous.session : previous.view === "settings" ? previous.fromChat : undefined,
+      })
+    }
     const onVisible = () => {
       if (document.visibilityState !== "visible" || !meRef.current?.signed_in) return
       connect()
