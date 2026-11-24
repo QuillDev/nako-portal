@@ -1,1 +1,0 @@
-import{t as e}from"./jsx-runtime-Crxfgv2m.js";import{u as t}from"./api-D_ZJbAUP.js";var n=e();function r({className:e,...r}){return(0,n.jsx)(`div`,{className:t(`animate-pulse motion-reduce:animate-none rounded-md bg-accent`,e),"data-slot":`skeleton`,...r})}export{r as t};

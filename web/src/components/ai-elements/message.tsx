@@ -55,7 +55,7 @@ export const MessageResponse = memo(
       return <div className={cn(classes, "whitespace-pre-wrap")}>{props.children}</div>;
     }
     return (
-      <markdown.Streamdown className={classes} {...props} components={components} />
+      <markdown.Streamdown className={classes} plugins={markdown.plugins} {...props} components={components} />
     );
   }
 );

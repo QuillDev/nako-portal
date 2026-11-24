@@ -1,9 +1,13 @@
 import { useEffect, useSyncExternalStore } from "react"
 import { retryableLoader } from "./retryable-loader"
 
-type Markdown = typeof import("streamdown")
+type Markdown = typeof import("streamdown") & { plugins: import("streamdown").PluginConfig }
 
-const loader = retryableLoader<Markdown>(() => import("streamdown"))
+// Code highlighting rides in the same chunk; Shiki fetches each language's grammar on first use.
+const loader = retryableLoader<Markdown>(async () => {
+  const [markdown, { code }] = await Promise.all([import("streamdown"), import("@streamdown/code")])
+  return { ...markdown, plugins: { code } }
+})
 
 /** Start only after sign-in (or when a Markdown body is actually mounted). */
 export const loadMarkdown = loader.load

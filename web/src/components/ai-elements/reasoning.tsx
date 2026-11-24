@@ -173,7 +173,7 @@ export const ReasoningContent = memo(
       {...props}
     >
       {/* Portal: upstream also spread the collapsible's props onto Streamdown, which loads on its own. */}
-      {markdown ? <markdown.Streamdown>{children}</markdown.Streamdown> : <div className="whitespace-pre-wrap">{children}</div>}
+      {markdown ? <markdown.Streamdown plugins={markdown.plugins}>{children}</markdown.Streamdown> : <div className="whitespace-pre-wrap">{children}</div>}
     </CollapsibleContent>
     );
   }
