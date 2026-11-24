@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-igYmFs5-.js";import{u as t}from"./api-B_ovVdUP.js";var n=e();function r({className:e,...r}){return(0,n.jsx)(`div`,{className:t(`animate-pulse motion-reduce:animate-none rounded-md bg-accent`,e),"data-slot":`skeleton`,...r})}export{r as t};
