@@ -550,7 +550,8 @@ async def test_a_message_steered_into_a_running_turn_says_so(world):
 
 async def test_a_reply_followed_by_a_background_notice_and_its_answer_still_reads_as_a_reply(world):
     # The notice is Hermes's own row and never reaches the app, so only the hub can tell that the
-    # long report ended its turn rather than being a message along the way.
+    # long report ended its turn rather than being a message along the way. A quiet answer to a
+    # later notice was never sent, so it doesn't show either.
     sid = world.hermes.add_session("20261024_090910_cccccc", "Ship", messages=[("user", "finish up")])
     world.hermes._row(sid, "assistant", "")
     world.hermes._row(sid, "tool", "{}", name="terminal")
@@ -559,6 +560,8 @@ async def test_a_reply_followed_by_a_background_notice_and_its_answer_still_read
     world.hermes._row(sid, "assistant", "done: all checks pass, want it out of draft?")
     world.hermes._row(sid, "user", "[IMPORTANT: Background process proc_1 completed]", display_kind="internal_notification")
     world.hermes._row(sid, "assistant", "that red run was the old head")
+    world.hermes._row(sid, "user", "[Background process proc_2 still running]", display_kind="internal_notification")
+    world.hermes._row(sid, "assistant", "[SILENT]")
     await world.sign_up()
 
     opened = await (await world.http.get(world.url(f"/api/sessions/{sid}"))).json()

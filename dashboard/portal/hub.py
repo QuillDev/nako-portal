@@ -51,6 +51,8 @@ log = logging.getLogger("hermes.portal")
 
 # Kinds of row a person wrote or should read; everything else is host traffic.
 PUBLISHED_KINDS = {None, "steer", "failed_turn"}
+# What Nako answers to her own notice when she has nothing to say; the gateway sends nothing.
+SILENCE_MARKERS = {"[SILENT]", "SILENT", "NO_REPLY", "NO REPLY"}
 ANSWERABLE = {"approval", "clarify", "secret"}
 WORKING = "working"
 NEEDS_YOU = "needs you"
@@ -347,7 +349,7 @@ class Hub:
             messages = [{k: v for k, v in m.items() if k != "result"} if "result" in m else m for m in messages]
         if (session in self.inboxes) if self.inboxes is not None else (await asyncio.to_thread(self.backend.chat_of, session)) in CHANNELS:
             messages = _mark_posts(messages)
-        messages = _mark_turn_ends(messages)
+        messages = _mark_turn_ends(_without_quiet_replies(messages))
         # Hermes names a chat after its first exchange; a list fetched before that still says untitled.
         renamed = session in self.titles and self.titles[session] != title
         self.titles[session] = title
@@ -661,7 +663,7 @@ class Hub:
     def _last_reply(self, session):
         """The turn's reply as saved, not as last streamed: the final send can land after the turn ends."""
         thread = self.backend.thread(session) or {}
-        last = (thread.get("messages") or [])[-1:]
+        last = _without_quiet_replies(thread.get("messages") or [])[-1:]
         return last[0].get("text") or "" if last and last[0].get("role") == "assistant" else ""
 
     async def tool(self, session, call_id, name, context, state):
@@ -759,6 +761,20 @@ def page(messages, *, before=None, since=None, limit=PAGE_MESSAGES):
 def for_app(message):
     """A transcript row with only what the app draws. Tool calls show no time."""
     return {key: message[key] for key in SHOWN_FIELDS if key in message and not (key == "timestamp" and message.get("role") == "tool")}
+
+
+def _without_quiet_replies(messages):
+    """Drop a bare silence marker Nako gave to her own notice (a heartbeat, a finished job): the
+    gateway sent nothing, so the saved row isn't a reply anyone should see."""
+    out, own_notice = [], False
+    for message in messages:
+        role = message.get("role")
+        if role == "user":
+            own_notice = message.get("display_kind") not in PUBLISHED_KINDS
+        elif role == "assistant" and own_notice and " ".join((message.get("text") or "").upper().split()) in SILENCE_MARKERS:
+            continue
+        out.append(message)
+    return out
 
 
 def _is_shown(message):
