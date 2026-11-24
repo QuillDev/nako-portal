@@ -3,6 +3,17 @@ import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig, type HtmlTagDescriptor, type Plugin } from "vite"
 
+// Keep the first painted typeface when a font arrives late; swapping it moves
+// already-visible text and can rewrap a centered dialog. Fast loads keep the brand fonts.
+const stableFonts: Plugin = {
+  name: "stable-font-display",
+  enforce: "pre",
+  transform(css, id) {
+    if (/\/@fontsource(?:-variable)?\/[^/]+\/[^/]+\.css$/.test(id))
+      return css.replace(/font-display: swap;/g, "font-display: optional;")
+  },
+}
+
 // Preload the font used on every route. Markdown warms after sign-in.
 function preloadFirstPaint(): Plugin {
   return {
@@ -40,7 +51,7 @@ function formatEmojiData(): Plugin {
 
 // The build lands in dashboard/web, which the portal serves as-is.
 export default defineConfig({
-  plugins: [react(), tailwindcss(), preloadFirstPaint(), formatEmojiData()],
+  plugins: [stableFonts, react(), tailwindcss(), preloadFirstPaint(), formatEmojiData()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
     outDir: fileURLToPath(new URL("../dashboard/web", import.meta.url)),

@@ -2,6 +2,7 @@
 // archived chat brings it back to the list and opens it. It grows out of the Find row when that's on
 // screen (input over the row, list unfolding below), else it sits near the top of the window.
 import { ArchiveIcon, BellIcon, GitPullRequestIcon, MessageSquareIcon } from "lucide-react";
+import { LoadingRows } from "./screen-loading";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { type CSSProperties, memo, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -59,7 +60,7 @@ export const ChatSearch = memo(function ChatSearch({
 }: Pick<Portal, "sessions" | "unarchive">) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [archived, setArchived] = useState<Archived[]>([]);
+  const [archived, setArchived] = useState<Archived[] | null>(null);
   const [at, setAt] = useState<CSSProperties | null>(null);
   const [results, setResults] = useState<MessageMatch[]>([]);
   const [searchState, setSearchState] = useState("");
@@ -93,6 +94,7 @@ export const ChatSearch = memo(function ChatSearch({
   useEffect(() => {
     if (!open) return setQuery("");
     let live = true;
+    setArchived(null);
     api<Archived[]>("/api/sessions?archived=only")
       .then((rows) => live && setArchived(rows))
       .catch(() => live && setArchived([]));
@@ -128,7 +130,7 @@ export const ChatSearch = memo(function ChatSearch({
     // A chat already in the list isn't shown as archived too (an older server returns every chat here).
     () => {
       const listed = new Set(sessions.map((s) => s.id));
-      return archived.filter((s) => !listed.has(s.id) && matches(s.title, q));
+      return (archived ?? []).filter((s) => !listed.has(s.id) && matches(s.title, q));
     },
     [archived, sessions, q],
   );
@@ -166,8 +168,8 @@ export const ChatSearch = memo(function ChatSearch({
             placeholder="Find"
             value={query}
           />
-          <CommandList className="max-h-[min(20rem,55vh)]">
-            <CommandEmpty>{searchState || "no chats match"}</CommandEmpty>
+          <CommandList className="h-[min(20rem,55vh)]">
+            {searchState === "Searching messages…" || archived === null ? !chats.length && !shelved.length && <LoadingRows label="Searching chats…" count={3} /> : <CommandEmpty>{searchState || "no chats match"}</CommandEmpty>}
             {chats.length > 0 && (
               <CommandGroup heading="chats">
                 {chats.map((s) => (

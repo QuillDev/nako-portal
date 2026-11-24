@@ -2,6 +2,7 @@ import { BrainIcon, CheckIcon, ChevronDownIcon, GaugeIcon, RabbitIcon, RocketIco
 import { Popover } from "radix-ui"
 import { useEffect, useRef, useState } from "react"
 import { d, type Infer } from "@/lib/decode"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/ui/searchable-dropdown"
@@ -19,14 +20,18 @@ export type ModelChoice = Infer<typeof modelChoice>
 export type ModelSelection = { provider?: string; model?: string; effort?: string; speed?: string; reset?: true }
 type Pick = ModelSelection
 
+function ModelPlaceholder() {
+  return <Skeleton aria-label="Loading model" role="status" className="h-8 w-24" />
+}
+
 export function NewChatModel({ selection, onPick }: { selection: ModelSelection; onPick: (pick: ModelSelection) => void }) {
-  const [defaults, setDefaults] = useState<ModelChoice | null>(null)
+  const [defaults, setDefaults] = useState<ModelChoice | null | false>(null)
   useEffect(() => {
     let active = true
-    void api<unknown>("/api/model").then(raw => { if (active) setDefaults(modelChoice.parse(raw)) }).catch(() => {})
+    void api<unknown>("/api/model").then(raw => { if (active) setDefaults(modelChoice.parse(raw)) }).catch(() => { if (active) setDefaults(false) })
     return () => { active = false }
   }, [])
-  if (!defaults) return null
+  if (!defaults) return defaults === null ? <ModelPlaceholder /> : null
   const otherRoute = selection.model !== undefined && (selection.model !== defaults.model || selection.provider !== defaults.provider)
   return <ModelPicker label="this chat" session chips canSavePreset={!otherRoute} value={{ ...defaults, ...selection, overridden: Object.keys(selection).length > 0 }} onPick={async pick => {
     if (pick.reset) onPick({})
@@ -192,18 +197,18 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
 }
 
 export function SessionModel({ session, running }: { session: string; running: boolean }) {
-  const [value, setValue] = useState<ModelChoice | null>(null)
+  const [value, setValue] = useState<ModelChoice | null | false>(null)
   const path = `/api/sessions/${session}/model`
   useEffect(() => {
     let active = true
     const read = () => api<unknown>(path).then(raw => { if (active) setValue(modelChoice.parse(raw)) }).catch(e => {
-      if (active && e instanceof ApiError && e.status === 404) setValue(null)
+      if (active) setValue(previous => e instanceof ApiError && e.status === 404 ? false : previous ?? false)
     })
     void read()
     const timer = window.setInterval(read, 10000)
     return () => { active = false; clearInterval(timer) }
   }, [path, running])
-  if (!value) return null
+  if (!value) return value === null ? <ModelPlaceholder /> : null
   return <ModelPicker label="this chat" session chips disabled={running} value={value} onPick={async body => {
     let raw = await api<unknown>(path, { method: "POST", body })
     const warning = d.object({ confirmation: d.string(), message: d.string() }).safeParse(raw)

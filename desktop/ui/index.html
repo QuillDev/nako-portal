@@ -13,9 +13,10 @@
       <button type="button" data-window="toggle_maximize" aria-label="Maximize" title="Maximize"><svg viewBox="0 0 10 10"><path d="M.5.5h9v9h-9z" /></svg></button>
       <button type="button" data-window="close" aria-label="Close" title="Close" class="close"><svg viewBox="0 0 10 10"><path d="M.5.5l9 9M9.5.5l-9 9" /></svg></button>
     </header>
-    <main hidden>
+    <main>
       <img alt="" src="nako.png" />
       <h1>Nako</h1>
+      <div id="starting" role="status" aria-label="Connecting to portal"><span></span><i></i><i></i></div>
       <form id="ask" hidden>
         <p id="message">Portal address</p>
         <input id="address" autocomplete="url" placeholder="portal.example.com" spellcheck="false" />

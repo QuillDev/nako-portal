@@ -42,6 +42,7 @@ export function ImageViewer({
   const image = useRef<HTMLImageElement>(null)
   const close = useRef<HTMLButtonElement>(null)
   const [view, setView] = useState<View>(FIT)
+  const [media, setMedia] = useState<{ src: string; ok: boolean } | null>(null)
   const [smooth, setSmooth] = useState(false)
   // Horizontal drag past the image's edge: shown as a damped offset, and a long enough one changes image.
   const [pull, setPull] = useState(0)
@@ -179,13 +180,17 @@ export function ImageViewer({
       onPointerUp={onPointerUp}
       ref={box}
     >
+      {media?.src !== src && <span role="status" className="absolute h-1/3 w-1/2 animate-pulse rounded-md bg-white/10 motion-reduce:animate-none"><span className="sr-only">Loading image…</span></span>}
+      {media?.src === src && !media.ok && <p role="alert" className="absolute text-sm text-white">Image unavailable</p>}
       <img
         alt={name}
+        onLoad={() => setMedia({ src, ok: true })}
+        onError={() => setMedia({ src, ok: false })}
         className={`max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] rounded-md object-contain will-change-transform ${view.scale > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in"} ${smooth ? "transition-transform duration-200 ease-out" : ""}`}
         draggable={false}
         ref={image}
         src={src}
-        style={{ transform: `translate(${view.x + pull * 0.6}px, ${view.y}px) scale(${view.scale})` }}
+        style={{ visibility: media?.src === src && media.ok ? "visible" : "hidden", transform: `translate(${view.x + pull * 0.6}px, ${view.y}px) scale(${view.scale})` }}
       />
       {onPrev && (
         <button aria-label="Previous image" className={`${arrow} left-3`} onClick={onPrev} type="button">

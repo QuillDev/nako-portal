@@ -7,6 +7,7 @@ import { inBubble } from "@/lib/bubble";
 import type { GroupColor, SessionRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useDrawer } from "./drawer";
+import { LoadingRows } from "./screen-loading";
 import { LoadWarning } from "./load-warning";
 import { useGroupPicker, useGroupRename } from "./groups";
 import { useRenameDialog } from "./session-actions";
@@ -14,7 +15,7 @@ import { CHAT_DRAG, canDrag, type ChatDrag, sections, useFolded } from "./sideba
 import { ChannelRow, ChatRow, DOT, GroupBlock } from "./sidebar-rows";
 import { AppVersion, ConnectionDot, HermesVersion } from "./sidebar-footer";
 
-type SidebarProps = Pick<Portal, "sessions" | "pin" | "archive" | "prefetch" | "setGroup" | "createGroup" | "updateGroup" | "deleteGroup" | "setError" | "rename" | "route" | "outside" | "connected" | "linked" | "hermes" | "me"> & {
+type SidebarProps = Pick<Portal, "sessions" | "sessionsState" | "pin" | "archive" | "prefetch" | "setGroup" | "createGroup" | "updateGroup" | "deleteGroup" | "setError" | "rename" | "route" | "outside" | "connected" | "linked" | "hermes" | "me"> & {
   currentSession?: string;
   currentTitle?: string;
   currentSource?: string;
@@ -155,7 +156,7 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
           open={open}
           row={inbox}
         />
-        {reviews && (
+        {(reviews || portal.sessionsState === "loading") ? (
           <ChannelRow
             fallback="Reviews"
             go={go}
@@ -163,9 +164,9 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
             open={open}
             row={reviews}
           />
-        )}
+        ) : <div aria-hidden="true" className="h-9" />}
         {/* Sessions from Slack, cron and other ways in; only when there are some. */}
-        {portal.outside.sources.length > 0 && (
+        {portal.outside.sources.length > 0 ? (
           <button
             className={cn(
               "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
@@ -180,8 +181,10 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
               <span className={cn("size-2 shrink-0 rounded-full", DOT.working)} title="working" />
             )}
           </button>
-        )}
-        {listed.length === 0 && (
+        ) : <div aria-hidden="true" className="h-9" />}
+        {portal.sessionsState === "loading" && <LoadingRows label="Loading chats…" />}
+        {portal.sessionsState === "failed" && <p role="alert" className="px-2 py-1 text-muted-foreground text-xs">Could not load chats.</p>}
+        {portal.sessionsState === "ready" && listed.length === 0 && (
           <p className="px-2 py-1 text-muted-foreground text-xs">
             no chats yet
           </p>

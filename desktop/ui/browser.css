@@ -35,7 +35,7 @@ svg.caption { width: 10px; height: 10px; stroke-width: 1; stroke-linecap: butt; 
 #address::placeholder { color: var(--muted); }
 #window { display: flex; gap: 2px; margin-left: 4px; }
 /* One chat's tabs, under the toolbar. */
-header:has(+ #tabs:not([hidden])) { border-bottom: 0; }
+header:has(+ #tabs:not([hidden])) { border-bottom-color: transparent; }
 #tabs { height: 32px; display: flex; align-items: center; gap: 2px; padding: 0 6px 4px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; }
 .tab { flex: 0 1 180px; min-width: 72px; height: 26px; display: flex; align-items: center; border-radius: 8px; color: var(--muted); }
 .tab:hover { background: var(--hover); }

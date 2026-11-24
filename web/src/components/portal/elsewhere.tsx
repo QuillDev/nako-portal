@@ -8,6 +8,7 @@ import { age, timeOf } from "@/lib/times"
 import type { OutsideRow } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { useDrawer } from "./drawer"
+import { LoadingRows } from "./screen-loading"
 import { PageHeader } from "./header"
 import { appendPage, isCurrentRequest } from "@/lib/portal-state"
 
@@ -119,13 +120,13 @@ export function Elsewhere({ portal }: { portal: Portal }) {
       <PageHeader title="Elsewhere" />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl px-2 pb-6 md:px-4">
-          {sources.length > 1 && (
-            <div className="flex flex-wrap gap-1.5 px-2 pt-1 pb-2">
+          <div className="min-h-10">{sources.length > 1 && (
+            <div className="flex overflow-x-auto gap-1.5 px-2 pt-1 pb-2">
               {[null, ...sources].map(s => (
                 <button
                   aria-pressed={shown === s}
                   className={cn(
-                    "rounded-full border px-2.5 py-1 text-muted-foreground text-xs hover:text-foreground",
+                    "shrink-0 rounded-full border px-2.5 py-1 text-muted-foreground text-xs hover:text-foreground",
                     shown === s && "border-input bg-accent text-foreground",
                   )}
                   key={s ?? ""}
@@ -136,7 +137,8 @@ export function Elsewhere({ portal }: { portal: Portal }) {
                 </button>
               ))}
             </div>
-          )}
+          )}</div>
+          {pending && !rows && <div aria-hidden="true" className="h-8" />}
           {rows?.length === 0 && <p className="px-2 py-1 text-muted-foreground text-xs">nothing here yet</p>}
           {rows?.map(row => {
             const label = age(row.last_active)
@@ -160,7 +162,7 @@ export function Elsewhere({ portal }: { portal: Portal }) {
               </div>
             )
           })}
-          {pending && <p className="px-2 py-2 text-muted-foreground text-sm" role="status">Loading…</p>}
+          {pending && (!rows || more) && <LoadingRows label="Loading sessions…" columns count={rows ? 2 : 6} />}
           {error && <div className="flex items-center gap-2 px-2 py-2 text-sm" role="alert">
             <span>{error.message}</span>
             <button className="underline" type="button" onClick={() => error.page ? void loadMore() : setRetry(n => n + 1)}>Retry</button>

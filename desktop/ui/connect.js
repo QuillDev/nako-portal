@@ -44,7 +44,8 @@ if (window.nakoWindow?.controls) {
 }
 
 const change = new URLSearchParams(location.search).has("change")
-const state = await invoke("start", { change })
+const state = await invoke("start", { change }).catch(error => ({ kind: "ask", error: String(error) }))
+$("starting").hidden = true
 document.querySelector("main").hidden = state.kind === "open"
-if (state.kind === "ask") ask(state.origin)
+if (state.kind === "ask") ask(state.origin, state.error)
 if (state.kind === "unreachable") unreachable(state.origin, state.error)

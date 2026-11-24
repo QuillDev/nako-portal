@@ -1,5 +1,6 @@
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import { LoadingRows } from "./screen-loading"
 import { SettingsLoading } from "./settings-loading"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -203,7 +204,7 @@ function ServerPanel({ server, onClose, onError }: { server: McpServer; onClose:
         <p className="px-1 text-muted-foreground text-sm">Installing…</p>
       ) : !server.url && !server.command ? (
         <p className="px-1 text-destructive text-sm">{server.error || "The install failed"}</p>
-      ) : checking && !test ? (
+      ) : !test ? (
         <p className="px-1 text-muted-foreground text-xs">Connecting…</p>
       ) : test?.ok ? (
         <p className="flex items-center gap-1.5 px-1 text-muted-foreground text-xs">
@@ -214,10 +215,10 @@ function ServerPanel({ server, onClose, onError }: { server: McpServer; onClose:
         <p className="px-1 text-destructive text-xs">{test.error}</p>
       ) : null}
       {server.codex && <p className="px-1 text-muted-foreground text-xs">{server.codex}</p>}
-      {test?.ok && test.tools.length > 0 && (
-        <div className="-mx-4 max-h-[44vh] overflow-y-auto px-4">
+      {!server.installing && (server.url || server.command) && (
+        <div className="-mx-4 h-[min(12rem,34dvh)] overflow-y-auto px-4">
           <p className="px-1 pb-1 text-muted-foreground text-xs">Tools</p>
-          {test.tools.map(t => (
+          {!test ? <LoadingRows label="Loading tools…" detail count={3} /> : test.ok && test.tools.length === 0 ? <p className="px-1 text-muted-foreground text-xs">No tools reported.</p> : test.tools.map(t => (
             <button
               className="flex w-full items-start gap-2.5 rounded-md px-1 py-1.5 text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:hover:bg-transparent"
               disabled={!own}
@@ -369,8 +370,8 @@ function CatalogList({ onPick, onError }: { onPick: (entry: McpCatalogEntry) => 
         <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
         <input aria-label="Search catalog" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" onChange={e => setQuery(e.target.value)} placeholder="Search catalog" spellCheck={false} value={query} />
       </label>
-      <div className="-mx-4 max-h-[52vh] overflow-y-auto px-4">
-        {entries === null && <p className="py-3 text-muted-foreground text-sm">Loading…</p>}
+      <div className="-mx-4 h-[min(22rem,45dvh)] overflow-y-auto px-4">
+        {entries === null && <LoadingRows label="Loading catalog…" detail count={6} />}
         {shown.map(e => (
           <button
             className="flex w-full items-center gap-3 rounded-md px-1 py-2 text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:hover:bg-transparent"
