@@ -4,6 +4,7 @@ import { memo, useMemo } from "react";
 import type { Streamdown } from "streamdown";
 import { useMarkdown } from "@/lib/markdown";
 import { MarkdownTable } from "@/components/portal/table-menu";
+import { MarkdownCode } from "@/components/portal/code-fullscreen";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: "system" | "user" | "assistant";
@@ -46,7 +47,7 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => {
     const markdown = useMarkdown();
-    const components = useMemo(() => ({ table: MarkdownTable, ...props.components }), [props.components]);
+    const components = useMemo(() => ({ table: MarkdownTable, code: MarkdownCode, ...props.components }), [props.components]);
     const classes = cn(
       "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
       className
