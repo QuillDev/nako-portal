@@ -1,11 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react"
-import { BellIcon, BoxesIcon, ChartLineIcon, ChevronRightIcon, KeyRoundIcon, type LucideIcon, BlocksIcon, NetworkIcon, PlugIcon, SlidersHorizontalIcon, SparklesIcon, UserIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skeleton } from "@/components/ui/skeleton"
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { Switch } from "@/components/ui/switch"
 import { GatewayRestart } from "./gateway-restart"
-import { navigate, type Portal } from "@/hooks/use-portal"
+import { type Portal } from "@/hooks/use-portal"
 import { api, ApiError } from "@/lib/api"
 import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
 import { cancelled, register } from "@/lib/passkeys"
@@ -17,10 +17,9 @@ import { useMesh } from "@/lib/mesh"
 import { useMcp } from "@/lib/mcp"
 import { useProviders } from "@/lib/providers"
 import { useSecrets } from "@/lib/secrets"
-import { cn } from "@/lib/utils"
 import type { Passkey } from "@/lib/types"
-import { PageHeader } from "./header"
-import { UsageSkeleton } from "./usage-skeleton"
+import { SettingsFrame, SettingsPlaceholder } from "./settings-frame"
+import { SettingsLoading } from "./settings-loading"
 import { useUsage } from "@/lib/usage"
 import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
 
@@ -71,26 +70,36 @@ type Profiles = { profile: string; profiles: string[] }
 // profiles swaps every chat for that profile's; the model belongs to the profile shown.
 function ProfileRows({ onError }: { onError: (message: string) => void }) {
   const [state, setState] = useState<Profiles | null>(null)
-  const [model, setModel] = useState<ModelChoice | null>(null)
+  const [model, setModel] = useState<ModelChoice | null | false>(null)
+  const [profileFailed, setProfileFailed] = useState(false)
   const fail = useCallback((e: unknown) => onError((e as Error).message), [onError])
-  useEffect(() => void api<Profiles>("/api/profile").then(setState, fail), [fail])
+  useEffect(() => {
+    let active = true
+    api<Profiles>("/api/profile").then(value => { if (active) setState(value) }, e => { if (active) { setProfileFailed(true); fail(e) } })
+    return () => { active = false }
+  }, [fail])
   const shown = state?.profile
   useEffect(() => {
     if (!shown) return
+    let active = true
     setModel(null)
-    api<unknown>("/api/model").then(raw => setModel(modelChoice.parse(raw))).catch(e => {
+    api<unknown>("/api/model").then(raw => { if (active) setModel(modelChoice.parse(raw)) }).catch(e => {
+      if (!active) return
+      setModel(false)
       if (!(e instanceof ApiError && e.status === 404)) fail(e)
     })
+    return () => { active = false }
   }, [shown, fail])
-  if (!state) return null
+  if (!state) return profileFailed ? null : <SettingsLoading page="profile" rows={2} />
   const pick = (profile: string) => profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, fail)
   const pickModel = async (body: { provider?: string; model?: string; effort?: string; speed?: string }) => setModel(modelChoice.parse(await api<unknown>("/api/model", { method: "POST", body })))
   return (
     <>
       {state.profiles.length > 1 && <ProfileRow onPick={pick} state={state} />}
+      {model === null && <Row label="Default model"><Skeleton className="h-8 w-40 motion-reduce:animate-none" /></Row>}
       {model && <>
         <Row label="Default model"><ModelPicker label="default model" named onPick={pickModel} value={model} /></Row>
-        <ModelPresetSettings value={model} />
+        <Suspense fallback={<SettingsLoading page="presets" rows={1} />}><ModelPresetSettings value={model} /></Suspense>
       </>}
     </>
   )
@@ -117,38 +126,8 @@ function SearchEngineRow() {
   )
 }
 
-type Page = { id: string; label: string; icon: LucideIcon }
-type Bucket = { label: string; pages: Page[] }
-
-// The settings menu: the page list beside the open page on wide screens, its own screen on phones.
-function SettingsMenu({ buckets, current }: { buckets: Bucket[]; current: string | null }) {
-  // Phones show the menu on its own, so no row there reads as the open page.
-  return (
-    <nav aria-label="Settings" className="flex flex-col px-2 pb-6 md:w-52 md:shrink-0">
-      {buckets.map((bucket, index) => (
-        <div className="flex flex-col" key={bucket.label || index}>
-          {bucket.label ? <p className="px-2 pt-3 pb-1 text-muted-foreground text-xs">{bucket.label}</p> : <div className="h-3" />}
-          {bucket.pages.map(page => (
-            <button
-              aria-current={page.id === current ? "page" : undefined}
-              className="flex select-none items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-muted-foreground text-sm outline-none hover:bg-accent hover:text-foreground md:aria-[current=page]:bg-accent md:aria-[current=page]:text-foreground md:py-2"
-              key={page.id}
-              onClick={() => navigate(`#/settings/${page.id}`)}
-              type="button"
-            >
-              <page.icon className="size-4" />
-              <span className="flex-1 truncate">{page.label}</span>
-              <ChevronRightIcon className="size-4 md:hidden" />
-            </button>
-          ))}
-        </div>
-      ))}
-    </nav>
-  )
-}
-
 export function Settings({ portal, page }: { portal: Portal; page: string | null }) {
-  const [passkeys, setPasskeys] = useState<Passkey[]>([])
+  const [passkeys, setPasskeys] = useState<Passkey[] | null>(null)
   const [push, setPush] = useState(pushState())
   const [app, setApp] = useState(appAlerts())
   const [bubble, setBubble] = useState(appBubble())
@@ -171,7 +150,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
   const [error, setError] = useState("")
   const theme = useTheme()
   const presence = usePresence()
-  const load = useCallback(() => api<Passkey[]>("/api/passkeys").then(setPasskeys, () => {}), [])
+  const load = useCallback(() => api<Passkey[]>("/api/passkeys").then(setPasskeys, e => { setPasskeys(previous => previous ?? []); setError(e instanceof Error ? e.message : String(e)) }), [])
   useEffect(() => void load(), [load])
 
   const attempt = (fn: () => Promise<unknown>) => async () => {
@@ -189,32 +168,6 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
   const mcp = useMcp()
   const mesh = useMesh(portal.machinesSeen)
   const environments = useEnvironments(Boolean(portal.me?.environments)).data
-  const buckets: Bucket[] = [
-    { label: "App", pages: [{ id: "general", label: "General", icon: SlidersHorizontalIcon }, { id: "notifications", label: "Notifications", icon: BellIcon }] },
-    {
-      label: "Nako",
-      pages: [
-        { id: "gateway", label: "Gateway", icon: NetworkIcon },
-        { id: "nako", label: "Model & profile", icon: SparklesIcon },
-        ...(usage !== "unsupported" ? [{ id: "usage", label: "Usage", icon: ChartLineIcon }] : []),
-        ...(providers ? [{ id: "providers", label: "Providers", icon: PlugIcon }] : []),
-        ...(secrets ? [{ id: "secrets", label: "Secrets", icon: KeyRoundIcon }] : []),
-        ...(mcp ? [{ id: "mcp", label: "MCP servers", icon: BlocksIcon }] : []),
-      ],
-    },
-    {
-      label: "Machines",
-      pages: [
-        ...(mesh?.hub ? [{ id: "mesh", label: "Mesh", icon: NetworkIcon }] : []),
-        ...(portal.me?.environments ? [{ id: "environments", label: environments?.title ?? "Environments", icon: BoxesIcon }] : []),
-      ],
-    },
-    { label: "", pages: [{ id: "account", label: "Account", icon: UserIcon }] },
-  ].filter(bucket => bucket.pages.length > 0)
-  // Wide screens always show a page beside the menu; phones show the menu until one is picked.
-  const shown = page ?? "general"
-  const label = buckets.flatMap(b => b.pages).find(p => p.id === shown)?.label ?? ""
-
   const pages: Record<string, React.ReactNode> = {
     general: (
       <>
@@ -282,24 +235,50 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     ),
     nako: (
       <>
-        <ProfileRows onError={setError} />
         <Row label="Sticker while she works">
           <Switch checked={presence} label="Sticker while she works" onCheckedChange={setPresence} />
         </Row>
-        <SignOffSettings onError={setError} />
+        <div className="flex min-h-20 flex-col gap-2"><Suspense fallback={<SettingsLoading page="signoff" rows={2} />}><SignOffSettings onError={setError} /></Suspense></div>
+        <ProfileRows onError={setError} />
       </>
     ),
-    usage: usage !== "unsupported" && usage !== "failed" && <UsageSettings state={usage} providers={providers} session={portal.route.view === "settings" ? portal.route.fromChat : undefined} />,
+    usage: usage !== "unsupported" && usage !== "failed" && <UsageSettings state={usage} providers={providers || null} session={portal.route.view === "settings" ? portal.route.fromChat : undefined} />,
     providers: <ProvidersSettings onError={setError} />,
     secrets: <SecretsSettings onError={setError} />,
     mcp: <McpSettings onError={setError} />,
     gateway: <GatewayRestart />,
-    mesh: <MeshSettings portal={portal} />,
+    mesh: mesh === null ? <SettingsLoading page="mesh" /> : <MeshSettings portal={portal} />,
     environments: <EnvironmentsSettings />,
     account: (
       <>
-        <p className="pt-1 pb-1 text-muted-foreground text-xs">Passkeys</p>
-        {passkeys.map(k => (
+        <p className="pt-1 pb-1 text-muted-foreground text-xs">Session</p>
+        <Row label="Sign out of this device">
+          <Button
+            className="border-destructive/40 text-destructive hover:text-destructive"
+            onClick={attempt(async () => {
+              await api("/api/logout", { method: "POST" })
+              location.replace("/")
+            })}
+            size="sm"
+            variant="outline"
+          >
+            Sign out
+          </Button>
+        </Row>
+        <p className="pt-5 pb-1 text-muted-foreground text-xs">Passkeys</p>
+        <div className="flex justify-end">
+          <Button
+            onClick={attempt(async () => {
+              await register(null)
+              await load()
+            })}
+            size="sm"
+            variant="outline"
+          >
+            Add passkey
+          </Button>
+        </div>
+        {passkeys === null ? <SettingsLoading page="account" rows={1} /> : passkeys.map(k => (
           <Row
             key={k.id}
             label={
@@ -324,63 +303,14 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
             )}
           </Row>
         ))}
-        <div className="flex justify-end">
-          <Button
-            onClick={attempt(async () => {
-              await register(null)
-              await load()
-            })}
-            size="sm"
-            variant="outline"
-          >
-            Add passkey
-          </Button>
-        </div>
-        <p className="pt-5 pb-1 text-muted-foreground text-xs">Session</p>
-        <Row label="Sign out of this device">
-          <Button
-            className="border-destructive/40 text-destructive hover:text-destructive"
-            onClick={attempt(async () => {
-              await api("/api/logout", { method: "POST" })
-              location.replace("/")
-            })}
-            size="sm"
-            variant="outline"
-          >
-            Sign out
-          </Button>
-        </Row>
       </>
     ),
   }
 
-  return (
-    <>
-      <PageHeader
-        back={page ? () => navigate("#/settings") : undefined}
-        title={
-          page ? (
-            <>
-              <span className="md:hidden">{label}</span>
-              <span className="hidden md:inline">Settings</span>
-            </>
-          ) : (
-            "Settings"
-          )
-        }
-      />
-      <div className="flex min-h-0 flex-1">
-        <div className={cn("w-full overflow-y-auto md:block md:w-auto", page && "hidden")}>
-          <SettingsMenu buckets={buckets} current={shown} />
-        </div>
-        <section className={cn("min-w-0 flex-1 overflow-y-auto md:block md:border-l", !page && "hidden")}>
-          <div className="flex w-full max-w-xl flex-col gap-2 px-4 pb-6 md:px-6">
-            <h3 className="hidden pt-1.5 pb-2 font-semibold text-[15px] md:block">{label}</h3>
-            <Suspense fallback={shown === "usage" ? <UsageSkeleton /> : null}>{pages[shown] ?? pages.general}</Suspense>
-            {(error || portal.error) && <p className="pt-4 text-destructive text-sm">{error || portal.error}</p>}
-          </div>
-        </section>
-      </div>
-    </>
-  )
+  const shown = page ?? "general"
+  return <SettingsFrame page={page} hasEnvironments={Boolean(portal.me?.environments)} environmentsTitle={environments?.title}
+    unavailable={{ usage: usage === "unsupported", providers: providers === false, secrets: secrets === false, mcp: mcp === false, mesh: mesh !== null && (!mesh || !mesh.hub) }}
+    error={error || portal.error}>
+    <Suspense fallback={<SettingsPlaceholder page={page} />}>{pages[shown] ?? pages.general}</Suspense>
+  </SettingsFrame>
 }

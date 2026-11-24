@@ -1,5 +1,6 @@
 import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, UserRoundIcon, SearchIcon, TerminalIcon, Trash2Icon, XIcon } from "lucide-react"
 import { memo, useEffect, useRef, useState } from "react"
+import { ProviderListHeader, SettingsLoading } from "./settings-loading"
 import { ProviderMark } from "./provider-mark"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -602,13 +603,14 @@ type Open = { kind: "provider"; slug: string } | { kind: "add" } | null
 export function ProvidersSettings({ onError }: { onError: (message: string) => void }) {
   const providers = useProviders()
   const [open, setOpen] = useState<Open>(null)
-  if (!providers) return null
+  if (providers === null) return <SettingsLoading page="providers" />
+  if (!providers) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
   const connected = providers.filter(p => p.connected || (p.accounts?.length ?? 0) > 0)
   const current = open?.kind === "provider" ? providers.find(p => p.slug === open.slug) : undefined
   const close = () => setOpen(null)
   return (
     <>
-      <p className="pb-1 text-muted-foreground text-xs">Accounts and keys this profile can run on</p>
+      <ProviderListHeader onAdd={() => setOpen({ kind: "add" })} />
       <div className="flex flex-col">
         {connected.map(p => (
           <button
@@ -626,12 +628,6 @@ export function ProvidersSettings({ onError }: { onError: (message: string) => v
           </button>
         ))}
         {connected.length === 0 && <p className="px-1 py-2 text-muted-foreground text-sm">Nothing set up yet.</p>}
-        <div className="flex justify-end pt-2">
-          <Button onClick={() => setOpen({ kind: "add" })} size="sm" variant="outline">
-            <PlusIcon />
-            Add a provider
-          </Button>
-        </div>
       </div>
       <Dialog onOpenChange={next => !next && close()} open={open !== null}>
         <DialogContent className={PANEL} data-provider-panel={open?.kind === "add" ? "add" : current?.slug || ""} onOpenAutoFocus={e => e.preventDefault()} showCloseButton={false}>

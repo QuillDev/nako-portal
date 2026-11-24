@@ -47,10 +47,8 @@ export function reloadSecrets() {
       for (const l of listeners) l()
     },
     e => {
-      if (e instanceof ApiError && e.status === 404) {
-        list = false
-        for (const l of listeners) l()
-      }
+      list = e instanceof ApiError && e.status === 404 ? false : list || false
+      for (const l of listeners) l()
     },
   )
   return loading

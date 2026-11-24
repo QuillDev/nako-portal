@@ -3,7 +3,7 @@ import { api } from "@/lib/api"
 import type { Machine, Mesh } from "@/lib/types"
 
 // The mesh as this portal last read it, shared by the sidebar row and the Mesh page.
-let current: Mesh | null = null
+let current: Mesh | false | null = null
 const listeners = new Set<() => void>()
 let loading: Promise<void> | null = null
 
@@ -14,7 +14,10 @@ export function loadMesh(): Promise<void> {
         current = mesh
         for (const listener of listeners) listener()
       },
-      () => {},
+      () => {
+        current = current || false
+        for (const listener of listeners) listener()
+      },
     )
     .finally(() => {
       loading = null
@@ -23,7 +26,7 @@ export function loadMesh(): Promise<void> {
 }
 
 /** The mesh, reread whenever `seen` changes (the socket's `machines.changed`). Null until the first read. */
-export function useMesh(seen: number): Mesh | null {
+export function useMesh(seen: number): Mesh | false | null {
   const mesh = useSyncExternalStore(
     listener => {
       listeners.add(listener)

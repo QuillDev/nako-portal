@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { Row } from "./settings"
@@ -12,9 +13,19 @@ type SignOff = Infer<typeof signOff>
 // so every device and Desktop's Models page agree.
 export function SignOffSettings({ onError }: { onError: (message: string) => void }) {
   const [state, setState] = useState<SignOff | null>(null)
-  useEffect(() => void api<unknown>("/api/signoff").then(raw => setState(signOff.parse(raw))).catch(e => onError(e instanceof Error ? e.message : String(e))), [onError])
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let active = true
+    api<unknown>("/api/signoff").then(raw => { if (active) setState(signOff.parse(raw)) }).catch(e => {
+      if (active) { setFailed(true); onError(e instanceof Error ? e.message : String(e)) }
+    })
+    return () => { active = false }
+  }, [onError])
   const save = async (body: Partial<SignOff>) => setState(signOff.parse(await api<unknown>("/api/signoff", { method: "POST", body })))
-  if (!state) return null
+  if (!state) return failed ? null : <>
+    <Row label="Sign-off line"><Skeleton className="h-5 w-9 motion-reduce:animate-none" /></Row>
+    <Row label="Sign-off model"><Skeleton className="h-8 w-32 motion-reduce:animate-none" /></Row>
+  </>
   return (
     <>
       <Row label="Sign-off line">

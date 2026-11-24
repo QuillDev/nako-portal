@@ -1,5 +1,6 @@
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
+import { SettingsLoading } from "./settings-loading"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
@@ -488,7 +489,8 @@ export function McpSettings({ onError }: { onError: (m: string) => void }) {
     const timer = window.setInterval(() => void reloadMcp(), 3000)
     return () => window.clearInterval(timer)
   }, [installing])
-  if (!mcp) return null
+  if (mcp === null) return <SettingsLoading page="mcp" />
+  if (!mcp) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
   const typed = words(query)
   const shown = typed ? mcp.servers.filter(s => words(`${s.name} ${s.url} ${s.command}`).includes(typed)) : mcp.servers
   const current = open?.kind === "server" ? mcp.servers.find(s => s.name === open.name) : undefined
