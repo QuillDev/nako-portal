@@ -22,7 +22,10 @@ main { display: flex; flex-direction: column; align-items: center; gap: 16px; wi
 [hidden] { display: none !important; }
 img { width: 96px; height: 96px; border-radius: 50%; outline: 2px solid var(--primary); outline-offset: 4px; }
 h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
-form, #unreachable { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+form, #unreachable, #starting { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+#starting span { height: 18px; width: 108px; align-self: center; }
+#starting i { height: 36px; }
+#starting > * { background: var(--input); border-radius: 10px; }
 p { margin: 0; color: var(--muted); }
 p.error { color: var(--error); }
 /* Same controls as the portal's own (shadcn Input and Button). */

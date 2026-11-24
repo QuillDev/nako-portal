@@ -58,9 +58,10 @@ function remember(cache: Map<string, Cached>, opened: OpenSession, at: number) {
 
 export function usePortal() {
   const [me, setMe] = useState<Me | null>(null)
+  const [sessionsState, setSessionsState] = useState<"loading" | "ready" | "failed">("loading")
   const [sessions, setSessions] = useState<SessionRow[]>([])
   const [route, setRoute] = useState<Route>(() => parseRoute(location.hash))
-  const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean }) | null>(null)
+  const [current, setCurrent] = useState<(OpenSession & { loading: boolean; loadingOlder: boolean; loadError?: string }) | null>(null)
   const [live, setLiveState] = useState<Live | null>(null)
   const liveRef = useRef<Live | null>(null)
   const setLive = useCallback((update: Live | null | ((previous: Live | null) => Live | null)) => {
@@ -114,9 +115,11 @@ export function usePortal() {
       const rows = await api<SessionRow[]>("/api/sessions")
       // The same list again (a reconnect, another tab's change elsewhere) leaves the sidebar as it is.
       setSessions(shown => (JSON.stringify(shown) === JSON.stringify(rows) ? shown : rows))
+      setSessionsState("ready")
       rememberTitles(rows)
       setConnected(true)
     } catch (e) {
+      setSessionsState(state => state === "ready" ? state : "failed")
       if (/offline/i.test(String((e as Error).message))) setConnected(false)
     }
   }, [])
@@ -131,12 +134,15 @@ export function usePortal() {
     try {
       const opened = await (since ? api<OpenSession>(sessionPath(session) + since) : read(session))
       if (!valid()) return
-      setCurrent(c => c?.session === session && valid() ? reconcileSession(c, opened) : c)
+      setCurrent(c => c?.session === session && valid() ? { ...reconcileSession(c, opened), loadError: undefined } : c)
       setLive(l => opened.running ? caughtUp(l, opened.live, startedLive) : null)
       // Opening a chat marks it seen on the server too (the notifications chat's posts, any chat's ended turn).
       setSessions(rows => (rows.some(r => r.id === session && (r.unread || r.finished)) ? rows.map(r => (r.id === session ? { ...r, unread: false, finished: false } : r)) : rows))
     } catch (e) {
-      if (valid()) setError((e as Error).message)
+      if (valid()) {
+        if (open?.loading) setCurrent(c => c?.session === session ? { ...c, loadError: (e as Error).message } : c)
+        else setError((e as Error).message)
+      }
     }
   }, [read, setLive])
 
@@ -296,6 +302,7 @@ export function usePortal() {
   const boot = useCallback(async () => {
     setError("")
     const who = await api<Me>("/api/me")
+    try { if (who.signed_in) sessionStorage.setItem("portal-seen-session", "1"); else sessionStorage.removeItem("portal-seen-session") } catch { /* Storage can be unavailable. */ }
     setMe(who)
     if (!who.signed_in) return
     connect()
@@ -557,7 +564,7 @@ export function usePortal() {
     }
   }, [current, live])
 
-  return { me, setName, boot, sessions, outside, route, current, live, connected, hermes, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
+  return { me, setName, boot, refresh, sessions, sessionsState, outside, route, current, live, connected, hermes, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

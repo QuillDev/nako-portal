@@ -88,11 +88,32 @@ export function EnvironmentsSettings() {
   const { data, error, stopping, stopErrors } = useEnvironments(true, 10_000)
   const [busy, setBusy] = useState(false)
   const onStop = data?.can_stop ? (env: Environment) => void stopEnvironment(env.name) : undefined
-  if (!data && !error) return <SettingsLoading page="environments" />
   const live = data?.environments.filter(env => env.status !== "stopped") ?? []
   const stopped = data?.environments.filter(env => env.status === "stopped") ?? []
   return (
     <div className="flex flex-col">
+      <div className="flex flex-wrap items-center justify-end gap-1 pb-2">
+        {data?.links.map(link => (
+          <Button asChild key={link.url} size="sm" variant="ghost">
+            <a href={link.url} rel="noreferrer" target="_blank">
+              {link.label}
+            </a>
+          </Button>
+        ))}
+        <Button
+          disabled={busy || (!data && !error)}
+          onClick={() => {
+            setBusy(true)
+            void loadEnvironments(true).finally(() => setBusy(false))
+          }}
+          size="sm"
+          variant="outline"
+        >
+          <RotateCwIcon className={cn(busy && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+      {!data && !error && <SettingsLoading page="environments" />}
       {error && <p className="py-3 text-destructive text-sm">{error}</p>}
       {data && data.environments.length === 0 && <p className="py-10 text-center text-muted-foreground text-sm">Nothing here yet.</p>}
       {live.length > 0 && (
@@ -108,27 +129,6 @@ export function EnvironmentsSettings() {
           <ul className="divide-y">{stopped.map(env => <Row env={env} key={env.name} />)}</ul>
         </>
       )}
-      <div className="flex flex-wrap items-center justify-end gap-1 pt-4">
-        {data?.links.map(link => (
-          <Button asChild key={link.url} size="sm" variant="ghost">
-            <a href={link.url} rel="noreferrer" target="_blank">
-              {link.label}
-            </a>
-          </Button>
-        ))}
-        <Button
-          disabled={busy}
-          onClick={() => {
-            setBusy(true)
-            void loadEnvironments(true).finally(() => setBusy(false))
-          }}
-          size="sm"
-          variant="outline"
-        >
-          <RotateCwIcon className={cn(busy && "animate-spin")} />
-          Refresh
-        </Button>
-      </div>
     </div>
   )
 }

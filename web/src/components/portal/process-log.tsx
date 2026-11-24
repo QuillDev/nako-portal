@@ -54,7 +54,7 @@ export function ProcessLog({ session, proc, onClose }: { session: string; proc: 
   return (
     <Dialog onOpenChange={open => !open && onClose()} open={Boolean(proc)}>
       {proc && (
-        <DialogContent className="flex max-h-[85dvh] flex-col gap-3 sm:max-w-2xl" data-process-log onOpenAutoFocus={e => e.preventDefault()}>
+        <DialogContent className="flex h-[min(28rem,80dvh)] max-h-[85dvh] flex-col gap-3 sm:max-w-2xl" data-process-log onOpenAutoFocus={e => e.preventDefault()}>
           <div className="flex min-w-0 flex-col gap-1 pr-8">
             <DialogTitle className="truncate font-medium text-sm leading-6">{proc.label}</DialogTitle>
             <p className="text-muted-foreground text-xs">
@@ -65,14 +65,14 @@ export function ProcessLog({ session, proc, onClose }: { session: string; proc: 
           </div>
           {proc.command !== proc.label && <p className="break-all text-muted-foreground text-xs">{proc.command}</p>}
           <pre
-            className="min-h-40 flex-1 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-muted p-3 font-mono text-[11px] leading-relaxed"
+            className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-lg bg-muted p-3 font-mono text-[11px] leading-relaxed"
             onScroll={e => {
               const el = e.currentTarget
               pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8
             }}
             ref={box}
           >
-            {gone ? "this process is no longer tracked" : log ? log.lines.join("\n") || "no output yet" : ""}
+            {gone ? "this process is no longer tracked" : log ? log.lines.join("\n") || "no output yet" : <span role="status"><span className="sr-only">Loading output…</span>{["w-1/2", "w-3/4", "w-2/5"].map(width => <span key={width} aria-hidden="true" className={`my-2 block h-2 animate-pulse rounded bg-muted-foreground/25 motion-reduce:animate-none ${width}`} />)}</span>}
           </pre>
         </DialogContent>
       )}

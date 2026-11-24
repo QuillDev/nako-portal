@@ -1,4 +1,8 @@
 import { Component, type ComponentType, type ReactNode, lazy, Suspense, useEffect } from "react"
+import { OpeningScreen } from "@/components/portal/screen-loading"
+import { Gate } from "@/components/portal/gate"
+import { DesktopLink } from "@/components/portal/desktop-link"
+import { Elsewhere } from "@/components/portal/elsewhere"
 import { Chat } from "@/components/portal/chat"
 import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
@@ -43,7 +47,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
  * React.lazy suspends on its first render even then, and React holds a suspended screen's reveal
  * for up to 300 ms, which made Settings take a third of a second to open.
  */
-function screen<P extends object>(load: () => Promise<ComponentType<P>>, fallback?: (props: P) => ReactNode) {
+function screen<P extends object>(load: () => Promise<ComponentType<P>>, fallback: (props: P) => ReactNode) {
   let loaded: ComponentType<P> | null = null
   const get = () => load().then(component => (loaded = component))
   const makeLazy = () => lazy(() => get().then(component => ({ default: component })))
@@ -53,7 +57,7 @@ function screen<P extends object>(load: () => Promise<ComponentType<P>>, fallbac
     const Loaded = loaded
     if (Loaded) return <Loaded {...props} />
     return (
-      <Suspense fallback={fallback?.(props) ?? <p role="status" className="p-4 text-sm text-muted-foreground">Loading…</p>}>
+      <Suspense fallback={fallback(props)}>
         <Lazy {...props} />
       </Suspense>
     )
@@ -61,9 +65,6 @@ function screen<P extends object>(load: () => Promise<ComponentType<P>>, fallbac
   return Object.assign(Screen, { preload: () => void get().catch(() => {}) })
 }
 
-const Elsewhere = screen(() => import("@/components/portal/elsewhere").then(m => m.Elsewhere))
-const Gate = screen(() => import("@/components/portal/gate").then(m => m.Gate))
-const DesktopLink = screen(() => import("@/components/portal/desktop-link").then(m => m.DesktopLink))
 const Settings = screen(() => import("@/components/portal/settings").then(m => m.Settings),
   ({ page, portal }) => <SettingsFrame page={page} hasEnvironments={Boolean(portal.me?.environments)}><SettingsPlaceholder page={page} /></SettingsFrame>)
 
@@ -81,7 +82,7 @@ function useWarmSettings(signedIn: boolean) {
 }
 
 export function App() {
-  return <ErrorBoundary><AppContent /></ErrorBoundary>
+  return <ErrorBoundary><AppContent /><UpdatingScreen /></ErrorBoundary>
 }
 
 function AppContent() {
@@ -90,12 +91,13 @@ function AppContent() {
   useEffect(() => {
     if (portal.me?.signed_in && portal.route.view !== "desktop") void loadMarkdown().catch(() => {})
   }, [portal.me?.signed_in, portal.route.view])
+  if (!portal.me && !portal.error) return <OpeningScreen route={portal.route} />
   if (!portal.me) return (
     <main className="flex min-h-dvh items-center justify-center gap-3 p-6 text-sm">
-      {portal.error ? <div className="flex items-center gap-3" role="alert">
+      <div className="flex items-center gap-3" role="alert">
         <span>{portal.error}</span>
         <button type="button" className="underline" onClick={() => void portal.boot().catch(e => portal.setError((e as Error).message))}>Retry</button>
-      </div> : <p role="status" className="text-muted-foreground">Loading…</p>}
+      </div>
     </main>
   )
   if (!portal.me.signed_in) return <Gate portal={portal} />
@@ -107,6 +109,7 @@ function AppContent() {
         sidebar={
           <Sidebar
             sessions={portal.sessions}
+            sessionsState={portal.sessionsState}
             pin={portal.pin}
             archive={portal.archive}
             prefetch={portal.prefetch}
@@ -131,7 +134,7 @@ function AppContent() {
         <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings page={portal.route.page} portal={portal} /> : portal.route.view === "outside" ? <Elsewhere portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
       <ChatSearch sessions={portal.sessions} unarchive={portal.unarchive} />
-      <UpdatingScreen />
+
     </TooltipProvider>
   )
 }

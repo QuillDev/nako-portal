@@ -16,8 +16,9 @@ export function AuthScreen({ title, note, error, children }: { title: string; no
       )}
       <h1 className="font-serif text-[2.75rem] leading-none">{title}</h1>
       {note && <p className="mt-3 max-w-[300px] text-muted-foreground text-sm">{note}</p>}
-      <div className="mt-7 flex w-[300px] max-w-full flex-col gap-2">{children}</div>
-      {error && <p className="mt-4 text-destructive text-sm">{error}</p>}
+      <div className="relative mt-7 flex w-[300px] max-w-full flex-col gap-2">{children}
+        {error && <p role="alert" className="absolute inset-x-0 top-full mt-4 text-destructive text-sm">{error}</p>}
+      </div>
     </div>
   )
 }

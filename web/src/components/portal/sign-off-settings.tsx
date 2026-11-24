@@ -33,7 +33,7 @@ export function SignOffSettings({ onError }: { onError: (message: string) => voi
       </Row>
       {state.on && state.providers.length > 0 && (
         <Row label="Sign-off model">
-          <ModelPicker label="Sign-off model" onPick={body => save(body)} value={state} />
+          <div className="flex min-w-0 justify-end"><ModelPicker label="Sign-off model" onPick={body => save(body)} value={state} /></div>
         </Row>
       )}
     </>

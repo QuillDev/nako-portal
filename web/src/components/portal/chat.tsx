@@ -12,6 +12,7 @@ import { sourceName } from "@/lib/outside"
 import { inBubble } from "@/lib/bubble"
 import { usePresence } from "@/lib/presence"
 import { Composer } from "./composer"
+import { ComposerPlaceholder } from "./screen-loading"
 import { PageHeader } from "./header"
 import { Presence } from "./presence"
 import { ChatEnvironments } from "./chat-environments"
@@ -28,7 +29,6 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable,
   const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
-      <FindInChatButton />
       {/* The floating panel keeps to the chat itself; its full controls are one tap away in the app. */}
       {!inBubble && (
         <>
@@ -64,6 +64,7 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable,
           </DropdownMenu>
         </>
       )}
+      <FindInChatButton />
     </PageHeader>
   )
 })
@@ -91,7 +92,7 @@ function Dock({ children, onHeight }: { children: ReactNode; onHeight: (height: 
 // Stand-ins for turns that haven't loaded yet: a prompt on the right, a reply on the left.
 function TurnSkeletons({ count }: { count: number }) {
   return (
-    <div aria-hidden className="flex flex-col gap-6">
+    <div role="status" className="flex flex-col gap-6"><span className="sr-only">Loading conversation…</span>
       {Array.from({ length: count }, (_, i) => (
         <div className="flex flex-col gap-6" key={i}>
           <Skeleton className="ml-auto h-9 w-2/5 rounded-lg" />
@@ -276,6 +277,8 @@ export function Chat({ portal }: { portal: Portal }) {
       {portal.current && <ChatFind key={portal.current.session} root={root} session={portal.current.session} />}
     </>
   )
+  if (portal.route.view === "chat" && portal.current?.session !== portal.route.session) return <><PageHeader title="Chat" /><div className="mx-auto min-h-0 w-full max-w-3xl flex-1 overflow-hidden p-4"><TurnSkeletons count={3} /></div><ComposerPlaceholder /></>
+  if (portal.route.view === "chat" && portal.current?.loadError) return <><PageHeader title={portal.current.title || "Chat"} /><div role="alert" className="mx-auto w-full max-w-3xl p-4 text-sm">{portal.current.loadError} <button type="button" className="underline" onClick={() => void portal.refresh(portal.current!.session)}>Retry</button></div></>
   return <div ref={root} className="flex min-h-0 flex-1 flex-col">
     {source && source !== "portal" ? <ReadOnlyChat find={banner} portal={portal} source={source} /> : <PortalChat find={banner} portal={portal} />}
   </div>
@@ -310,7 +313,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
     )
   return (
     <>
-      <ChatHeader environments={Boolean(portal.me?.environments)} running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} groupable={!portal.sessions.find(s => s.id === c.session)?.machine} session={c.session} title={c.title || "chat"} />
+      <ChatHeader environments={Boolean(portal.me?.environments)} running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} groupable={!portal.sessions.find(s => s.id === c.session)?.machine} session={c.session} title={c.title || portal.sessions.find(row => row.id === c.session)?.title || "chat"} />
       {rename.dialog}
       {picker.dialog}
       {offline}
@@ -351,7 +354,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
           </Dock>
         )}
       </Conversation>
-      <SecretDock answer={portal.answer} key={c.session} request={secret}>
+      {c.loading && !portal.sessions.some(row => row.id === c.session) ? <ComposerPlaceholder /> : <SecretDock answer={portal.answer} key={c.session} request={secret}>
         <Composer
           command={portal.command}
           commands={portal.commands}
@@ -363,7 +366,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
           setError={portal.setError}
           stop={portal.stop}
         />
-      </SecretDock>
+      </SecretDock>}
     </>
   )
 }

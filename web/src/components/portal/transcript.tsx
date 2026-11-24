@@ -1,5 +1,5 @@
 import { CheckIcon, CopyIcon, CornerDownLeftIcon, FileIcon, ForwardIcon, ImageOffIcon, LoaderIcon, XIcon } from "lucide-react"
-import { createContext, lazy, Suspense, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, memo, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { ChainOfThought, ChainOfThoughtContent, ChainOfThoughtHeader, ChainOfThoughtStep } from "@/components/ai-elements/chain-of-thought"
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message"
@@ -16,7 +16,7 @@ import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
 import { dayLabel, dayOf, fullTime, timeOf } from "@/lib/times"
 import type { HistoryMessage, Live, Sender } from "@/lib/types"
 
-const ImageViewer = lazy(() => import("./image-viewer").then(m => ({ default: m.ImageViewer })))
+import { ImageViewer } from "./image-viewer"
 
 const LINK_SAFETY = { enabled: false }
 
@@ -139,9 +139,11 @@ const Steps = memo(function Steps({ steps }: { steps: Step[] }) {
 type Item = { url: string; name: string; path: string; download?: string }
 
 function Thumb({ item, onOpen, onBroken }: { item: Item; onOpen: () => void; onBroken: () => void }) {
+  const [ready, setReady] = useState(false)
   return (
-    <button aria-label={`Open ${item.name}`} className="w-fit cursor-zoom-in rounded-md outline-none" onClick={onOpen} type="button">
-      <img alt={item.name} className="max-h-80 max-w-full rounded-md border object-contain" loading="lazy" onError={onBroken} src={item.url} />
+    <button aria-label={`Open ${item.name}`} className="relative h-48 w-64 max-w-full cursor-zoom-in rounded-md outline-none" onClick={onOpen} type="button">
+      <img alt={item.name} className="size-full rounded-md border object-contain" loading="lazy" onLoad={() => setReady(true)} onError={onBroken} src={item.url} />
+      {!ready && <span role="status" aria-label="Loading image" className="absolute inset-0 animate-pulse rounded-md bg-accent motion-reduce:animate-none" />}
     </button>
   )
 }
@@ -161,7 +163,7 @@ function Files({ urls }: { urls: Item[] }) {
         if (isImage(path)) {
           if (broken.has(url))
             return (
-              <span className="inline-flex items-center gap-2 rounded-md border border-dashed px-3 py-2 text-muted-foreground text-xs" key={url}>
+              <span className="inline-flex h-48 w-64 max-w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2 text-muted-foreground text-xs" key={url}>
                 <ImageOffIcon className="size-4" />
                 {name} is no longer on disk
               </span>
@@ -169,7 +171,7 @@ function Files({ urls }: { urls: Item[] }) {
           return <Thumb item={item} key={url} onBroken={() => setBroken(b => new Set(b).add(url))} onOpen={() => setOpen(pictures.indexOf(item))} />
         }
         if (/\.(mp3|m4a|ogg|wav|opus|flac)$/i.test(path)) return <audio className="w-full" controls key={url} src={url} />
-        if (/\.(mp4|webm|mov)$/i.test(path)) return <video className="max-h-96 rounded-md" controls key={url} src={url} />
+        if (/\.(mp4|webm|mov)$/i.test(path)) return <video className="aspect-video w-full max-w-xl rounded-md object-contain" controls key={url} src={url} />
         return (
           <a className="inline-flex items-center gap-2 text-sm underline" download={name} href={item.download ?? url} key={url}>
             <FileIcon className="size-4" />
@@ -185,14 +187,14 @@ function Files({ urls }: { urls: Item[] }) {
           {shown && (
             <>
               <DialogTitle className="sr-only">{shown.name}</DialogTitle>
-              <Suspense><ImageViewer
+              <ImageViewer
                 download={shown.download}
                 key={shown.url}
                 name={shown.name}
                 onNext={open! < pictures.length - 1 ? () => step(1) : undefined}
                 onPrev={open! > 0 ? () => step(-1) : undefined}
                 src={shown.url}
-              /></Suspense>
+              />
             </>
           )}
         </DialogContent>

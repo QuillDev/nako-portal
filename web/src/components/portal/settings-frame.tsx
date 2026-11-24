@@ -64,7 +64,7 @@ export function SettingsFrame({ page, hasEnvironments, environmentsTitle, unavai
       label: "Machines",
       pages: [
         { id: "mesh", label: "Mesh", icon: NetworkIcon, unavailable: unavailable.mesh },
-        ...(hasEnvironments ? [{ id: "environments", label: environmentsTitle || "Environments", icon: BoxesIcon }] : []),
+        { id: "environments", label: environmentsTitle || "Environments", icon: BoxesIcon, unavailable: !hasEnvironments },
       ],
     },
     { label: "", pages: [{ id: "account", label: "Account", icon: UserIcon }] },

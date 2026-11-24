@@ -39,7 +39,7 @@ const PUSH_NOTE = { unsupported: "unsupported here", blocked: "blocked in browse
 export function Row({ label, children }: { label: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="flex min-h-9 items-center justify-between gap-4 text-sm">
-      <span className="min-w-0">{label}</span>
+      <span className="min-w-0 shrink-0 max-w-[55%]">{label}</span>
       {children}
     </div>
   )

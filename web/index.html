@@ -11,11 +11,21 @@
     <link rel="icon" href="/favicon.png" type="image/png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>Nako</title>
+    <style>
+      #opening { --fill: #18181c; display:flex; height:100dvh; background:#09090b; }
+      .light #opening { --fill:#ededf0; background:#fbfbfc; }
+      #opening i { display:block; height:12px; width:90px; margin:20px 16px; border-radius:6px; background:var(--fill); }
+      .opening-rail { width:var(--opening-rail,288px); overflow:hidden; box-shadow:inset -1px 0 var(--fill); }
+      [data-opening=auth] #opening { align-items:center; justify-content:center; padding-bottom:12vh; box-sizing:border-box; }
+      [data-opening=auth] .opening-rail { display:none; }
+      [data-opening=auth] .opening-page i { width:min(300px,80vw); height:44px; }
+      @media(max-width:767px) { .opening-rail { display:none; } [data-opening=list] .opening-rail { display:block; width:min(85vw,384px); } }
+    </style>
     <script src="/theme.js"></script>
     <script src="/early.js"></script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div id="opening" role="status" aria-label="Opening portal"><div class="opening-rail" aria-hidden="true"><i></i><i></i><i></i></div><div class="opening-page" aria-hidden="true"><i></i></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
