@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { api } from "@/lib/api"
 import type { Provider } from "@/lib/providers"
 import type { Usage } from "@/lib/usage"
+import { ProviderMark } from "./provider-mark"
 import { UsageSkeleton } from "./usage-skeleton"
 import { cn } from "@/lib/utils"
 
@@ -17,10 +18,10 @@ function period(label: string) {
   return { group: match[1] ?? "", label: weekly ? "Weekly" : "5-hour", length: weekly ? 168 * hour : 5 * hour }
 }
 
-const brands: Record<string, [string, string]> = {
-  "openai-codex": ["ChatGPT / Codex", "openai"],
-  "claude-subscription-directsdk-experimental": ["Claude", "claude-color"],
-  "antigravity-oauth": ["Google Antigravity", "antigravity-color"],
+const titles: Record<string, string> = {
+  "openai-codex": "ChatGPT / Codex",
+  "claude-subscription-directsdk-experimental": "Claude",
+  "antigravity-oauth": "Google Antigravity",
 }
 
 // Share of the window already gone and where usage lands at reset if it keeps the same rate (both 0-100).
@@ -77,7 +78,7 @@ export function UsageSettings({ state, providers, session }: { state: Usage | nu
   if (!state) return <UsageSkeleton />
   const sections = state.providers.flatMap(provider => {
     const identities = providers?.find(p => p.slug === provider.provider)?.accounts
-    const [title, mark] = brands[provider.provider] ?? [provider.label, null]
+    const title = Object.hasOwn(titles, provider.provider) ? titles[provider.provider] : provider.label
     const accounts = provider.accounts.flatMap((account, index) => {
       const groups = new Map<string, { window: Window; label: string; length: number }[]>()
       for (const window of account.windows) {
@@ -101,7 +102,7 @@ export function UsageSettings({ state, providers, session }: { state: Usage | nu
     if (!accounts.length) return []
     return [{ slug: provider.provider, view: <section key={provider.provider} data-usage-provider={provider.provider} className="space-y-4 border-b pb-5 last:border-0">
       <h2 className="flex flex-wrap items-center gap-2 font-semibold text-lg">
-        {mark && <img alt="" className={cn("size-5 shrink-0", mark === "openai" && "dark:invert")} src={`/provider-marks/${mark}.svg`} />}
+        <ProviderMark slug={provider.provider} />
         {title}{provider.provider === active && <span className="font-normal text-muted-foreground text-xs">{session ? "This chat" : "Profile default"}</span>}
       </h2>
       {accounts}

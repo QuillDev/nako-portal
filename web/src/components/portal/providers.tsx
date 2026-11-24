@@ -1,5 +1,6 @@
 import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, UserRoundIcon, SearchIcon, TerminalIcon, Trash2Icon, XIcon } from "lucide-react"
 import { memo, useEffect, useRef, useState } from "react"
+import { ProviderMark } from "./provider-mark"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
@@ -561,6 +562,7 @@ function AddPanel({ rows, onPick }: { rows: Provider[]; onPick: (provider: Provi
   const keys = shown.filter(r => r.kind === "key")
   const row = (provider: Provider) => (
     <button className="flex w-full items-center gap-3 rounded-md px-1 py-2 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent" key={provider.slug} onClick={() => onPick(provider)} type="button">
+      <ProviderMark slug={provider.slug} className="size-[18px]" />
       <span className="min-w-0 flex-1 truncate">{provider.label}</span>
       {provider.connected && <CheckIcon className="size-4 text-primary" />}
       <ChevronRightIcon className="size-4 text-muted-foreground" />
@@ -615,6 +617,7 @@ export function ProvidersSettings({ onError }: { onError: (message: string) => v
             onClick={() => setOpen({ kind: "provider", slug: p.slug })}
             type="button"
           >
+            <ProviderMark slug={p.slug} className="size-[18px]" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm">{p.label}</span>
               <span className="block truncate text-muted-foreground text-xs">{p.kind === "key" ? "API key" : p.accounts?.some(a => !a.signed_in) ? "needs sign-in" : "signed in"}</span>
