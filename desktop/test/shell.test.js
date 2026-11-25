@@ -3,15 +3,11 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto"
 import { request } from "node:http"
 import { test } from "node:test"
 
-import { browserAgent, signInAgent } from "../src/agent.js"
-import { addressOrSearch } from "../src/address.js"
+import { browserAgent } from "../src/agent.js"
 import { backoff, parseAlert } from "../src/alerts.js"
 import { blake2b512, parsePublicKey, verifySignature } from "../src/minisign.js"
 import { ServerOrigin } from "../src/origin.js"
 import { begin } from "../src/signin.js"
-import { DIVIDER_WIDTH, dragRange, shareFor, split } from "../src/layout.js"
-import { LIVE_CHATS, Tabs, tabName } from "../src/tabs.js"
-import { toSystemBrowser } from "../src/links.js"
 import { announcement, due, newer, platformKey, reason } from "../src/update.js"
 
 const origin = input => ServerOrigin.parse(input)?.value ?? null
@@ -86,103 +82,6 @@ test("an abandoned sign-in gives up", async () => {
   assert.equal(await handoff.wait(100), null)
 })
 
-test("each chat has its own browser", () => {
-  const tabs = new Tabs()
-  tabs.switch("a")
-  const a = tabs.openLink("https://one.example/")
-  tabs.switch("b")
-  assert.equal(tabs.shown(), null, "b has opened nothing")
-  tabs.openLink("https://two.example/")
-  tabs.switch("a")
-  assert.equal(tabs.shown().id, a, "a gets its own tab back")
-  assert.equal(tabs.strip().length, 1)
-})
-
-test("links open new tabs and reuse one already showing the page", () => {
-  const tabs = new Tabs()
-  tabs.switch("a")
-  const one = tabs.openLink("https://one.example/")
-  const two = tabs.openLink("https://two.example/")
-  assert.equal(tabs.shown().id, two)
-  assert.equal(tabs.openLink("https://one.example/"), one)
-  assert.equal(tabs.strip().length, 2, "no duplicate tab")
-})
-
-test("closing tabs moves to a neighbour and the last one closes the browser", () => {
-  const tabs = new Tabs()
-  tabs.switch("a")
-  const one = tabs.openLink("https://one.example/")
-  const two = tabs.newTab()
-  const three = tabs.newTab()
-  tabs.select(two)
-  assert.ok(tabs.closeTab(two))
-  assert.equal(tabs.shown().id, three)
-  assert.ok(tabs.closeTab(three))
-  assert.equal(tabs.shown().id, one)
-  assert.ok(tabs.closeTab(one))
-  assert.equal(tabs.isOpen, false)
-})
-
-test("the browser button hides and brings back the same tabs", () => {
-  const tabs = new Tabs()
-  tabs.switch("a")
-  tabs.toggle()
-  const blank = tabs.shown()
-  assert.equal(blank.url, null)
-  assert.equal(tabName(blank), "New tab")
-  tabs.toggle()
-  assert.equal(tabs.isOpen, false)
-  tabs.toggle()
-  assert.equal(tabs.shown().id, blank.id, "same tab, no second blank one")
-})
-
-test("a chat left with its browser closed stays closed", () => {
-  const tabs = new Tabs()
-  tabs.switch("a")
-  tabs.openLink("https://one.example/")
-  tabs.hide()
-  tabs.switch("b")
-  tabs.switch("a")
-  assert.equal(tabs.isOpen, false)
-  assert.equal(tabs.strip().length, 1, "tabs kept")
-})
-
-test("only recent chats keep their pages loaded, and the one on screen always does", () => {
-  const tabs = new Tabs()
-  const ids = ["a", "b", "c", "d"].map(name => {
-    tabs.switch(name)
-    const id = tabs.openLink(`https://${name}.example/`)
-    tabs.tab(id).live = true
-    return id
-  })
-  assert.deepEqual(tabs.discard(LIVE_CHATS), [ids[0]], "a is the oldest")
-  assert.deepEqual(tabs.discard(LIVE_CHATS), [], "already unloaded")
-  tabs.switch("a")
-  assert.equal(tabs.shown().live, false, "a's page loads again")
-  assert.equal(tabs.shown().url, "https://a.example/")
-  tabs.shown().live = true
-  assert.ok(!tabs.discard(0).includes(tabs.shown().id))
-})
-
-test("tabs are named by title then host", () => {
-  assert.equal(tabName({ url: "https://docs.example/a", title: "  " }), "docs.example")
-  assert.equal(tabName({ url: "https://docs.example/a", title: "Docs" }), "Docs")
-})
-
-test("the address bar takes addresses with or without a scheme, and searches the rest", () => {
-  assert.equal(addressOrSearch("https://github.com/QuillDev", null), "https://github.com/QuillDev")
-  assert.equal(addressOrSearch("  example.com/a?b=1 ", null), "https://example.com/a?b=1")
-  assert.equal(addressOrSearch("localhost:3000", null), "https://localhost:3000/")
-  assert.equal(addressOrSearch("", null), null)
-  assert.equal(addressOrSearch("nako app", null), "https://www.google.com/search?q=nako+app")
-  for (const text of ["tauri", "file:///etc/passwd", "javascript:alert(1)"]) {
-    const url = new URL(addressOrSearch(text, "duckduckgo"))
-    assert.equal(url.origin + url.pathname, "https://duckduckgo.com/", text)
-    assert.equal(url.searchParams.get("q"), text)
-  }
-  assert.ok(addressOrSearch("x y", "https://evil.example/?q=").startsWith("https://www.google.com/"), "only the listed engines")
-})
-
 /** A minisign key pair in the format the release script's signer writes. */
 function minisign() {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519")
@@ -239,50 +138,7 @@ test("coming back checks again only after a while, and a failed check says what 
   assert.equal(announcement({ state: "ready", version: '1.2.3"; alert(1); "' }), 'window.nakoUpdate = {"state":"ready","version":"1.2.3\\"; alert(1); \\""}; window.dispatchEvent(new Event("nako-update"))')
 })
 
-test("pages see Chrome without the Electron and app tokens, and Google's sign-in sees Firefox", () => {
+test("pages see Chrome without the Electron and app tokens", () => {
   const fallback = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) nako/0.3.0 Chrome/146.0.0.0 Electron/45.0.0 Safari/537.36"
   assert.equal(browserAgent(fallback), "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
-  assert.match(signInAgent("darwin"), /^Mozilla\/5\.0 \(Macintosh; Intel Mac OS X 10\.15; rv:\d+\.0\) Gecko\/20100101 Firefox\/\d+\.0$/)
-  assert.match(signInAgent("win32"), /\(Windows NT 10\.0; Win64; x64; rv:/)
-  assert.match(signInAgent("linux"), /\(X11; Linux x86_64; rv:/)
-})
-
-test("the browser takes 45% of the window beside the chat until the divider is dragged", () => {
-  const [portal, x, pane] = split(1100, true)
-  assert.equal(pane, 495)
-  assert.equal(x, 1100 - 495)
-  assert.equal(portal + DIVIDER_WIDTH + pane, 1100)
-  assert.deepEqual(split(1100, false), [1100, 1100, 0])
-  // Too narrow to share: the browser gets the window.
-  assert.deepEqual(split(700, true), [0, 0, 700])
-})
-
-test("a dragged divider is kept as a share of the window and survives a resize", () => {
-  const share = shareFor(1200, 400)
-  const [portal, , pane] = split(1200, true, share)
-  assert.equal(portal + DIVIDER_WIDTH / 2, 400)
-  // The same share in a wider window keeps the same proportions.
-  const [, , wider] = split(1800, true, share)
-  assert.equal(wider, Math.round(1800 * share))
-  assert.ok(pane > 700)
-})
-
-test("the divider stops before either side gets too narrow", () => {
-  const [least, most] = dragRange(1200)
-  for (const x of [0, 50, least, most, 1190, 5000]) {
-    const [portal, , pane] = split(1200, true, shareFor(1200, x))
-    assert.ok(portal >= 380, `portal ${portal} at ${x}`)
-    assert.ok(pane >= 360, `pane ${pane} at ${x}`)
-  }
-  // A window just wide enough to share still fits both minimums.
-  const [portal, , pane] = split(760, true, 0.9)
-  assert.ok(portal >= 380 && pane >= 360)
-})
-
-test("cmd/ctrl-clicked outside web links go to the system browser, others stay in the app", () => {
-  const onPortal = url => url.startsWith("https://portal.example.com")
-  assert.equal(toSystemBrowser("https://example.org/a", "background-tab", onPortal), true)
-  assert.equal(toSystemBrowser("https://example.org/a", "foreground-tab", onPortal), false)
-  assert.equal(toSystemBrowser("https://portal.example.com/chat/1", "background-tab", onPortal), false)
-  assert.equal(toSystemBrowser("mailto:me@example.org", "background-tab", onPortal), false)
 })

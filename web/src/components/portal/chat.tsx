@@ -1,4 +1,4 @@
-import { GlobeIcon, MoreHorizontalIcon } from "lucide-react"
+import { MoreHorizontalIcon } from "lucide-react"
 import { memo, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skullet } from "@/components/ui/skeleton"
 import { navigate, type Portal } from "@/hooks/use-portal"
-import { toggleAppBrowser, useAppBrowser } from "@/lib/desktop-browser"
 import { retryMarkdown, useMarkdown, useMarkdownError } from "@/lib/markdown"
 import { sourceName } from "@/lib/outside"
 import { inBubble } from "@/lib/bubble"
@@ -27,7 +26,6 @@ import { ChatFind, FindInChatButton } from "./chat-find"
 
 // The open chat's title, background processes and ⋯ menu; unchanged while a turn streams in below it.
 const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable, actions, running, environments }: { title: string; session: string; pinned: boolean; groupable: boolean; actions: ChatActions; running: boolean; environments: boolean }) {
-  const browser = useAppBrowser()
   return (
     <PageHeader title={title}>
       {/* The floating panel keeps to the chat itself; its full controls are one tap away in the app. */}
@@ -35,19 +33,6 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable,
         <>
           {environments && <ChatEnvironments session={session} />}
           <Processes key={session} running={running} session={session} />
-          {browser !== "none" && (
-            <Button
-              aria-label="Browser"
-              aria-pressed={browser === "open"}
-              className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
-              onClick={toggleAppBrowser}
-              size="icon"
-              title="Browser"
-              variant="ghost"
-            >
-              <GlobeIcon />
-            </Button>
-          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button aria-label="More" size="icon" variant="ghost">
