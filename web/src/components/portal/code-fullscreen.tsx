@@ -67,9 +67,16 @@ function FullScreenCode({ code, language, onClose }: { code: string; language: s
     }
   }, [onClose])
   return createPortal(
-    <div aria-label="Code" aria-modal="true" className="fixed inset-0 z-50 flex flex-col bg-background p-4" data-code-fullscreen-view="" role="dialog">
+    // CodeBlock forwards className to its body and <pre>, not its outer container, so size the container and body from here.
+    <div
+      aria-label="Code"
+      aria-modal="true"
+      className="fixed inset-0 z-50 flex flex-col bg-background p-4 [&>[data-streamdown=code-block]]:my-0 [&>[data-streamdown=code-block]]:min-h-0 [&>[data-streamdown=code-block]]:flex-1 [&_[data-streamdown=code-block-body]]:min-h-0 [&_[data-streamdown=code-block-body]]:flex-1 [&_[data-streamdown=code-block-body]]:overflow-y-auto"
+      data-code-fullscreen-view=""
+      role="dialog"
+    >
       <markdown.StreamdownContext.Provider value={unbounded}>
-        <markdown.CodeBlock className="my-0 min-h-0 flex-1" code={code} language={language}>
+        <markdown.CodeBlock code={code} language={language}>
           <markdown.CodeBlockDownloadButton code={code} language={language} />
           <markdown.CodeBlockCopyButton />
           <button className={BUTTON} onClick={onClose} title="Exit full screen" type="button">
