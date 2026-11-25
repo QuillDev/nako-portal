@@ -1,18 +1,15 @@
 // Nako Portal's desktop app: the portal's own web app in a window, plus the glue a browser tab
-// can't do (a server prompt, browser sign-in, notifications, an in-app browser, self-updates).
+// can't do (a server prompt, browser sign-in, notifications, self-updates).
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { BaseWindow, Menu, Notification, Tray, WebContentsView, app, ipcMain, nativeImage, session, shell } from "electron"
 
-import { GOOGLE_SIGN_IN, browserAgent as agentFrom, signInAgent } from "./agent.js"
+import { browserAgent as agentFrom } from "./agent.js"
 import { listen } from "./alerts.js"
 import { FloatingNako } from "./bubble.js"
-import { toSystemBrowser } from "./links.js"
 import { ServerOrigin } from "./origin.js"
-import { Pane } from "./pane.js"
-import { BROWSER_PARTITION } from "./browser-session.js"
 import { trackNotification } from "./notifications.js"
 import { begin } from "./signin.js"
 import { Updater, announcement, platformKey, readPublicKey } from "./update.js"
@@ -30,7 +27,6 @@ if (!app.requestSingleInstanceLock()) app.exit(0)
 const hidden = process.argv.includes("--hidden")
 let window = null
 let portal = null
-let pane = null
 let tray = null
 let origin = null
 let listener = null
@@ -82,10 +78,7 @@ function openPortal(next) {
     listener?.stop()
     listener = listen({ origin, cookie: cookieHeader, onAlert: showAlert, onFrame: text => floating?.frame(text), log })
     updater.watch(origin)
-    if (changed) {
-      pane?.reset()
-      floating?.reset()
-    }
+    if (changed) floating?.reset()
   }
   portal.webContents.loadURL(origin.url)
   refreshFloating()
@@ -102,27 +95,20 @@ const onPortal = url => Boolean(origin?.opensInApp(url))
 
 // ---- what pages may ask ----
 
-/** Commands, and who may send them: the app's own pages (file://), the portal, or the browser's toolbar. */
+/** Commands, and who may send them: the app's own pages (file://) or the portal. */
 const COMMANDS = {
   start: ["local"],
   connect: ["local"],
-  pane: ["bar"],
-  pane_divider: ["divider"],
-  pane_chat: ["portal"],
-  pane_search: ["portal"],
-  pane_toggle: ["portal"],
   floating: ["portal"],
   update: ["portal"],
-  "plugin:window|minimize": ["local", "portal", "bar"],
-  "plugin:window|toggle_maximize": ["local", "portal", "bar"],
-  "plugin:window|internal_toggle_maximize": ["local", "portal", "bar"],
-  "plugin:window|close": ["local", "portal", "bar"],
+  "plugin:window|minimize": ["local", "portal"],
+  "plugin:window|toggle_maximize": ["local", "portal"],
+  "plugin:window|internal_toggle_maximize": ["local", "portal"],
+  "plugin:window|close": ["local", "portal"],
 }
 
 function sender(event) {
   const url = event.senderFrame?.url ?? ""
-  if (pane?.bar && event.sender === pane.bar.webContents) return url.startsWith("file:") ? "bar" : null
-  if (pane?.divider && event.sender === pane.divider.webContents) return url.startsWith("file:") ? "divider" : null
   if (event.sender !== portal?.webContents) return null
   if (url.startsWith("file:")) return "local"
   return onPortal(url) ? "portal" : null
@@ -151,16 +137,6 @@ ipcMain.handle("nako", async (event, command, args = {}) => {
       openPortal(next)
       return null
     }
-    case "pane":
-      return pane.action(String(args.action), args.target == null ? null : String(args.target))
-    case "pane_divider":
-      return pane.drag(String(args.action), args.target == null ? null : String(args.target))
-    case "pane_chat":
-      return pane.chat(typeof args.chat === "string" ? args.chat : null)
-    case "pane_search":
-      return pane.search(String(args.engine))
-    case "pane_toggle":
-      return pane.toggle()
     case "floating":
       return setFloating(Boolean(args.on))
     case "update":
@@ -178,13 +154,12 @@ ipcMain.handle("nako", async (event, command, args = {}) => {
 
 // ---- the portal's view ----
 
-/** Same-origin pages stay in the app; other web pages open in the in-app browser, everything else goes to the system. */
+/** Same-origin pages stay in the app; everything else goes to the system browser. */
 function navigate(event, url) {
   if (url.startsWith("file:")) return
   if (!onPortal(url)) {
     event.preventDefault()
-    if (/^https?:/i.test(url)) pane.open(url)
-    else external(url)
+    external(url)
     return
   }
   const path = new URL(url).pathname
@@ -212,14 +187,11 @@ async function startSignIn() {
   }
 }
 
-/** Tells the portal whether its window buttons belong to it (the pane's toolbar has them while open) and whether the browser is open. */
+/** Tells the portal whether the floating companion is on. */
 function tellPortal() {
-  const open = Boolean(pane?.isOpen)
-  const controls = MAC ? "" : `if (window.nakoWindow) { window.nakoWindow.controls = ${!open}; window.dispatchEvent(new Event("nako-window")) }`
-  const browser = `if (window.nakoBrowser) { window.nakoBrowser.open = ${open}; window.dispatchEvent(new Event("nako-browser")) }`
   // Settings' "Floating Nako" switch reads this.
   const float = `window.nakoFloating = { on: ${floatingOn()} }; window.dispatchEvent(new Event("nako-floating"))`
-  if (onPortal(portal.webContents.getURL())) portal.webContents.executeJavaScript(controls + browser + float).catch(() => {})
+  if (onPortal(portal.webContents.getURL())) portal.webContents.executeJavaScript(float).catch(() => {})
 }
 
 // The portal marks its title bar strips for the earlier app's drag regions; Chromium drags by CSS.
@@ -248,11 +220,7 @@ function createWindow() {
   // Tagged so the portal offers browser sign-in instead of passkeys.
   page.setUserAgent(`${browserAgent()} NakoDesktop/${app.getVersion()}`)
   page.on("will-navigate", event => navigate(event, event.url))
-  page.setWindowOpenHandler(({ url, disposition }) => {
-    if (toSystemBrowser(url, disposition, onPortal)) {
-      external(url)
-      return { action: "deny" }
-    }
+  page.setWindowOpenHandler(({ url }) => {
     const event = { defaultPrevented: false, preventDefault() { this.defaultPrevented = true } }
     navigate(event, url)
     if (!event.defaultPrevented) page.loadURL(url)
@@ -272,22 +240,12 @@ function createWindow() {
     tellPortal()
   })
 
-  pane = new Pane({
-    window,
-    portal,
-    opensInPortal: onPortal,
-    toPortal: url => page.loadURL(url),
-    external,
-    barPage: join(root, "ui", "browser.html"),
-    barPreload: join(root, "src", "preload.cjs"),
-    dividerPage: join(root, "ui", "divider.html"),
-    userAgent: browserAgent(),
-    share: settings().paneShare,
-    keepShare: paneShare => saveSettings({ paneShare }),
-    changed: tellPortal,
-  })
-  pane.layout()
-  window.on("resize", () => pane.layout())
+  const fitPortal = () => {
+    const { width, height } = window.getContentBounds()
+    portal.setBounds({ x: 0, y: 0, width, height })
+  }
+  fitPortal()
+  window.on("resize", fitPortal)
   window.on("close", event => {
     // Closing hides to the tray, so alerts keep coming.
     if (!quitting && tray) {
@@ -348,12 +306,7 @@ function createFloating() {
     saved: () => settings().floatingSpot,
     keep: floatingSpot => saveSettings({ floatingSpot }),
     openInApp: chat => (chat ? openChat(chat) : showMain()),
-    openExternally: external,
-    openLink: url => {
-      showMain()
-      if (/^https?:/i.test(url)) pane.open(url)
-      else external(url)
-    },
+    openLink: external,
     signIn: () => {
       showMain()
       startSignIn()
@@ -450,7 +403,6 @@ function trayMenu() {
     {
       label: "Change server",
       click: () => {
-        pane.close()
         localPage("change=1")
         showMain()
       },
@@ -487,20 +439,13 @@ app.on("window-all-closed", () => {})
 
 app.whenReady().then(() => {
   app.setAppUserModelId(IDENTIFIER)
-  // Downloads from the portal or the in-app browser go to the Downloads folder.
-  const signIn = signInAgent()
-  for (const browsing of [session.defaultSession, session.fromPartition(BROWSER_PARTITION)]) {
-    browsing.webRequest.onBeforeSendHeaders({ urls: GOOGLE_SIGN_IN }, (details, callback) => {
-      details.requestHeaders["User-Agent"] = signIn
-      callback({ requestHeaders: details.requestHeaders })
+  // Downloads from the portal go to the Downloads folder.
+  session.defaultSession.on("will-download", (_event, item) => {
+    item.setSavePath(join(app.getPath("downloads"), item.getFilename()))
+    item.once("done", (_e, state) => {
+      if (state === "completed") notify(`Saved ${item.getFilename()}`, "In your Downloads folder")
     })
-    browsing.on("will-download", (_event, item) => {
-      item.setSavePath(join(app.getPath("downloads"), item.getFilename()))
-      item.once("done", (_e, state) => {
-        if (state === "completed") notify(`Saved ${item.getFilename()}`, "In your Downloads folder")
-      })
-    })
-  }
+  })
   try {
     createTray()
   } catch (error) {

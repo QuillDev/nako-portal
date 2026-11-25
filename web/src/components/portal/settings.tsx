@@ -8,7 +8,6 @@ import { Switch } from "@/components/ui/switch"
 import { GatewayRestart } from "./gateway-restart"
 import { type Portal } from "@/hooks/use-portal"
 import { api, ApiError } from "@/lib/api"
-import { canPickSearch, SEARCH_ENGINES, type SearchEngine, setSearchEngine, useSearchEngine } from "@/lib/desktop-browser"
 import { cancelled, register } from "@/lib/passkeys"
 import { appAlerts, appBubble, enablePush, openAppNotificationSettings, pushState, setAppBubble } from "@/lib/push"
 import { setPresence, usePresence } from "@/lib/presence"
@@ -132,18 +131,6 @@ function ProfileRow({ state, onPick: pick }: { state: Profiles; onPick: (profile
   )
 }
 
-// The desktop app's in-app browser: what the address bar searches with.
-function SearchEngineRow() {
-  const engine = useSearchEngine()
-  if (!canPickSearch()) return null
-  return (
-    <Row label="Search engine">
-      <SearchableDropdown label="Search engine" value={engine} onPick={setSearchEngine} className="w-40" align="end"
-        options={(Object.keys(SEARCH_ENGINES) as SearchEngine[]).map(value => ({ value, label: SEARCH_ENGINES[value] }))} />
-    </Row>
-  )
-}
-
 export function Settings({ portal, page }: { portal: Portal; page: string | null }) {
   const [passkeys, setPasskeys] = useState<Passkey[] | null>(null)
   const [push, setPush] = useState(pushState())
@@ -204,7 +191,6 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
             placeholder="for the greeting"
           />
         </Row>
-        <SearchEngineRow />
       </>
     ),
     notifications: (

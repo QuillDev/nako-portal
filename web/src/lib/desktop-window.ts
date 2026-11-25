@@ -16,8 +16,7 @@ declare global {
   }
 }
 
-// While the app's in-app browser is open, its toolbar holds the window buttons: the app sets
-// controls to false and fires "nako-window", and back again when the browser closes.
+// The app fires "nako-window" if window control visibility changes.
 const subscribe = (changed: () => void) => {
   window.addEventListener("nako-window", changed)
   return () => window.removeEventListener("nako-window", changed)

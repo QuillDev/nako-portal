@@ -6,8 +6,8 @@ A private, passkey-protected portal for Hermes. Create and continue portal-nativ
 
 - `plugin.yaml` and `__init__.py` register the Hermes plugin and its portal messaging platform. The gateway adapter connects to a separate local portal server.
 - `dashboard/portal/` contains the Python HTTP/WebSocket server, authentication, storage and gateway link. `web/` contains the React/TypeScript UI; its production build is served from `dashboard/web/`.
-- `desktop/` is an Electron shell with browser sign-in, notifications, per-chat browser panes, a floating companion and signed updates. External panes use a separate browser session with native permissions denied. Linux AppImage and Windows builds update from the portal; the macOS app updates through Homebrew.
-- `android/` is a Kotlin WebView shell with a direct alert socket, an optional bubble, browser panes and APK updates. It retains at most three live browser tabs per retained chat across three chats; other tabs reload from their saved URLs.
+- `desktop/` is an Electron shell with browser sign-in, notifications, a floating companion and signed updates. Linux AppImage and Windows builds update from the portal; the macOS app updates through Homebrew.
+- `android/` is a Kotlin WebView shell with a direct alert socket, an optional bubble and APK updates.
 
 The shells load the portal's web app from the configured server. UI deployments do not require rebuilding the native shells.
 

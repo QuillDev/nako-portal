@@ -5,7 +5,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -65,8 +64,6 @@ class MainActivity : ComponentActivity() {
     private val updater by lazy { AppUpdater(this) }
     private lateinit var root: FrameLayout
     private var webView: WebView? = null
-    /** The in-app browser beside the chat, on screens wide enough for it. */
-    private var pane: BrowserPane? = null
     private var pendingFiles: ValueCallback<Array<Uri>>? = null
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -137,7 +134,6 @@ class MainActivity : ComponentActivity() {
         visible = false
         AlertService.running?.refreshBubble()
         webView?.onPause()
-        pane?.pause()
         // Instance method, but it stops timers in every WebView of the app.
         webView?.pauseTimers()
         super.onStop()
@@ -149,7 +145,6 @@ class MainActivity : ComponentActivity() {
         AlertService.running?.refreshBubble()
         webView?.resumeTimers()
         webView?.onResume()
-        pane?.resume()
     }
 
     override fun onDestroy() {
@@ -176,26 +171,6 @@ class MainActivity : ComponentActivity() {
     private inner class AppBridge {
         @JavascriptInterface
         fun notifications(): String = if (NotificationManagerCompat.from(this@MainActivity).areNotificationsEnabled()) "on" else "off"
-
-        /** The chat header's browser button, on a screen wide enough for the in-app browser. */
-        @JavascriptInterface
-        fun toggleBrowser() {
-            runOnUiThread { pane?.let { browser -> withPortalLook(browser) { browser.toggle() } } }
-        }
-
-        /** The portal shows chat [id] ("" for no chat): the in-app browser switches to that chat's tabs. */
-        @JavascriptInterface
-        fun chat(id: String?) {
-            runOnUiThread { pane?.chat(id?.takeIf { it.isNotEmpty() }) }
-        }
-
-        /** A Ctrl- or Cmd-clicked link in the chat: the system browser, never the in-app one. */
-        @JavascriptInterface
-        fun openExternally(link: String?) {
-            val uri = link?.let(Uri::parse)?.takeIf { it.scheme == "http" || it.scheme == "https" } ?: return
-            if (origin?.opensInApp(link) == true) return
-            runOnUiThread { this@MainActivity.openExternally(uri) }
-        }
 
         /** Nako's floating sticker over other apps: "on" only when switched on and allowed to draw over apps. */
         @JavascriptInterface
@@ -230,50 +205,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Folding, rotating or resizing the window keeps the activity (configChanges): fit the pane to
-    // the new width, or hand its page to a Custom Tab when the screen is now too narrow for it.
-    override fun onConfigurationChanged(newConfig: Configuration) {
-        super.onConfigurationChanged(newConfig)
-        tellPortal()
-        val open = pane?.takeIf { it.isOpen } ?: return
-        if (PaneLayout.fits(newConfig.screenWidthDp)) {
-            open.resize(newConfig.screenWidthDp)
-        } else {
-            val url = open.currentUrl
-            open.close()
-            url?.let { openExternally(Uri.parse(it)) }
-        }
-    }
-
-    /** Asks the portal whether it's showing its light theme and which search engine it picked, then runs [then]. */
-    private fun withPortalLook(browser: BrowserPane, then: () -> Unit) {
-        val web = webView ?: return then()
-        web.evaluateJavascript("[document.documentElement.classList.contains('light'), localStorage.getItem('browser:search')].join(' ')") { look ->
-            val (light, engine) = look.trim('"').split(' ').let { it.getOrNull(0) to it.getOrNull(1) }
-            browser.light = light == "true"
-            browser.engine = engine?.takeUnless { it == "null" || it.isEmpty() }
-            then()
-        }
-    }
-
-    /** Tells the portal whether it can open the browser from the chat header (wide screens) and whether it's open. */
-    private fun tellPortal() {
-        val fits = PaneLayout.fits(resources.configuration.screenWidthDp)
-        val open = pane?.isOpen == true
-        webView?.evaluateJavascript(
-            "window.nakoBrowser = Object.assign(window.nakoBrowser || {}, { search: $fits, toggle: $fits, open: $open }); " +
-                "window.dispatchEvent(new Event('nako-browser'))",
-            null,
-        )
-    }
-
     private val backCallback = object : OnBackPressedCallback(true) {
         override fun handleOnBackPressed() {
             val web = webView
-            val browser = pane?.takeIf { it.isOpen }
-            if (browser != null) {
-                if (!browser.goBack()) browser.close()
-            } else if (web != null && web.canGoBack()) {
+            if (web != null && web.canGoBack()) {
                 web.goBack()
             } else {
                 isEnabled = false
@@ -305,11 +240,7 @@ class MainActivity : ComponentActivity() {
         }
         CookieManager.getInstance().setAcceptCookie(true)
         webView = web
-        // The chat fills a row the in-app browser can join on a wide screen.
-        val split = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        split.addView(web, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        root.addView(split, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        pane = BrowserPane(this, split, server, preferences, openInPortal = { webView?.loadUrl(it) }, openExternally = ::openExternally, changed = ::tellPortal)
+        root.addView(web, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         if (startUrl != null) {
             web.loadUrl(startUrl)
         } else if (savedInstanceState == null || web.restoreState(savedInstanceState) == null) {
@@ -323,12 +254,7 @@ class MainActivity : ComponentActivity() {
             if (server.opensInApp(link)) {
                 return false
             }
-            val browser = pane
-            if (browser != null && PaneLayout.fits(resources.configuration.screenWidthDp) && PaneLayout.browsesInPane(link)) {
-                withPortalLook(browser) { browser.open(link) }
-            } else {
-                openExternally(request.url)
-            }
+            openExternally(request.url)
             return true
         }
 
@@ -337,14 +263,12 @@ class MainActivity : ComponentActivity() {
             if (view !== webView) return
             startListening()
             if (server.opensInApp(url)) {
-                view.evaluateJavascript(CHAT_WATCH, null)
-                tellPortal()
+                view.evaluateJavascript(THEME_WATCH, null)
             }
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             if (view === webView) {
-                closePane()
                 root.removeAllViews()
                 webView = null
                 view.destroy()
@@ -374,13 +298,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun closePane() {
-        pane?.destroy()
-        pane = null
-    }
-
     private fun destroyWebApp() {
-        closePane()
         val old = webView
         webView = null
         old?.let {
@@ -446,7 +364,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showUnreachable(server: ServerOrigin, detail: String?) {
-        closePane()
         root.removeAllViews()
         webView?.stopLoading()
         showLook(false)
@@ -499,32 +416,13 @@ class MainActivity : ComponentActivity() {
         var visible = false
             private set
 
-        /** Runs in the portal: reports the chat on screen as it changes, so the browser shows that chat's tabs. */
-        private const val CHAT_WATCH = """(() => {
-  if (window.__nakoChatWatch || !window.NakoApp || !window.NakoApp.chat) return
-  window.__nakoChatWatch = true
-  let last
-  const send = () => {
-    const chat = (location.hash.match(/^#\/c\/([\w.-]+)/) || [])[1] || ""
-    if (chat === last) return
-    last = chat
-    window.NakoApp.chat(chat)
-  }
-  addEventListener("hashchange", send)
-  send()
-  if (window.NakoApp.look) {
-    const look = () => window.NakoApp.look(document.documentElement.classList.contains("light"))
-    new MutationObserver(look).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
-    look()
-  }
-  addEventListener("click", event => {
-    if (!(event.ctrlKey || event.metaKey) || !window.NakoApp.openExternally) return
-    const link = event.target.closest && event.target.closest("a[href]")
-    if (!link || !/^https?:$/.test(link.protocol) || link.origin === location.origin) return
-    event.preventDefault()
-    event.stopPropagation()
-    window.NakoApp.openExternally(link.href)
-  }, true)
+        /** Runs in the portal: watches light/dark theme changes so the system bar strips match. */
+        private const val THEME_WATCH = """(() => {
+  if (window.__portalThemeWatch || !window.NakoApp || !window.NakoApp.look) return
+  window.__portalThemeWatch = true
+  const look = () => window.NakoApp.look(document.documentElement.classList.contains("light"))
+  new MutationObserver(look).observe(document.documentElement, { attributes: true, attributeFilter: ["class"] })
+  look()
 })()"""
         private val BACKGROUND = "#0D0A11".toColorInt()
         /** The portal's light page colour, for the strips beside it. */
