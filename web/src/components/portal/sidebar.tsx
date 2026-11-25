@@ -3,10 +3,12 @@ import { type DragEvent, memo, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { openChatSearch, SEARCH_KEYS } from "@/components/portal/chat-search";
 import type { Portal } from "@/hooks/use-portal";
+import { useAndroidAppUrl } from "@/lib/android-app";
 import { inBubble } from "@/lib/bubble";
 import type { GroupColor, SessionRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useDrawer } from "./drawer";
+import { OpenInApp } from "./header";
 import { LoadingRows } from "./screen-loading";
 import { LoadWarning } from "./load-warning";
 import { useGroupPicker, useGroupRename } from "./groups";
@@ -25,6 +27,7 @@ type SidebarProps = Pick<Portal, "sessions" | "sessionsState" | "pin" | "archive
 // Streaming text never enters these props; only sidebar-visible state can redraw the list.
 export const Sidebar = memo(function Sidebar({ className, currentSession, currentTitle, currentSource, ...portal }: SidebarProps) {
   const { go, phone, toggle } = useDrawer();
+  const appUrl = useAndroidAppUrl();
   const rename = useRenameDialog({ ...portal, current: currentSession ? { session: currentSession, title: currentTitle ?? "" } : null });
   const picker = useGroupPicker(portal);
   const renameGroup = useGroupRename(portal);
@@ -103,6 +106,7 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
         >
           {!inBubble && <img alt="" className="size-6" src="/favicon.png" />}
           <span className="flex-1 font-medium text-sm">Nako</span>
+          {!inBubble && appUrl && <OpenInApp href={appUrl} />}
           <Button
             aria-label="New chat"
             onClick={() => go("#/new")}
