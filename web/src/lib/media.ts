@@ -42,6 +42,7 @@ function cut(text: string, found: Found[]) {
 }
 
 export const isImage = (path: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path)
+export const isHtml = (path: string) => /\.html?$/i.test(path)
 
 /** A reply without its MEDIA: tags, and the files they deliver. */
 export function splitReply(text: string) {

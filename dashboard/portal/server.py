@@ -938,18 +938,31 @@ class Portal(AuthRoutes, LocalAPI):
         return self._file_response(path, raw, request.query.get("download") == "1")
 
     def _file_response(self, path, raw, download=False):
-        """Pictures, sound and PDFs open in place; `download` saves any of them under its own name."""
+        """Pictures, sound, PDFs and HTML open in place; `download` saves any of them under its own name."""
         from pathlib import PureWindowsPath
         from urllib.parse import quote
 
         name = PureWindowsPath(raw).name
         kind = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        inline = kind.startswith(("image/", "audio/", "video/")) or kind == "application/pdf"
+        inline = kind.startswith(("image/", "audio/", "video/")) or kind in {"application/pdf", "text/html"}
         disposition = "inline" if inline and not download else "attachment"
+        content_type = "text/html; charset=utf-8" if kind == "text/html" else kind
+        csp = (
+            "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox; frame-ancestors 'self'"
+            if kind == "text/html" and not download
+            else "sandbox"
+        )
         # A plain ASCII name first for clients that don't read `filename*` (some Android versions).
         plain = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in name)
         return web.FileResponse(
-            path, headers={"Content-Type": kind, "Content-Disposition": f"{disposition}; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}", "Cache-Control": SHOWN_FILE_CACHE, "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"}
+            path,
+            headers={
+                "Content-Type": content_type,
+                "Content-Disposition": f"{disposition}; filename=\"{plain}\"; filename*=UTF-8''{quote(name, safe='')}",
+                "Cache-Control": SHOWN_FILE_CACHE,
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": csp,
+            },
         )
 
     async def _shown_files(self, hub, session, wanted):

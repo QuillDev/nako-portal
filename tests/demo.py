@@ -175,6 +175,83 @@ async def main(port):
     for name in ("layout.png", "error.png"):
         (shots / name).write_bytes((ROOT / "web" / "public" / "icon-512.png").read_bytes())
     (shots / "barcode.png").write_bytes((ROOT / "web" / "public" / "icon-192.png").read_bytes())
+    (shots / "order-email.html").write_text(
+        """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Order #4819 Confirmed</title>
+<style>
+  body { margin: 0; padding: 24px 16px; background: #f4f4f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #18181b; }
+  .wrap { max-width: 580px; margin: 0 auto; background: #ffffff; border: 1px solid #e4e4e7; border-radius: 10px; overflow: hidden; }
+  .head { background: #18181b; color: #ffffff; padding: 24px 28px; }
+  .head h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  .head p { margin: 0; color: #a1a1aa; font-size: 13px; }
+  .body { padding: 24px 28px; }
+  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #dcfce7; color: #166534; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 0; border-bottom: 1px solid #e4e4e7; }
+  td:last-child, th:last-child { text-align: right; }
+  .total td { font-weight: 600; border-bottom: none; padding-top: 14px; }
+  .cta { display: inline-block; margin-top: 12px; padding: 10px 18px; border-radius: 6px; background: #18181b; color: #ffffff; text-decoration: none; font-size: 14px; font-weight: 500; border: 0; cursor: pointer; }
+  .note { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e4e4e7; font-size: 13px; color: #52525b; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <h1>Your order is on the way</h1>
+      <p>Order #4819 · Placed Nov 25, 2026</p>
+    </div>
+    <div class="body">
+      <div class="badge" id="status-badge">Preparing shipment</div>
+      <p style="margin: 0 0 12px; font-size: 14px; line-height: 1.6;">Thanks for ordering! Your package has left the warehouse and will arrive Thursday before 8:00 PM.</p>
+      <table>
+        <thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead>
+        <tbody>
+          <tr><td>Mechanical Keycap Set (PBT)</td><td>1</td><td>$64.00</td></tr>
+          <tr><td>USB-C Coiled Cable (1.5m)</td><td>1</td><td>$28.00</td></tr>
+          <tr><td>Desk Mat — Slate</td><td>2</td><td>$44.00</td></tr>
+          <tr><td>Shipping (Express)</td><td>—</td><td>$12.00</td></tr>
+          <tr class="total"><td colspan="2">Total</td><td>$148.00</td></tr>
+        </tbody>
+      </table>
+      <button class="cta" id="toggle-details" type="button">Show tracking timeline</button>
+      <div id="timeline" style="display:none; margin-top: 14px; padding: 12px; background: #f4f4f5; border-radius: 6px; font-size: 13px; line-height: 1.6;">
+        <div><strong>10:15 AM</strong> — Departed Oakland hub</div>
+        <div><strong>07:40 AM</strong> — Label scanned at warehouse</div>
+        <div><strong>Yesterday</strong> — Order confirmed</div>
+      </div>
+      <div class="note">
+        <p><strong>Shipping address</strong><br />Sam Rivera<br />742 Evergreen Terrace<br />San Francisco, CA 94107</p>
+        <p>Need to make a change? Reply directly to this email and our support team will update your delivery preferences before the courier picks up the parcel.</p>
+        <p>Returns are accepted within 30 days of delivery in original packaging. Refunds post to your original payment method within 3–5 business days.</p>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.getElementById("status-badge").textContent = "In transit · JS active";
+    document.getElementById("toggle-details").addEventListener("click", function () {
+      var box = document.getElementById("timeline");
+      var open = box.style.display !== "none";
+      box.style.display = open ? "none" : "block";
+      this.textContent = open ? "Show tracking timeline" : "Hide tracking timeline";
+    });
+  </script>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
+    hermes.add_session(
+        "20261024_085500_h7a100",
+        "Email preview",
+        messages=[
+            ("user", "render the shipping confirmation email so i can check the layout"),
+            ("assistant", f"here's the rendered email:\n\nMEDIA:{shots / 'order-email.html'}\nMEDIA:{shots / 'missing-draft.html'}"),
+        ],
+    )
     hermes.add_session(
         "20261024_085000_dddddd",
         "Label layout",
