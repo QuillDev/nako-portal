@@ -1,7 +1,13 @@
+import { Skeleton as Skullet, SkeletonBox } from "skullet/react"
 import { cn } from "@/lib/utils"
 
-function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("animate-pulse motion-reduce:animate-none rounded-md bg-accent", className)} data-slot="skeleton" {...props} />
+// A lone skullet-shimmering bar sized by Tailwind classes (passing empty strings lets className control size and radius).
+function Skeleton({ className, style, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div className={cn("overflow-hidden rounded-md", className)} data-slot="skeleton" style={style} {...props}>
+      <SkeletonBox className="size-full" height="" radius="" width="" />
+    </div>
+  )
 }
 
-export { Skeleton }
+export { Skeleton, SkeletonBox, Skullet }

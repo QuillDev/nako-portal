@@ -1,5 +1,6 @@
 import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon, XIcon } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { DialogClose } from "@/components/ui/dialog"
 
 type View = { scale: number; x: number; y: number }
@@ -180,7 +181,7 @@ export function ImageViewer({
       onPointerUp={onPointerUp}
       ref={box}
     >
-      {media?.src !== src && <span role="status" className="absolute h-1/3 w-1/2 animate-pulse rounded-md bg-white/10 motion-reduce:animate-none"><span className="sr-only">Loading image…</span></span>}
+      {media?.src !== src && <Skeleton role="status" className="absolute h-1/3 w-1/2"><span className="sr-only">Loading image…</span></Skeleton>}
       {media?.src === src && !media.ok && <p role="alert" className="absolute text-sm text-white">Image unavailable</p>}
       <img
         alt={name}

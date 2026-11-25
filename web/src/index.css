@@ -27,6 +27,9 @@
   --input: rgb(255 255 255 / 10%);
   --focus-fill: rgb(255 255 255 / 17%);
   --sidebar: #09090b;
+  --skullet-base: rgb(255 255 255 / 7%);
+  --skullet-highlight: rgb(255 255 255 / 11%);
+  --skullet-radius: 0.375rem;
 }
 
 :root.light {
@@ -49,6 +52,9 @@
   --input: rgb(0 0 0 / 12%);
   --focus-fill: rgb(0 0 0 / 13%);
   --sidebar: #fbfbfc;
+  --skullet-base: rgb(0 0 0 / 7%);
+  --skullet-highlight: rgb(255 255 255 / 60%);
+  --skullet-radius: 0.375rem;
 }
 
 @theme inline {

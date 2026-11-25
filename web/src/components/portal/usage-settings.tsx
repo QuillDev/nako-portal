@@ -1,10 +1,41 @@
 import { useEffect, useState } from "react"
+import { Skullet } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import type { Provider } from "@/lib/providers"
 import type { Usage } from "@/lib/usage"
 import { ProviderMark } from "./provider-mark"
-import { UsageSkeleton } from "./usage-skeleton"
 import { cn } from "@/lib/utils"
+
+const SAMPLE_RESET = new Date(Date.now() + 3 * 3600_000).toISOString()
+const SAMPLE_WEEK = new Date(Date.now() + 96 * 3600_000).toISOString()
+const SAMPLE_USAGE: Usage = {
+  providers: [
+    {
+      provider: "claude-subscription-directsdk-experimental",
+      label: "Claude",
+      accounts: [{
+        label: "alex@example.test",
+        note: null,
+        windows: [
+          { label: "Current session", used_percent: 24, resets_at: SAMPLE_RESET },
+          { label: "Current week", used_percent: 42, resets_at: SAMPLE_WEEK },
+        ],
+      }],
+    },
+    {
+      provider: "openai-codex",
+      label: "ChatGPT / Codex",
+      accounts: [{
+        label: "alex@example.test",
+        note: null,
+        windows: [
+          { label: "Current session", used_percent: 12, resets_at: SAMPLE_RESET },
+          { label: "Current week", used_percent: 18, resets_at: SAMPLE_WEEK },
+        ],
+      }],
+    },
+  ],
+}
 
 type Window = Usage["providers"][number]["accounts"][number]["windows"][number]
 
@@ -43,7 +74,7 @@ function Limit({ window, label, length, now }: { window: Window; label: string; 
   return (
     <div className="grid grid-cols-[3.25rem_minmax(0,1fr)_5rem] items-center gap-x-3 gap-y-1 text-sm" data-usage-window={window.label}>
       <span>{label}</span>
-      <div className="relative">
+      <div className="relative" {...{ "skullet-block": "" }}>
         <div className="relative h-1 overflow-hidden rounded-full bg-muted">
           {estimate && estimate.projected > used && (
             <div className="absolute inset-y-0 bg-primary/30" title={`Projected at reset: ${Math.round(estimate.projected)}%`} data-usage-projected style={{ left: `${used}%`, width: `${estimate.projected - used}%` }} />
@@ -75,39 +106,44 @@ export function UsageSettings({ state, providers, session }: { state: Usage | nu
   }, [session])
   const active = selection?.session === session ? selection?.provider : undefined
   const now = Date.now()
-  if (!state) return <UsageSkeleton />
-  const sections = state.providers.flatMap(provider => {
-    const identities = providers?.find(p => p.slug === provider.provider)?.accounts
-    const title = Object.hasOwn(titles, provider.provider) ? titles[provider.provider] : provider.label
-    const accounts = provider.accounts.flatMap((account, index) => {
-      const groups = new Map<string, { window: Window; label: string; length: number }[]>()
-      for (const window of account.windows) {
-        const p = period(window.label)
-        if (!p) continue
-        const rows = groups.get(p.group) ?? []
-        rows.push({ window, label: p.label, length: p.length })
-        groups.set(p.group, rows)
-      }
-      if (!groups.size) return []
-      const identity = identities?.find(a => a.id === account.label || a.label === account.label)
-      const label = identity?.email || (/^(primary|secondary)$/i.test(account.label) ? `Account ${index + 1}` : account.label)
-      return <div key={account.label || index} className="space-y-3" data-usage-account={account.label}>
-        {label && <p className="break-words font-medium text-sm">{label}</p>}
-        {Array.from(groups, ([group, rows]) => <div className="space-y-3" key={group}>
-          {group && <p className="font-medium text-sm">{group}</p>}
-          {rows.sort((a, b) => a.length - b.length).map(row => <Limit key={row.window.label} {...row} now={now} />)}
-        </div>)}
-      </div>
-    })
-    if (!accounts.length) return []
-    return [{ slug: provider.provider, view: <section key={provider.provider} data-usage-provider={provider.provider} className="space-y-4 border-b pb-5 last:border-0">
-      <h2 className="flex flex-wrap items-center gap-2 font-semibold text-lg">
-        <ProviderMark slug={provider.provider} />
-        {title}{provider.provider === active && <span className="font-normal text-muted-foreground text-xs">{session ? "This chat" : "Profile default"}</span>}
-      </h2>
-      {accounts}
-    </section> }]
-  })
-  if (!sections.length) return <p className="text-muted-foreground text-sm">No five-hour or weekly limits reported.</p>
-  return <div className="space-y-5">{sections.sort((a, b) => Number(b.slug === active) - Number(a.slug === active)).map(s => s.view)}</div>
+  return (
+    <Skullet data={state} id="settings-usage" label="Loading usage limits…" sample={SAMPLE_USAGE}>
+      {data => {
+        const sections = data.providers.flatMap(provider => {
+          const identities = providers?.find(p => p.slug === provider.provider)?.accounts
+          const title = Object.hasOwn(titles, provider.provider) ? titles[provider.provider] : provider.label
+          const accounts = provider.accounts.flatMap((account, index) => {
+            const groups = new Map<string, { window: Window; label: string; length: number }[]>()
+            for (const window of account.windows) {
+              const p = period(window.label)
+              if (!p) continue
+              const rows = groups.get(p.group) ?? []
+              rows.push({ window, label: p.label, length: p.length })
+              groups.set(p.group, rows)
+            }
+            if (!groups.size) return []
+            const identity = identities?.find(a => a.id === account.label || a.label === account.label)
+            const label = identity?.email || (/^(primary|secondary)$/i.test(account.label) ? `Account ${index + 1}` : account.label)
+            return <div key={account.label || index} className="space-y-3" data-usage-account={account.label}>
+              {label && <p className="break-words font-medium text-sm">{label}</p>}
+              {Array.from(groups, ([group, rows]) => <div className="space-y-3" key={group}>
+                {group && <p className="font-medium text-sm">{group}</p>}
+                {rows.sort((a, b) => a.length - b.length).map(row => <Limit key={row.window.label} {...row} now={now} />)}
+              </div>)}
+            </div>
+          })
+          if (!accounts.length) return []
+          return [{ slug: provider.provider, view: <section key={provider.provider} data-usage-provider={provider.provider} className="space-y-4 border-b pb-5 last:border-0">
+            <h2 className="flex flex-wrap items-center gap-2 font-semibold text-lg">
+              <ProviderMark slug={provider.provider} />
+              {title}{provider.provider === active && <span className="font-normal text-muted-foreground text-xs">{session ? "This chat" : "Profile default"}</span>}
+            </h2>
+            {accounts}
+          </section> }]
+        })
+        if (!sections.length) return <p className="text-muted-foreground text-sm">No five-hour or weekly limits reported.</p>
+        return <div className="space-y-5">{sections.sort((a, b) => Number(b.slug === active) - Number(a.slug === active)).map(s => s.view)}</div>
+      }}
+    </Skullet>
+  )
 }

@@ -6,6 +6,7 @@ import { Message, MessageContent, MessageResponse } from "@/components/ai-elemen
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { downloadUrl, fileUrl } from "@/lib/api"
 import { SharedSecret } from "./secrets"
@@ -143,7 +144,7 @@ function Thumb({ item, onOpen, onBroken }: { item: Item; onOpen: () => void; onB
   return (
     <button aria-label={`Open ${item.name}`} className="relative h-48 w-64 max-w-full cursor-zoom-in rounded-md outline-none" onClick={onOpen} type="button">
       <img alt={item.name} className="size-full rounded-md border object-contain" loading="lazy" onLoad={() => setReady(true)} onError={onBroken} src={item.url} />
-      {!ready && <span role="status" aria-label="Loading image" className="absolute inset-0 animate-pulse rounded-md bg-accent motion-reduce:animate-none" />}
+      {!ready && <Skeleton role="status" aria-label="Loading image" className="absolute inset-0" />}
     </button>
   )
 }

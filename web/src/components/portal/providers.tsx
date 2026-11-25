@@ -1,6 +1,7 @@
 import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, UserRoundIcon, SearchIcon, TerminalIcon, Trash2Icon, XIcon } from "lucide-react"
 import { memo, useEffect, useRef, useState } from "react"
-import { ProviderListHeader, SettingsLoading } from "./settings-loading"
+import { ProviderListHeader } from "./settings-loading"
+import { Skullet } from "@/components/ui/skeleton"
 import { ProviderMark } from "./provider-mark"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -599,36 +600,48 @@ function AddPanel({ rows, onPick }: { rows: Provider[]; onPick: (provider: Provi
 
 type Open = { kind: "provider"; slug: string } | { kind: "add" } | null
 
+const SAMPLE_PROVIDERS: Provider[] = [
+  { slug: "claude-subscription-directsdk-experimental", label: "Claude Subscription", description: "", kind: "cli", command: "", connected: true, source: "", env_var: "", env_vars: [], signup_url: "" },
+  { slug: "openai-codex", label: "ChatGPT or Codex Subscription", description: "", kind: "signin", command: "", connected: true, source: "", env_var: "", env_vars: [], signup_url: "" },
+  { slug: "openrouter", label: "OpenRouter", description: "", kind: "key", command: "", connected: true, source: "", env_var: "", env_vars: [], signup_url: "" },
+]
+
 /** Settings > Providers: what Hermes can run on, what's set up, and adding the rest. */
 export function ProvidersSettings({ onError }: { onError: (message: string) => void }) {
   const providers = useProviders()
   const [open, setOpen] = useState<Open>(null)
-  if (providers === null) return <SettingsLoading page="providers" />
-  if (!providers) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
-  const connected = providers.filter(p => p.connected || (p.accounts?.length ?? 0) > 0)
-  const current = open?.kind === "provider" ? providers.find(p => p.slug === open.slug) : undefined
+  if (providers === false) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
+  const current = providers && open?.kind === "provider" ? providers.find(p => p.slug === open.slug) : undefined
   const close = () => setOpen(null)
   return (
     <>
-      <ProviderListHeader onAdd={() => setOpen({ kind: "add" })} />
-      <div className="flex flex-col">
-        {connected.map(p => (
-          <button
-            className="flex w-full items-center gap-3 rounded-md px-1 py-2.5 text-left outline-none hover:bg-accent focus-visible:bg-accent"
-            key={p.slug}
-            onClick={() => setOpen({ kind: "provider", slug: p.slug })}
-            type="button"
-          >
-            <ProviderMark slug={p.slug} className="size-[18px]" />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm">{p.label}</span>
-              <span className="block truncate text-muted-foreground text-xs">{p.kind === "key" ? "API key" : p.accounts?.some(a => !a.signed_in) ? "needs sign-in" : "signed in"}</span>
-            </span>
-            <ChevronRightIcon className="size-4 text-muted-foreground" />
-          </button>
-        ))}
-        {connected.length === 0 && <p className="px-1 py-2 text-muted-foreground text-sm">Nothing set up yet.</p>}
-      </div>
+      <ProviderListHeader onAdd={providers ? () => setOpen({ kind: "add" }) : undefined} />
+      <Skullet data={providers} id="settings-providers" label="Loading providers…" sample={SAMPLE_PROVIDERS}>
+        {rows => {
+          const connected = rows.filter(p => p.connected || (p.accounts?.length ?? 0) > 0)
+          return (
+            <div className="flex flex-col">
+              {connected.map(p => (
+                <button
+                  className="flex w-full items-center gap-3 rounded-md px-1 py-2.5 text-left outline-none hover:bg-accent focus-visible:bg-accent"
+                  key={p.slug}
+                  onClick={() => setOpen({ kind: "provider", slug: p.slug })}
+                  type="button"
+                >
+                  <ProviderMark slug={p.slug} className="size-[18px]" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{p.label}</span>
+                    <span className="block truncate text-muted-foreground text-xs">{p.kind === "key" ? "API key" : p.accounts?.some(a => !a.signed_in) ? "needs sign-in" : "signed in"}</span>
+                  </span>
+                  <ChevronRightIcon className="size-4 text-muted-foreground" />
+                </button>
+              ))}
+              {connected.length === 0 && <p className="px-1 py-2 text-muted-foreground text-sm">Nothing set up yet.</p>}
+            </div>
+          )
+        }}
+      </Skullet>
+      {providers && (
       <Dialog onOpenChange={next => !next && close()} open={open !== null}>
         <DialogContent className={PANEL} data-provider-panel={open?.kind === "add" ? "add" : current?.slug || ""} onOpenAutoFocus={e => e.preventDefault()} showCloseButton={false}>
           {open?.kind === "add" ? (
@@ -653,6 +666,7 @@ export function ProvidersSettings({ onError }: { onError: (message: string) => v
           ) : null}
         </DialogContent>
       </Dialog>
+      )}
     </>
   )
 }

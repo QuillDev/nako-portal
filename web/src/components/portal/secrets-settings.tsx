@@ -1,6 +1,6 @@
 import { ArrowUpIcon, CheckIcon, ChevronRightIcon, CopyIcon, EyeIcon, EyeOffIcon, KeyRoundIcon, PlusIcon, SearchIcon, Trash2Icon, XIcon } from "lucide-react"
 import { useState } from "react"
-import { SettingsLoading } from "./settings-loading"
+import { Skullet } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
@@ -201,49 +201,66 @@ function NewSecretPanel({ initialName, onClose, onError }: { initialName: string
 
 type Open = { kind: "secret"; name: string } | { kind: "new"; name: string } | null
 
+const SAMPLE_SECRETS: SecretInfo[] = [
+  { name: "STRIPE_TEST_KEY", note: "test-mode key for checkout checks", origin: "you", created_at: 1761264000, updated_at: 1761264000 },
+  { name: "GITHUB_TOKEN", note: "read-only token for release lookups", origin: "you", created_at: 1761177600, updated_at: 1761177600 },
+  { name: "OPENAI_API_KEY", note: "fallback key for local tools", origin: "you", created_at: 1761091200, updated_at: 1761091200 },
+]
+
 /** Settings > Secrets: search what's stored, open one to see or change it, add new ones. */
 export function SecretsSettings({ onError }: { onError: (m: string) => void }) {
   const secrets = useSecrets()
   const [query, setQuery] = useState("")
   const [open, setOpen] = useState<Open>(null)
-  if (secrets === null) return <SettingsLoading page="secrets" />
-  if (!secrets) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
+  if (secrets === false) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
   const typed = words(query)
-  const shown = typed ? secrets.filter(s => words(`${s.name} ${s.note}`).includes(typed)) : secrets
-  const current = open?.kind === "secret" ? secrets.find(s => s.name === open.name) : undefined
+  const current = secrets && open?.kind === "secret" ? secrets.find(s => s.name === open.name) : undefined
   // A search that matches no name starts the new secret with it.
-  const startNew = () => setOpen({ kind: "new", name: secrets.some(s => words(s.name) === typed) ? "" : query.trim().replace(NAME_CHARS, "_").toUpperCase() })
+  const startNew = () => {
+    if (!secrets) return
+    setOpen({ kind: "new", name: secrets.some(s => words(s.name) === typed) ? "" : query.trim().replace(NAME_CHARS, "_").toUpperCase() })
+  }
   const close = () => setOpen(null)
   return (
     <>
-      <div className="flex items-center gap-2 pb-1">
-        <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5">
-          <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
-          <input aria-label="Search secrets" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" onChange={e => setQuery(e.target.value)} enterKeyHint="search" placeholder="Search secrets" spellCheck={false} value={query} />
-        </label>
-        <Button aria-label="Add secret" className="size-10 rounded-full" onClick={startNew} size="icon" title="Add secret">
-          <PlusIcon className="size-[18px]" />
-        </Button>
-      </div>
-      <div className="flex flex-col">
-        {shown.map(s => (
-          <button
-            className="-mx-2 flex items-center gap-3 rounded-md px-2 py-2 text-left outline-none hover:bg-accent"
-            data-secret-row={s.name}
-            key={s.name}
-            onClick={() => setOpen({ kind: "secret", name: s.name })}
-            type="button"
-          >
-            <span className="flex min-w-0 flex-1 flex-col">
-              <span className="truncate font-medium font-mono text-[13px] leading-5">{s.name}</span>
-              {s.note && <span className="truncate text-muted-foreground text-xs leading-4">{s.note}</span>}
-            </span>
-            <span className="shrink-0 text-muted-foreground text-xs">{shortDate(s.updated_at)}</span>
-            <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-          </button>
-        ))}
-        {!shown.length && <p className="py-4 text-muted-foreground text-sm">{typed ? `No secrets match "${query.trim()}".` : "No secrets yet."}</p>}
-      </div>
+      <Skullet data={secrets} id="settings-secrets" label="Loading secrets…" sample={SAMPLE_SECRETS}>
+        {rows => {
+          const shown = typed ? rows.filter(s => words(`${s.name} ${s.note}`).includes(typed)) : rows
+          return (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 pb-1">
+                <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5">
+                  <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+                  <input aria-label="Search secrets" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" onChange={e => setQuery(e.target.value)} enterKeyHint="search" placeholder="Search secrets" spellCheck={false} value={query} />
+                </label>
+                <Button aria-label="Add secret" className="size-10 rounded-full" onClick={startNew} size="icon" title="Add secret">
+                  <PlusIcon className="size-[18px]" />
+                </Button>
+              </div>
+              <div className="flex flex-col">
+                {shown.map(s => (
+                  <button
+                    className="-mx-2 flex items-center gap-3 rounded-md px-2 py-2 text-left outline-none hover:bg-accent"
+                    data-secret-row={s.name}
+                    key={s.name}
+                    onClick={() => setOpen({ kind: "secret", name: s.name })}
+                    type="button"
+                  >
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate font-medium font-mono text-[13px] leading-5">{s.name}</span>
+                      {s.note && <span className="truncate text-muted-foreground text-xs leading-4">{s.note}</span>}
+                    </span>
+                    <span className="shrink-0 text-muted-foreground text-xs">{shortDate(s.updated_at)}</span>
+                    <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                ))}
+                {!shown.length && <p className="py-4 text-muted-foreground text-sm">{typed ? `No secrets match "${query.trim()}".` : "No secrets yet."}</p>}
+              </div>
+            </div>
+          )
+        }}
+      </Skullet>
+      {secrets && (
       <Dialog onOpenChange={o => !o && close()} open={open !== null && (open.kind === "new" || !!current)}>
         <DialogContent
           className={PANEL}
@@ -260,6 +277,7 @@ export function SecretsSettings({ onError }: { onError: (m: string) => void }) {
           {current && <SecretPanel key={current.name} onClose={close} onError={onError} secret={current} />}
         </DialogContent>
       </Dialog>
+      )}
     </>
   )
 }

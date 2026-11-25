@@ -1,22 +1,61 @@
-import { Skeleton } from "@/components/ui/skeleton"
+import { ArrowUpIcon, PaperclipIcon } from "lucide-react"
+import { Skeleton, Skullet } from "@/components/ui/skeleton"
 import type { Route } from "@/hooks/use-portal"
 import { AuthScreen } from "./auth-screen"
 import { DrawerLayout } from "./drawer"
 import { PageHeader } from "./header"
 import { SettingsFrame, SettingsPlaceholder } from "./settings-frame"
 
+const ROW_TITLES = [
+  "Review the billing reconciliation check",
+  "Update staging auth redirects",
+  "Notes from the afternoon sync",
+  "Compare usage across accounts",
+  "Draft release notes for desktop",
+  "Check background job logs",
+]
+
 export function LoadingRows({ label, columns = false, detail = false, count = 5 }: { label: string; columns?: boolean; detail?: boolean; count?: number }) {
-  return <div role="status"><span className="sr-only">{label}</span>
-    {Array.from({ length: count }, (_, i) => <div aria-hidden="true" key={i} className={`flex items-center gap-2 px-2 ${detail ? "h-14" : "h-9"}`}>
-      <div className="flex flex-1 flex-col gap-2"><Skeleton className={detail ? "h-3 w-24" : i % 2 ? "h-3 w-2/3" : "h-3 w-4/5"} />{detail && <Skeleton className="h-2 w-3/4" />}</div>
-      {columns && <><Skeleton className="h-2 w-14" /><Skeleton className="h-2 w-14" /></>}
-      <Skeleton className="size-2 rounded-full" />
-    </div>)}
-  </div>
+  return (
+    <Skullet label={label} loading>
+      <div>
+        {Array.from({ length: count }, (_, i) => (
+          <div key={i} className={`flex items-center gap-2 px-2 ${detail ? "h-14" : "h-9"}`}>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm">{ROW_TITLES[i % ROW_TITLES.length]}</span>
+              {detail && <span className="truncate text-muted-foreground text-xs">Connected · 12 tools available</span>}
+            </div>
+            {columns && <>
+              <span className="w-16 shrink-0 text-xs">Slack</span>
+              <span className="w-16 shrink-0 text-right text-xs tabular-nums">12m</span>
+            </>}
+            <span className="size-2 shrink-0 rounded-full" {...{ "skullet-block": "" }} />
+          </div>
+        ))}
+      </div>
+    </Skullet>
+  )
 }
 
 export function ComposerPlaceholder() {
-  return <div aria-hidden="true" className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"><div className="flex h-[102px] flex-col justify-between rounded-[22px] border bg-card p-3"><Skeleton className="h-3 w-36" /><div className="flex justify-between"><Skeleton className="h-6 w-28" /><Skeleton className="size-7 rounded-full" /></div></div></div>
+  return (
+    <div aria-hidden="true" className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      <div className="rounded-[22px] border bg-card p-1.5">
+        <Skullet loading>
+          <div className="grid grid-cols-[auto_1fr_auto]">
+            <div className="col-span-3 row-start-1 min-h-14 px-2.5 pt-3 pb-1 text-sm">Message Nako…</div>
+            <div className="col-start-1 row-start-2 flex items-center gap-1 p-0">
+              <span className="grid size-8 place-items-center rounded-full" {...{ "skullet-block": "" }}><PaperclipIcon className="size-4" /></span>
+              <span className="inline-flex h-8 items-center rounded-md px-2.5 text-sm">claude-sonnet</span>
+            </div>
+            <div className="col-start-3 row-start-2 flex items-center p-0">
+              <span className="grid size-8 place-items-center rounded-full" {...{ "skullet-block": "" }}><ArrowUpIcon className="size-4" /></span>
+            </div>
+          </div>
+        </Skullet>
+      </div>
+    </div>
+  )
 }
 
 export function OpeningScreen({ route }: { route: Route }) {
