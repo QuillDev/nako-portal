@@ -22,8 +22,6 @@ const NEW = "bg-emerald-500";
 type RowProps = {
   row: SessionRow;
   selected: boolean;
-  // Drawn inside a group: indented, with the group's color down its left edge.
-  color?: GroupColor;
   go: (hash: string) => void;
   prefetch: (session: string) => void;
   actions: ChatActions;
@@ -35,7 +33,6 @@ type RowProps = {
 export const ChatRow = memo(function ChatRow({
   row,
   selected,
-  color,
   go,
   prefetch,
   actions,
@@ -47,9 +44,8 @@ export const ChatRow = memo(function ChatRow({
       <ContextMenuTrigger asChild>
         <button
           className={cn(
-            "relative flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent data-[dragging]:opacity-50",
+            "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent data-[dragging]:opacity-50",
             selected && "bg-accent",
-            color && "pl-7",
           )}
           // Shift+click pins or unpins instead of opening.
           onClick={(e) =>
@@ -78,12 +74,6 @@ export const ChatRow = memo(function ChatRow({
           }}
           type="button"
         >
-          {color && (
-            <span
-              className="absolute inset-y-0 left-[13px] w-0.5 opacity-70"
-              style={{ background: GROUP_HEX[color] }}
-            />
-          )}
           <span className="min-w-0 flex-1 truncate">{row.title}</span>
           {row.machine && (
             <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{row.machine}</span>
@@ -190,19 +180,26 @@ export const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, 
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {!folded &&
-        rows.map((row) => (
-          <ChatRow
-            actions={actions}
-            color={group.color}
-            drag={drag}
-            go={go}
-            key={row.id}
-            prefetch={prefetch}
-            row={row}
-            selected={open === row.id}
+      {!folded && (
+        <div className="relative pl-5">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-[13px] w-0.5 opacity-70"
+            style={{ background: GROUP_HEX[group.color] }}
           />
-        ))}
+          {rows.map((row) => (
+            <ChatRow
+              actions={actions}
+              drag={drag}
+              go={go}
+              key={row.id}
+              prefetch={prefetch}
+              row={row}
+              selected={open === row.id}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 });
