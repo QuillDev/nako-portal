@@ -307,3 +307,33 @@ async def test_usage_lists_each_account_of_each_provider(world):
 async def test_usage_needs_a_signed_in_person(world):
     async with aiohttp.ClientSession() as stranger:
         assert (await stranger.get(world.url("/api/usage"))).status == 401
+        assert (await stranger.post(world.url("/api/usage/reset"), json={"provider": "openai-codex"}, headers={"Origin": ORIGIN})).status == 401
+
+
+async def test_usage_reset_redeems_credit_and_returns_refreshed_limits(world):
+    await world.sign_up()
+    world.hermes.usage_rows = [{
+        "provider": "openai-codex", "label": "ChatGPT / Codex", "accounts": [{
+            "label": "",
+            "windows": [{"label": "Weekly", "used_percent": 100.0, "resets_at": "2026-11-05T16:00:00+00:00"}],
+            "note": None,
+            "resets": {"available": 2, "usable": True},
+        }],
+    }]
+
+    redeemed = await world.post("/api/usage/reset", {"provider": "openai-codex", "force": True})
+    assert redeemed.status == 200
+    body = await redeemed.json()
+    account = body["providers"][0]["accounts"][0]
+    assert account["windows"][0]["used_percent"] == 0.0
+    assert account["resets"] == {"available": 1, "usable": False}
+
+    refused = await world.post("/api/usage/reset", {"provider": "openai-codex", "force": True})
+    assert refused.status == 400
+    assert "error" in await refused.json()
+
+    unsupported = await world.post("/api/usage/reset", {"provider": "antigravity-oauth"})
+    assert unsupported.status == 400
+
+    world.hermes.model_controls = False
+    assert (await world.post("/api/usage/reset", {"provider": "openai-codex"})).status == 404

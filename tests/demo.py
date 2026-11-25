@@ -42,6 +42,8 @@ class DemoGateway(FakeGateway):
         now = datetime.now(UTC)
         resets = (now + timedelta(days=4)).isoformat()
         session = (now + timedelta(hours=3)).isoformat()
+        codex_used = getattr(self, "_demo_codex_used", 84.0)
+        codex_resets = getattr(self, "_demo_codex_resets", 3)
         return [
             {"provider": "claude-subscription-directsdk-experimental", "label": "Claude Subscription DirectSDK (Experimental)", "accounts": [
                 {"label": "primary", "windows": [
@@ -63,9 +65,23 @@ class DemoGateway(FakeGateway):
                 ], "note": None},
             ]},
             {"provider": "openai-codex", "label": "OpenAI Codex", "accounts": [
-                {"label": "", "windows": [{"label": "Weekly", "used_percent": 6.0, "resets_at": resets}], "note": None},
+                {"label": "", "windows": [{"label": "Weekly", "used_percent": codex_used, "resets_at": resets}], "note": None,
+                 "resets": {"available": codex_resets, "usable": codex_resets > 0 and codex_used >= 20.0}},
             ]},
         ]
+
+    def use_reset(self, provider, account="", force=False):
+        if provider != "openai-codex":
+            raise ValueError("That provider doesn't support usage resets")
+        available = getattr(self, "_demo_codex_resets", 3)
+        used = getattr(self, "_demo_codex_used", 84.0)
+        if available <= 0:
+            return {"status": "no_credits_banked", "redeemed": False, "message": "No banked reset credits on this account.", "available": 0}
+        if used < 20.0:
+            return {"status": "nothing_to_reset", "redeemed": False, "message": "Backend reports nothing to reset yet.", "available": available}
+        self._demo_codex_resets = available - 1
+        self._demo_codex_used = 0.0
+        return {"status": "reset", "redeemed": True, "message": f"Reset redeemed. {self._demo_codex_resets} remaining.", "available": self._demo_codex_resets}
 
     def sign_off_models(self):
         return [

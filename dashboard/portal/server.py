@@ -183,6 +183,7 @@ class Portal(AuthRoutes, LocalAPI):
         r.add_get("/api/model", self.model)
         r.add_post("/api/model", self.set_model)
         r.add_get("/api/usage", self.usage)
+        r.add_post("/api/usage/reset", self.use_reset)
         r.add_get("/api/model-picks", self.model_picks)
         r.add_post("/api/model-picks/presets", self.put_model_preset)
         r.add_post("/api/model-picks/presets/{id}/remove", self.remove_model_preset)
@@ -445,6 +446,25 @@ class Portal(AuthRoutes, LocalAPI):
         if providers is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "model-controls is not enabled"}), content_type="application/json")
         return web.json_response({"providers": providers})
+
+    async def use_reset(self, request):
+        """Redeem a banked usage reset credit and return the refreshed limits."""
+        self._require(request)
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("provider"), str) or not body["provider"].strip():
+            raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a provider"}), content_type="application/json")
+        account = body.get("account") if isinstance(body.get("account"), str) else ""
+        force = bool(body.get("force"))
+        try:
+            result = await asyncio.to_thread(self.hub.backend.use_reset, body["provider"].strip(), account, force)
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
+        if result is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "usage resets are not supported"}), content_type="application/json")
+        if not result.get("redeemed"):
+            raise web.HTTPBadRequest(text=json.dumps({"error": str(result.get("message") or "Could not redeem reset")}), content_type="application/json")
+        providers = await asyncio.to_thread(self.hub.backend.usage)
+        return web.json_response({"message": str(result.get("message") or ""), "providers": providers or []})
 
     async def model_options(self, request):
         self._require(request)
