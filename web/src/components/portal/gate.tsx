@@ -1,7 +1,8 @@
 import { useState } from "react"
-import { GlobeIcon, KeyRoundIcon } from "lucide-react"
+import { ExternalLinkIcon, GlobeIcon, KeyRoundIcon } from "lucide-react"
 import { AuthButton, AuthScreen } from "@/components/portal/auth-screen"
 import type { Portal } from "@/hooks/use-portal"
+import { useAndroidAppUrl } from "@/lib/android-app"
 import { cancelled, register, signIn } from "@/lib/passkeys"
 
 // The desktop app's webview has no passkeys, so it signs in through the browser instead.
@@ -10,6 +11,7 @@ const desktopApp = /NakoDesktop\//.test(navigator.userAgent)
 export function Gate({ portal }: { portal: Portal }) {
   const hash = new URLSearchParams(location.hash.slice(1))
   const setup = hash.get("setup")
+  const appUrl = useAndroidAppUrl()
   const [error, setError] = useState(hash.get("signin") === "failed" ? "That sign-in didn't go through. Try again." : "")
   const [busy, setBusy] = useState(false)
 
@@ -19,8 +21,8 @@ export function Gate({ portal }: { portal: Portal }) {
     try {
       if (setup) await register(setup)
       else await signIn()
-      // A browser opened by the desktop app goes on to approve it.
-      history.replaceState(null, "", location.hash.startsWith("#/desktop?") ? `/${location.hash}` : "/")
+      // Keep any in-app route (#/c/..., #/desktop?...) after signing in; drop one-time #setup= / #signin= hashes.
+      history.replaceState(null, "", location.hash.startsWith("#/") ? `/${location.hash}` : "/")
       await portal.boot()
     } catch (e) {
       setError(cancelled(e) ? "Cancelled." : (e as Error).message)
@@ -38,10 +40,20 @@ export function Gate({ portal }: { portal: Portal }) {
           Sign in with browser
         </AuthButton>
       ) : (
-        <AuthButton disabled={busy} onClick={go}>
-          <KeyRoundIcon />
-          {setup ? "Create passkey" : "Sign in with passkey"}
-        </AuthButton>
+        <>
+          <AuthButton disabled={busy} onClick={go}>
+            <KeyRoundIcon />
+            {setup ? "Create passkey" : "Sign in with passkey"}
+          </AuthButton>
+          {appUrl && !setup && (
+            <AuthButton asChild variant="outline">
+              <a href={appUrl}>
+                <ExternalLinkIcon />
+                Open in app
+              </a>
+            </AuthButton>
+          )}
+        </>
       )}
     </AuthScreen>
   )

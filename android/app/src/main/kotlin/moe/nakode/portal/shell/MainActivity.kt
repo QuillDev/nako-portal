@@ -100,18 +100,22 @@ class MainActivity : ComponentActivity() {
         if (server == null) {
             showServerPrompt(null)
         } else {
-            showWebApp(server, savedInstanceState, server.chatPage(intent?.getStringExtra(EXTRA_SESSION)))
+            showWebApp(server, savedInstanceState, pageFrom(server, intent))
         }
     }
 
-    // A tapped notification opens its chat.
+    // A tapped notification or browser deep link opens its page.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         val server = origin ?: return
-        val page = server.chatPage(intent.getStringExtra(EXTRA_SESSION)) ?: return
+        val page = pageFrom(server, intent) ?: return
         val web = webView
         if (web == null) showWebApp(server, null, page) else web.loadUrl(page)
     }
+
+    private fun pageFrom(server: ServerOrigin, intent: Intent?): String? =
+        server.chatPage(intent?.getStringExtra(EXTRA_SESSION)) ?: server.deepLink(intent?.dataString)
 
     override fun onResume() {
         super.onResume()
@@ -433,7 +437,7 @@ class MainActivity : ComponentActivity() {
                 val changed = origin?.value != parsed.value
                 origin = parsed
                 if (changed) AlertService.running?.serverChanged()
-                showWebApp(parsed, null)
+                showWebApp(parsed, null, pageFrom(parsed, intent))
             }
         }
         connect.setOnClickListener { submit() }

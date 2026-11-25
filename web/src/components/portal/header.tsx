@@ -1,6 +1,7 @@
 import { ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon, MenuIcon, XIcon } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
+import { useAndroidAppUrl } from "@/lib/android-app"
 import { closeBubble, inBubble, openBubbleInApp } from "@/lib/bubble"
 import { useWindowControls, windowAction } from "@/lib/desktop-window"
 import { useDrawer } from "./drawer"
@@ -8,6 +9,7 @@ import { useDrawer } from "./drawer"
 export function PageHeader({ title, back, children }: { title: ReactNode; back?: () => void; children?: ReactNode }) {
   const { show, collapsed, toggle } = useDrawer()
   const windowControls = useWindowControls()
+  const appUrl = useAndroidAppUrl()
   return (
     // The desktop app drags its window by this strip.
     <header className="flex items-center gap-1 px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))]" data-tauri-drag-region="deep">
@@ -29,8 +31,19 @@ export function PageHeader({ title, back, children }: { title: ReactNode; back?:
       <h2 className="min-w-0 flex-1 truncate px-2 font-medium text-sm leading-9">{title}</h2>
       {children}
       {windowControls && <WindowControls />}
-      {inBubble && <BubbleControls />}
+      {inBubble ? <BubbleControls /> : appUrl && <OpenInApp href={appUrl} />}
     </header>
+  )
+}
+
+/** Opens the current portal page in the installed Android app, from a mobile browser tab. */
+export function OpenInApp({ href }: { href: string }) {
+  return (
+    <Button asChild aria-label="Open in app" className="text-muted-foreground" size="icon" title="Open in app" variant="ghost">
+      <a href={href}>
+        <ExternalLinkIcon />
+      </a>
+    </Button>
   )
 }
 
