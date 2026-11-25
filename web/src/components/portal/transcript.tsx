@@ -11,12 +11,13 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { downloadUrl, fileUrl } from "@/lib/api"
 import { SharedSecret } from "./secrets"
 import { markdownComponents } from "./markdown-link"
-import { copyReplyText, isImage, splitReply, splitUserTurn } from "@/lib/media"
+import { copyReplyText, isHtml, isImage, splitReply, splitUserTurn } from "@/lib/media"
 import { type ReplyPart, splitSecrets } from "@/lib/secrets"
 import { CHAT_HREF, linkSessionRefs, useChatTitle } from "@/lib/session-refs"
 import { dayLabel, dayOf, fullTime, timeOf } from "@/lib/times"
 import type { HistoryMessage, Live, Sender } from "@/lib/types"
 
+import { HtmlThumb, HtmlViewer } from "./html-viewer"
 import { ImageViewer } from "./image-viewer"
 
 const LINK_SAFETY = { enabled: false }
@@ -152,6 +153,7 @@ function Thumb({ item, onOpen, onBroken }: { item: Item; onOpen: () => void; onB
 function Files({ urls }: { urls: Item[] }) {
   const [broken, setBroken] = useState<Set<string>>(() => new Set())
   const [open, setOpen] = useState<number | null>(null)
+  const [htmlOpen, setHtmlOpen] = useState<Item | null>(null)
   if (!urls.length) return null
   // One viewer per message: swiping and the arrows move between this message's images that still load.
   const pictures = urls.filter(u => isImage(u.path) && !broken.has(u.url))
@@ -170,6 +172,16 @@ function Files({ urls }: { urls: Item[] }) {
               </span>
             )
           return <Thumb item={item} key={url} onBroken={() => setBroken(b => new Set(b).add(url))} onOpen={() => setOpen(pictures.indexOf(item))} />
+        }
+        if (isHtml(path)) {
+          if (broken.has(url))
+            return (
+              <span className="inline-flex h-60 w-96 max-w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2 text-muted-foreground text-xs" key={url}>
+                <FileIcon className="size-4" />
+                {name} is no longer on disk
+              </span>
+            )
+          return <HtmlThumb item={item} key={url} onBroken={() => setBroken(b => new Set(b).add(url))} onOpen={() => setHtmlOpen(item)} />
         }
         if (/\.(mp3|m4a|ogg|wav|opus|flac)$/i.test(path)) return <audio className="w-full" controls key={url} src={url} />
         if (/\.(mp4|webm|mov)$/i.test(path)) return <video className="aspect-video w-full max-w-xl rounded-md object-contain" controls key={url} src={url} />
@@ -196,6 +208,19 @@ function Files({ urls }: { urls: Item[] }) {
                 onPrev={open! > 0 ? () => step(-1) : undefined}
                 src={shown.url}
               />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+      <Dialog onOpenChange={o => !o && setHtmlOpen(null)} open={htmlOpen != null}>
+        <DialogContent
+          className="top-0 left-0 block h-dvh w-screen max-w-none translate-x-0 translate-y-0 rounded-none border-0 bg-transparent p-0 shadow-none sm:max-w-none"
+          showCloseButton={false}
+        >
+          {htmlOpen && (
+            <>
+              <DialogTitle className="sr-only">{htmlOpen.name}</DialogTitle>
+              <HtmlViewer download={htmlOpen.download} key={htmlOpen.url} name={htmlOpen.name} src={htmlOpen.url} />
             </>
           )}
         </DialogContent>

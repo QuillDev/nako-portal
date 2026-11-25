@@ -277,6 +277,35 @@ async def test_a_delivered_picture_opens_in_place_and_saves_under_its_name_on_do
     assert saved[1] == "attachment; filename=\"logo 640.png\"; filename*=UTF-8''logo%20640.png"
 
 
+async def test_a_delivered_html_file_opens_inline_in_sandbox_and_downloads_as_attachment(world, tmp_path):
+    page = tmp_path / "receipt.html"
+    page.write_text("<!doctype html><h1>Order #42</h1><script>document.title='ok'</script>", encoding="utf-8")
+    gone = tmp_path / "gone.html"
+    sid = world.hermes.add_session(
+        "20261024_050505_adadad",
+        "email preview",
+        messages=[("assistant", f"here is the rendered email\nMEDIA:{page}\nMEDIA:{gone}")],
+    )
+    await world.sign_up()
+
+    shown = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(page)})
+    assert shown.status == 200
+    assert shown.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert shown.headers["Content-Disposition"].startswith("inline;")
+    csp = shown.headers["Content-Security-Policy"]
+    assert "sandbox" in csp and "allow-scripts" in csp and "allow-same-origin" not in csp
+    assert "frame-ancestors 'self'" in csp
+    assert "Order #42" in await shown.text()
+
+    saved = await world.http.get(world.url("/api/file"), params={"session": sid, "path": str(page), "download": "1"})
+    assert saved.status == 200
+    assert saved.headers["Content-Disposition"].startswith("attachment;")
+
+    head_ok = await world.http.head(world.url("/api/file"), params={"session": sid, "path": str(page)})
+    head_gone = await world.http.head(world.url("/api/file"), params={"session": sid, "path": str(gone)})
+    assert (head_ok.status, head_gone.status) == (200, 404)
+
+
 async def test_built_files_are_kept_by_the_browser_and_the_page_is_always_checked(world):
     built = next((ROOT / "dashboard" / "web" / "assets").iterdir()).name
     asset = await world.http.get(world.url(f"/assets/{built}"))
