@@ -44,12 +44,19 @@ class DemoGateway(FakeGateway):
         session = (now + timedelta(hours=3)).isoformat()
         codex_used = getattr(self, "_demo_codex_used", 84.0)
         codex_resets = getattr(self, "_demo_codex_resets", 3)
+        claude_week = getattr(self, "_demo_claude_week", 100.0)
+        claude_opts = getattr(self, "_demo_claude_opts", [
+            {"id": "full-reset-2611", "label": "weekly reset", "available": 1, "usable": True},
+            {"id": "launch-2610-fable", "label": "Fable reset", "available": 2, "usable": True},
+        ])
+        claude_resets = ({"available": sum(o["available"] for o in claude_opts), "usable": any(o["usable"] for o in claude_opts),
+                          "account": "primary", "options": claude_opts} if claude_opts else None)
         return [
             {"provider": "claude-subscription-directsdk-experimental", "label": "Claude Subscription DirectSDK (Experimental)", "accounts": [
                 {"label": "primary", "windows": [
                     {"label": "Current session", "used_percent": 58.0, "resets_at": session},
-                    {"label": "Current week", "used_percent": 100.0, "resets_at": (now + timedelta(hours=20)).isoformat()},
-                ], "note": None},
+                    {"label": "Current week", "used_percent": claude_week, "resets_at": (now + timedelta(hours=20)).isoformat()},
+                ], "note": None, **({"resets": claude_resets} if claude_resets else {})},
                 {"label": "sam@example.test", "windows": [
                     {"label": "Current session", "used_percent": 4.0, "resets_at": None},
                     {"label": "Current week", "used_percent": 34.0, "resets_at": resets},
@@ -70,7 +77,21 @@ class DemoGateway(FakeGateway):
             ]},
         ]
 
-    def use_reset(self, provider, account="", force=False):
+    def use_reset(self, provider, account="", force=False, grant=""):
+        if provider == "claude-subscription-directsdk-experimental":
+            opts = [dict(o) for o in getattr(self, "_demo_claude_opts", [
+                {"id": "full-reset-2611", "label": "weekly reset", "available": 1, "usable": True},
+                {"id": "launch-2610-fable", "label": "Fable reset", "available": 2, "usable": True},
+            ])]
+            chosen = next((o for o in opts if o["id"] == grant), None) if grant else (opts[0] if opts else None)
+            if chosen is None:
+                return {"status": "not_eligible", "redeemed": False, "message": "That reset is no longer available.", "available": sum(o["available"] for o in opts)}
+            chosen["available"] -= 1
+            opts = [o for o in opts if o["available"] > 0]
+            self._demo_claude_opts = opts
+            if chosen["id"] == "full-reset-2611":
+                self._demo_claude_week = 0.0
+            return {"status": "reset", "redeemed": True, "message": "Limits reset.", "available": sum(o["available"] for o in opts)}
         if provider != "openai-codex":
             raise ValueError("That provider doesn't support usage resets")
         available = getattr(self, "_demo_codex_resets", 3)

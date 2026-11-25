@@ -270,10 +270,10 @@ class FakeGateway:
             {"label": "home", "windows": [{"label": "Week", "used_percent": 100.0, "resets_at": "2026-11-05T16:00:00+00:00"}], "note": None},
             {"label": "spare", "windows": [], "note": "Signed out"}]}]
 
-    def use_reset(self, provider, account="", force=False):
+    def use_reset(self, provider, account="", force=False, grant=""):
         if not self.model_controls:
             return None
-        if provider != "openai-codex":
+        if provider not in ("openai-codex", "claude-subscription-directsdk-experimental"):
             raise ValueError("That provider doesn't support usage resets")
         rows = self.usage() or []
         target = next((a for p in rows if p["provider"] == provider for a in p["accounts"]
@@ -281,6 +281,29 @@ class FakeGateway:
         if target is None:
             raise ValueError("Account not found")
         resets = target.get("resets") or {}
+        options = resets.get("options")
+        if options is not None:
+            chosen = next((o for o in options if o["id"] == grant), None) if grant else next((o for o in options if o.get("usable")), None)
+            if chosen is None or chosen.get("available", 0) <= 0:
+                return {"status": "not_eligible", "redeemed": False, "message": "That reset is no longer available.", "available": int(resets.get("available") or 0)}
+            if not chosen.get("usable"):
+                return {"status": "not_eligible", "redeemed": False, "message": "That reset can't be used right now.", "available": int(resets.get("available") or 0)}
+            next_options = []
+            for opt in options:
+                if opt["id"] == chosen["id"]:
+                    left = max(0, int(opt["available"]) - 1)
+                    if left > 0:
+                        next_options.append({**opt, "available": left})
+                else:
+                    next_options.append(opt)
+            for window in target["windows"]:
+                window["used_percent"] = 0.0
+            remaining = sum(int(o["available"]) for o in next_options)
+            target["resets"] = ({**resets, "available": remaining, "usable": any(o.get("usable") for o in next_options), "options": next_options}
+                                if next_options else None)
+            if target["resets"] is None:
+                target.pop("resets", None)
+            return {"status": "reset", "redeemed": True, "message": "Limits reset.", "available": remaining}
         available = int(resets.get("available") or 0)
         if available <= 0:
             return {"status": "no_credits_banked", "redeemed": False, "message": "No banked reset credits on this account.", "available": 0}

@@ -30,7 +30,7 @@ backend:
   models() / model() / set_model(provider, model)   the shown profile's own model (ValueError if refused)
   usage() -> [{provider, label, accounts: [{label, windows: [{label, used_percent, resets_at}], note, resets?}]}] or None
                                             plan limits per account; None: model-controls can't report them
-  use_reset(provider, account, force) -> {status, redeemed, message, available} or None
+  use_reset(provider, account, force, grant?) -> {status, redeemed, message, available} or None
                                             redeem a banked usage reset credit; None: model-controls can't
   secrets() -> [{name, note, origin, created_at, updated_at}] or None   None: no secrets plugin
   secret(name) -> value or None / set_secret(name, value, note) / remove_secret(name) -> bool
