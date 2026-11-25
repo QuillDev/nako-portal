@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { Skullet } from "@/components/ui/skeleton"
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
 import type { BackgroundProcess } from "@/lib/types"
@@ -72,7 +73,11 @@ export function ProcessLog({ session, proc, onClose }: { session: string; proc: 
             }}
             ref={box}
           >
-            {gone ? "this process is no longer tracked" : log ? log.lines.join("\n") || "no output yet" : <span role="status"><span className="sr-only">Loading output…</span>{["w-1/2", "w-3/4", "w-2/5"].map(width => <span key={width} aria-hidden="true" className={`my-2 block h-2 animate-pulse rounded bg-muted-foreground/25 motion-reduce:animate-none ${width}`} />)}</span>}
+            {gone ? "this process is no longer tracked" : log ? log.lines.join("\n") || "no output yet" : (
+              <Skullet label="Loading output…" loading>
+                {"starting worker process...\nconnecting to local endpoint\nlistening on 127.0.0.1:8080"}
+              </Skullet>
+            )}
           </pre>
         </DialogContent>
       )}

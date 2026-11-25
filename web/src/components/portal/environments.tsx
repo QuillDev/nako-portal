@@ -1,6 +1,6 @@
 import { LoaderCircleIcon, MessageSquareIcon, RotateCwIcon, SquareIcon } from "lucide-react"
 import { useState } from "react"
-import { SettingsLoading } from "./settings-loading"
+import { Skullet } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { type Environment, loadEnvironments, STATUS_DOT, stopEnvironment, useEnvironments } from "@/lib/environments"
 import { gigabytes } from "@/lib/machine-load"
@@ -83,6 +83,11 @@ function Row({
   )
 }
 
+const SAMPLE_ENVIRONMENTS: Environment[] = [
+  { name: "feature-branch", status: "running", detail: "api · web", memory: 1.4, links: [{ label: "Web", url: "#" }, { label: "API", url: "#" }] },
+  { name: "staging-check", status: "running", detail: "worker", memory: 0.6, links: [{ label: "Web", url: "#" }] },
+]
+
 /** Settings > Environments: whatever the owner's command says runs on this machine, with links to open each. */
 export function EnvironmentsSettings() {
   const { data, error, stopping, stopErrors } = useEnvironments(true, 10_000)
@@ -113,22 +118,33 @@ export function EnvironmentsSettings() {
           Refresh
         </Button>
       </div>
-      {!data && !error && <SettingsLoading page="environments" />}
       {error && <p className="py-3 text-destructive text-sm">{error}</p>}
-      {data && data.environments.length === 0 && <p className="py-10 text-center text-muted-foreground text-sm">Nothing here yet.</p>}
-      {live.length > 0 && (
-        <ul className="divide-y">
-          {live.map(env => (
-            <Row env={env} key={env.name} onStop={onStop} stopError={stopErrors[env.name]} stopping={stopping.has(env.name)} />
-          ))}
-        </ul>
-      )}
-      {stopped.length > 0 && (
-        <>
-          <p className="pt-6 pb-1 text-muted-foreground text-xs">Stopped</p>
-          <ul className="divide-y">{stopped.map(env => <Row env={env} key={env.name} />)}</ul>
-        </>
-      )}
+      <Skullet id="settings-environments" label="Loading environments…" loading={!data && !error}>
+        <div>
+          {!data ? (
+            <ul className="divide-y">
+              {SAMPLE_ENVIRONMENTS.map(env => <Row env={env} key={env.name} />)}
+            </ul>
+          ) : (
+            <>
+              {data.environments.length === 0 && <p className="py-10 text-center text-muted-foreground text-sm">Nothing here yet.</p>}
+              {live.length > 0 && (
+                <ul className="divide-y">
+                  {live.map(env => (
+                    <Row env={env} key={env.name} onStop={onStop} stopError={stopErrors[env.name]} stopping={stopping.has(env.name)} />
+                  ))}
+                </ul>
+              )}
+              {stopped.length > 0 && (
+                <>
+                  <p className="pt-6 pb-1 text-muted-foreground text-xs">Stopped</p>
+                  <ul className="divide-y">{stopped.map(env => <Row env={env} key={env.name} />)}</ul>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </Skullet>
     </div>
   )
 }

@@ -2,9 +2,10 @@ import { GlobeIcon, MoreHorizontalIcon } from "lucide-react"
 import { memo, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
+import { Message, MessageContent } from "@/components/ai-elements/message"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skullet } from "@/components/ui/skeleton"
 import { navigate, type Portal } from "@/hooks/use-portal"
 import { toggleAppBrowser, useAppBrowser } from "@/lib/desktop-browser"
 import { retryMarkdown, useMarkdown, useMarkdownError } from "@/lib/markdown"
@@ -89,21 +90,43 @@ function Dock({ children, onHeight }: { children: ReactNode; onHeight: (height: 
   )
 }
 
+const SAMPLE_TURNS = [
+  {
+    prompt: "can you check why the staging build failed?",
+    reply: "the typecheck caught a missing field on the account payload after the schema update. i patched the decoder and re-ran the check — everything passes now.",
+  },
+  {
+    prompt: "nice, go ahead and open the PR with screenshots",
+    reply: "pushed the branch and opened the PR with desktop and phone screenshots attached. CI is running now and i will check back once it is green.",
+  },
+  {
+    prompt: "can we also trim the extra padding on mobile?",
+    reply: "trimmed the header spacing on narrow screens and verified it at phone width in both light and dark themes.",
+  },
+]
+
 // Stand-ins for turns that haven't loaded yet: a prompt on the right, a reply on the left.
 function TurnSkeletons({ count }: { count: number }) {
   return (
-    <div role="status" className="flex flex-col gap-6"><span className="sr-only">Loading conversation…</span>
-      {Array.from({ length: count }, (_, i) => (
-        <div className="flex flex-col gap-6" key={i}>
-          <Skeleton className="ml-auto h-9 w-2/5 rounded-lg" />
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-11/12" />
-            <Skeleton className="h-4 w-3/5" />
-          </div>
-        </div>
-      ))}
-    </div>
+    <Skullet label="Loading conversation…" loading>
+      <div className="flex flex-col gap-6">
+        {Array.from({ length: count }, (_, i) => {
+          const turn = SAMPLE_TURNS[i % SAMPLE_TURNS.length]
+          return (
+            <div className="flex flex-col gap-6" key={i}>
+              <Message from="user">
+                <MessageContent>{turn.prompt}</MessageContent>
+              </Message>
+              <Message from="assistant">
+                <MessageContent>
+                  <p className="leading-relaxed">{turn.reply}</p>
+                </MessageContent>
+              </Message>
+            </div>
+          )
+        })}
+      </div>
+    </Skullet>
   )
 }
 

@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react"
+import { forgetShapes } from "skullet"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skullet } from "@/components/ui/skeleton"
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { Switch } from "@/components/ui/switch"
 import { GatewayRestart } from "./gateway-restart"
@@ -66,6 +67,14 @@ function Segmented<T extends string>({ options, value, onPick }: { options: read
 
 type Profiles = { profile: string; profiles: string[] }
 
+const SAMPLE_PROFILE: Profiles = { profile: "default", profiles: ["default", "work"] }
+const SAMPLE_MODEL: ModelChoice = {
+  provider: "anthropic",
+  model: "claude-sonnet-5-5",
+  providers: [{ provider: "anthropic", label: "Anthropic", models: ["claude-sonnet-5-5"] }],
+}
+const SAMPLE_PASSKEYS: Passkey[] = [{ id: "sample", label: "MacBook Pro", current: true }]
+
 // Which Hermes profile the portal shows, and the model that profile runs on. Switching
 // profiles swaps every chat for that profile's; the model belongs to the profile shown.
 function ProfileRows({ onError }: { onError: (message: string) => void }) {
@@ -90,18 +99,27 @@ function ProfileRows({ onError }: { onError: (message: string) => void }) {
     })
     return () => { active = false }
   }, [shown, fail])
-  if (!state) return profileFailed ? null : <SettingsLoading page="profile" rows={2} />
-  const pick = (profile: string) => profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, fail)
+  if (!state && profileFailed) return null
+  const pick = (profile: string) => state && profile !== state.profile && api<Profiles>("/api/profile", { method: "POST", body: { profile } }).then(setState, fail)
   const pickModel = async (body: { provider?: string; model?: string; effort?: string; speed?: string }) => setModel(modelChoice.parse(await api<unknown>("/api/model", { method: "POST", body })))
   return (
-    <>
-      {state.profiles.length > 1 && <ProfileRow onPick={pick} state={state} />}
-      {model === null && <Row label="Default model"><Skeleton className="h-8 w-40 motion-reduce:animate-none" /></Row>}
-      {model && <>
-        <Row label="Default model"><ModelPicker label="default model" named onPick={pickModel} value={model} /></Row>
-        <Suspense fallback={<SettingsLoading page="presets" rows={1} />}><ModelPresetSettings value={model} /></Suspense>
-      </>}
-    </>
+    <Skullet data={state} id="settings-profile" label="Loading profile…" sample={SAMPLE_PROFILE}>
+      {profileState => (
+        <div className="flex flex-col gap-2">
+          {profileState.profiles.length > 1 && <ProfileRow onPick={pick} state={profileState} />}
+          {model !== false && (
+            <Skullet data={state ? (model || null) : SAMPLE_MODEL} id="settings-default-model" label="Loading default model…" sample={SAMPLE_MODEL}>
+              {choice => (
+                <div className="flex flex-col gap-2">
+                  <Row label="Default model"><ModelPicker label="default model" named onPick={pickModel} value={choice} /></Row>
+                  {state && model && <Suspense fallback={<SettingsLoading page="presets" rows={1} />}><ModelPresetSettings value={choice} /></Suspense>}
+                </div>
+              )}
+            </Skullet>
+          )}
+        </div>
+      )}
+    </Skullet>
   )
 }
 
@@ -247,7 +265,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     secrets: <SecretsSettings onError={setError} />,
     mcp: <McpSettings onError={setError} />,
     gateway: <GatewayRestart />,
-    mesh: mesh === null ? <SettingsLoading page="mesh" /> : <MeshSettings portal={portal} />,
+    mesh: <MeshSettings portal={portal} />,
     environments: <EnvironmentsSettings />,
     account: (
       <>
@@ -257,6 +275,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
             className="border-destructive/40 text-destructive hover:text-destructive"
             onClick={attempt(async () => {
               await api("/api/logout", { method: "POST" })
+              forgetShapes()
               location.replace("/")
             })}
             size="sm"
@@ -278,31 +297,37 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
             Add passkey
           </Button>
         </div>
-        {passkeys === null ? <SettingsLoading page="account" rows={1} /> : passkeys.map(k => (
-          <Row
-            key={k.id}
-            label={
-              <span className="flex items-center gap-2">
-                <span className="truncate">{k.label}</span>
-                {k.current && <span className="rounded-md border px-1.5 text-muted-foreground text-xs">this device</span>}
-              </span>
-            }
-          >
-            {!k.current && (
-              <Button
-                onClick={attempt(async () => {
-                  if (!confirm("Remove this passkey? That device will be signed out.")) return
-                  await api(`/api/passkeys/${encodeURIComponent(k.id)}/remove`, { method: "POST" })
-                  await load()
-                })}
-                size="sm"
-                variant="ghost"
-              >
-                Remove
-              </Button>
-            )}
-          </Row>
-        ))}
+        <Skullet data={passkeys} id="settings-passkeys" label="Loading passkeys…" sample={SAMPLE_PASSKEYS}>
+          {keys => (
+            <div className="flex flex-col gap-2">
+              {keys.map(k => (
+                <Row
+                  key={k.id}
+                  label={
+                    <span className="flex items-center gap-2">
+                      <span className="truncate">{k.label}</span>
+                      {k.current && <span className="rounded-md border px-1.5 text-muted-foreground text-xs">this device</span>}
+                    </span>
+                  }
+                >
+                  {!k.current && (
+                    <Button
+                      onClick={attempt(async () => {
+                        if (!confirm("Remove this passkey? That device will be signed out.")) return
+                        await api(`/api/passkeys/${encodeURIComponent(k.id)}/remove`, { method: "POST" })
+                        await load()
+                      })}
+                      size="sm"
+                      variant="ghost"
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </Row>
+              ))}
+            </div>
+          )}
+        </Skullet>
       </>
     ),
   }

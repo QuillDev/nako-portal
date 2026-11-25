@@ -2,7 +2,7 @@ import { BrainIcon, CheckIcon, ChevronDownIcon, GaugeIcon, RabbitIcon, RocketIco
 import { Popover } from "radix-ui"
 import { useEffect, useRef, useState } from "react"
 import { d, type Infer } from "@/lib/decode"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skullet } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/ui/searchable-dropdown"
@@ -21,7 +21,14 @@ export type ModelSelection = { provider?: string; model?: string; effort?: strin
 type Pick = ModelSelection
 
 function ModelPlaceholder() {
-  return <Skeleton aria-label="Loading model" role="status" className="h-8 w-24" />
+  return (
+    <Skullet className="inline-block" label="Loading model…" loading>
+      <Button className="max-w-48 justify-between gap-2 font-normal" size="sm" type="button" variant="ghost">
+        <span className="truncate">claude-sonnet</span>
+        <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground" />
+      </Button>
+    </Skullet>
+  )
 }
 
 export function NewChatModel({ selection, onPick }: { selection: ModelSelection; onPick: (pick: ModelSelection) => void }) {

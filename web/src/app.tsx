@@ -1,4 +1,5 @@
 import { Component, type ComponentType, type ReactNode, lazy, Suspense, useEffect } from "react"
+import { SkulletProvider } from "skullet/react"
 import { OpeningScreen } from "@/components/portal/screen-loading"
 import { Gate } from "@/components/portal/gate"
 import { DesktopLink } from "@/components/portal/desktop-link"
@@ -82,7 +83,7 @@ function useWarmSettings(signedIn: boolean) {
 }
 
 export function App() {
-  return <ErrorBoundary><AppContent /><UpdatingScreen /></ErrorBoundary>
+  return <ErrorBoundary><SkulletProvider reveal="smart"><AppContent /><UpdatingScreen /></SkulletProvider></ErrorBoundary>
 }
 
 function AppContent() {

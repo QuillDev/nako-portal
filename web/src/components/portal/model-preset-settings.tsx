@@ -1,4 +1,4 @@
-import { SettingsLoading } from "./settings-loading"
+import { Skullet } from "@/components/ui/skeleton"
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { id } from "@/lib/id"
 import { useEffect, useState } from "react"
@@ -11,6 +11,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { type ModelPreset, presetDetails, presetMatches, putModelPreset, removeModelPreset, useModelPresets, usePicksLoadState } from "@/lib/model-presets"
 import { type ModelChoice, PresetIcon } from "./model-picker"
 import { PresetEmoji } from "./preset-emoji"
+
+const SAMPLE_PRESETS: ModelPreset[] = [
+  { id: "sample", name: "Daily coding", icon: "✨", pick: { provider: "anthropic", model: "claude-sonnet-5-5", effort: "high", speed: "" } },
+]
 
 export function ModelPresetSettings({ value }: { value: ModelChoice }) {
   const presets = useModelPresets()
@@ -30,23 +34,26 @@ export function ModelPresetSettings({ value }: { value: ModelChoice }) {
       <h2 className="font-medium">Model presets</h2>
       <Button type="button" size="sm" variant="outline" onClick={() => edit()}><PlusIcon />Add preset</Button>
     </div>
-    {loadState === "pending" && <SettingsLoading page="presets" rows={1} />}
     {loadState === "failed" && <p className="text-muted-foreground">Could not load presets.</p>}
-    {loadState === "ready" && !presets.length && <p className="py-1 text-muted-foreground">No presets yet.</p>}
-    {presets.map(preset => <div key={preset.id} className="flex min-h-14 items-center gap-2 border-b last:border-0">
-      <PresetIcon icon={preset.icon} />
-      <div className="min-w-0 flex-1"><div className="truncate">{preset.name}</div><div className="truncate text-xs text-muted-foreground">{presetDetails(preset)}</div></div>
-      {active?.id === preset.id && <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground">Default</span>}
-      <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label={`Options for ${preset.name}`}><EllipsisIcon /></Button></DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => edit(preset)}>Edit preset</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => {
-            setError("")
-            removeModelPreset(preset.id).catch(e => setError(e instanceof Error ? e.message : String(e)))
-          }}>Remove preset</DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>)}
+    <Skullet id="settings-presets" label="Loading presets…" loading={loadState === "pending"}>
+      <div>
+        {loadState === "ready" && !presets.length && <p className="py-1 text-muted-foreground">No presets yet.</p>}
+        {(loadState === "pending" ? SAMPLE_PRESETS : presets).map(preset => <div key={preset.id} className="flex min-h-14 items-center gap-2 border-b last:border-0">
+          <PresetIcon icon={preset.icon} />
+          <div className="min-w-0 flex-1"><div className="truncate">{preset.name}</div><div className="truncate text-xs text-muted-foreground">{presetDetails(preset)}</div></div>
+          {active?.id === preset.id && <span className="rounded-md border px-1.5 py-0.5 text-xs text-muted-foreground">Default</span>}
+          <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label={`Options for ${preset.name}`}><EllipsisIcon /></Button></DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => edit(preset)}>Edit preset</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => {
+                setError("")
+                removeModelPreset(preset.id).catch(e => setError(e instanceof Error ? e.message : String(e)))
+              }}>Remove preset</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>)}
+      </div>
+    </Skullet>
     {!editing && error && <p role="alert" className="text-destructive">{error}</p>}
     {editing && <Dialog open onOpenChange={open => { if (!open) { setEditing(null); setError("") } }}>
       <DialogContent className="max-h-[95dvh] overflow-y-auto sm:max-w-sm" aria-describedby={undefined}>

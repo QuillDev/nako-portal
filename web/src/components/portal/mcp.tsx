@@ -1,7 +1,7 @@
 import { CheckIcon, ChevronRightIcon, ExternalLinkIcon, EyeIcon, EyeOffIcon, PlusIcon, SearchIcon, XIcon } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { LoadingRows } from "./screen-loading"
-import { SettingsLoading } from "./settings-loading"
+import { Skullet } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
@@ -478,6 +478,15 @@ function AddPanel({ onAdded, onClose, onError }: { onAdded: (name: string) => vo
 
 type Open = { kind: "server"; name: string } | { kind: "add" } | null
 
+const SAMPLE_MCP: { servers: McpServer[]; codex: boolean } = {
+  codex: false,
+  servers: [
+    { name: "notion", url: "https://mcp.notion.example.test/mcp", command: "", args: [], env: [], auth: "oauth", enabled: true, plugin: "", status: "connected", error: "", signed_in: true, picked: false, codex: "", installing: false },
+    { name: "linear", url: "https://mcp.linear.example.test/mcp", command: "", args: [], env: [], auth: "oauth", enabled: true, plugin: "", status: "connected", error: "", signed_in: true, picked: false, codex: "", installing: false },
+    { name: "local-files", url: "", command: "npx", args: [], env: [], auth: "none", enabled: true, plugin: "", status: "connected", error: "", signed_in: false, picked: false, codex: "", installing: false },
+  ],
+}
+
 /** Settings > MCP servers: what this profile connects to, each one's tools, and adding more. */
 export function McpSettings({ onError }: { onError: (m: string) => void }) {
   const mcp = useMcp()
@@ -490,48 +499,57 @@ export function McpSettings({ onError }: { onError: (m: string) => void }) {
     const timer = window.setInterval(() => void reloadMcp(), 3000)
     return () => window.clearInterval(timer)
   }, [installing])
-  if (mcp === null) return <SettingsLoading page="mcp" />
-  if (!mcp) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
+  if (mcp === false) return <p className="text-muted-foreground text-sm">Unavailable on this portal.</p>
   const typed = words(query)
-  const shown = typed ? mcp.servers.filter(s => words(`${s.name} ${s.url} ${s.command}`).includes(typed)) : mcp.servers
-  const current = open?.kind === "server" ? mcp.servers.find(s => s.name === open.name) : undefined
+  const current = mcp && open?.kind === "server" ? mcp.servers.find(s => s.name === open.name) : undefined
   const close = () => setOpen(null)
   return (
     <>
-      <div className="flex items-center gap-2 pb-1">
-        <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5">
-          <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
-          <input aria-label="Search servers" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" enterKeyHint="search" onChange={e => setQuery(e.target.value)} placeholder="Search servers" spellCheck={false} value={query} />
-        </label>
-        <Button aria-label="Add server" className="size-10 rounded-full" onClick={() => setOpen({ kind: "add" })} size="icon" title="Add server">
-          <PlusIcon className="size-[18px]" />
-        </Button>
-      </div>
-      <div className="flex flex-col">
-        {shown.map(s => (
-          <div className="-mx-2 flex items-center gap-3 rounded-md px-2 hover:bg-accent" data-mcp-row={s.name} key={s.name}>
-            <button className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none" onClick={() => setOpen({ kind: "server", name: s.name })} type="button">
-              <span className={cn("flex min-w-0 flex-1 flex-col", !s.enabled && !s.installing && s.status !== "failed" && "opacity-55")}>
-                <span className="truncate font-medium font-mono text-[13px] leading-5">{s.name}</span>
-                <Subline server={s} />
-              </span>
-            </button>
-            {!s.plugin && !s.installing && (s.url || s.command) && (
-              <Switch checked={s.enabled} label={`Use ${s.name}`} onCheckedChange={on => void setMcpEnabled(s.name, on).then(reloadMcp, e => onError((e as Error).message))} />
-            )}
-            <button aria-label={`Open ${s.name}`} className="py-2 outline-none" onClick={() => setOpen({ kind: "server", name: s.name })} tabIndex={-1} type="button">
-              <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-            </button>
-          </div>
-        ))}
-        {!shown.length && <p className="py-4 text-muted-foreground text-sm">{typed ? `No servers match "${query.trim()}".` : "No servers yet."}</p>}
-      </div>
+      <Skullet data={mcp} id="settings-mcp" label="Loading MCP servers…" sample={SAMPLE_MCP}>
+        {data => {
+          const shown = typed ? data.servers.filter(s => words(`${s.name} ${s.url} ${s.command}`).includes(typed)) : data.servers
+          return (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 pb-1">
+                <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full border border-input bg-card px-3.5">
+                  <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+                  <input aria-label="Search servers" className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" enterKeyHint="search" onChange={e => setQuery(e.target.value)} placeholder="Search servers" spellCheck={false} value={query} />
+                </label>
+                <Button aria-label="Add server" className="size-10 rounded-full" onClick={() => setOpen({ kind: "add" })} size="icon" title="Add server">
+                  <PlusIcon className="size-[18px]" />
+                </Button>
+              </div>
+              <div className="flex flex-col">
+                {shown.map(s => (
+                  <div className="-mx-2 flex items-center gap-3 rounded-md px-2 hover:bg-accent" data-mcp-row={s.name} key={s.name}>
+                    <button className="flex min-w-0 flex-1 items-center gap-3 py-2 text-left outline-none" onClick={() => setOpen({ kind: "server", name: s.name })} type="button">
+                      <span className={cn("flex min-w-0 flex-1 flex-col", !s.enabled && !s.installing && s.status !== "failed" && "opacity-55")}>
+                        <span className="truncate font-medium font-mono text-[13px] leading-5">{s.name}</span>
+                        <Subline server={s} />
+                      </span>
+                    </button>
+                    {!s.plugin && !s.installing && (s.url || s.command) && (
+                      <Switch checked={s.enabled} label={`Use ${s.name}`} onCheckedChange={on => void setMcpEnabled(s.name, on).then(reloadMcp, e => onError((e as Error).message))} />
+                    )}
+                    <button aria-label={`Open ${s.name}`} className="py-2 outline-none" onClick={() => setOpen({ kind: "server", name: s.name })} tabIndex={-1} type="button">
+                      <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                    </button>
+                  </div>
+                ))}
+                {!shown.length && <p className="py-4 text-muted-foreground text-sm">{typed ? `No servers match "${query.trim()}".` : "No servers yet."}</p>}
+              </div>
+            </div>
+          )
+        }}
+      </Skullet>
+      {mcp && (
       <Dialog onOpenChange={o => !o && close()} open={open !== null && (open.kind === "add" || !!current)}>
         <DialogContent className={PANEL} data-mcp-panel={open?.kind === "add" ? "add" : current?.name || ""} onOpenAutoFocus={e => e.preventDefault()} showCloseButton={false}>
           {open?.kind === "add" && <AddPanel onAdded={name => setOpen({ kind: "server", name })} onClose={close} onError={onError} />}
           {current && <ServerPanel key={current.name} onClose={close} onError={onError} server={current} />}
         </DialogContent>
       </Dialog>
+      )}
     </>
   )
 }

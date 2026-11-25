@@ -2,11 +2,12 @@ import { useEffect, useState } from "react"
 import { LaptopIcon, MessageSquareIcon, MonitorIcon, PlusIcon, ServerIcon, XIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Skullet } from "@/components/ui/skeleton"
 import type { Portal } from "@/hooks/use-portal"
 import { navigate } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { health, type Health, loadMesh, machineKind, machineState, useMesh } from "@/lib/mesh"
-import type { Machine, PluginSource } from "@/lib/types"
+import type { Machine, Mesh, PluginSource } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const KIND_ICON = { laptop: LaptopIcon, desktop: MonitorIcon, server: ServerIcon }
@@ -24,7 +25,7 @@ function spot(index: number, count: number) {
 function MeshMap({ hubName, machines, selected, pick }: { hubName: string; machines: Machine[]; selected: string | null; pick: (name: string | null) => void }) {
   return (
     <div className="relative mx-auto aspect-square w-full max-w-xl select-none sm:aspect-[4/3]">
-      <svg aria-hidden className="absolute inset-0 size-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+      <svg aria-hidden className="absolute inset-0 size-full" preserveAspectRatio="none" viewBox="0 0 100 100" {...{ "skullet-ignore": "" }}>
         {machines.map((m, i) => {
           const { x, y } = spot(i, machines.length)
           const state = health(m)
@@ -69,6 +70,7 @@ function MeshMap({ hubName, machines, selected, pick }: { hubName: string; machi
             type="button"
           >
             <span
+              {...{ "skullet-block": "" }}
               className={cn(
                 "relative flex size-12 items-center justify-center rounded-full border-2 bg-card shadow-sm transition-colors group-hover:bg-accent group-aria-pressed:bg-accent",
                 RING[state],
@@ -287,9 +289,19 @@ function PluginSourceRow({ plugin, onError }: { plugin: PluginSource; onError: (
   )
 }
 
+const SAMPLE_MESH: Mesh = {
+  hub: true,
+  name: "hub",
+  machines: [
+    { name: "laptop", online: true, gateway: true, os: "Darwin", hostname: "macbook", last_seen: null, working: 0 },
+    { name: "desktop", online: true, gateway: true, os: "Windows", hostname: "desktop", last_seen: null, working: 0 },
+    { name: "homelab", online: false, gateway: false, os: "Linux", hostname: "homelab", last_seen: null, working: 0 },
+  ],
+}
+
 /** Settings > Mesh: the hub with its machines around it, and the way to add one. */
 export function MeshSettings({ portal }: { portal: Portal }) {
-  const mesh = useMesh(portal.machinesSeen) || null
+  const raw = useMesh(portal.machinesSeen)
   const [selected, setSelected] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState("")
@@ -299,38 +311,45 @@ export function MeshSettings({ portal }: { portal: Portal }) {
     const timer = setInterval(() => tick(n => n + 1), 30_000)
     return () => clearInterval(timer)
   }, [])
-  const machines = mesh?.machines ?? []
-  const picked = machines.find(m => m.name === selected)
+  if (raw === false) return null
   return (
-    <div className="flex flex-col gap-4">
-      {mesh && !mesh.hub && <p className="py-10 text-center text-muted-foreground text-sm">This portal isn't a mesh hub.</p>}
-      {mesh?.hub && (
-        <>
-          <MeshMap hubName={mesh.name ?? "hub"} machines={machines} pick={setSelected} selected={selected} />
-          {machines.length === 0 && !adding && (
-            <p className="text-center text-muted-foreground text-sm">No machines yet. Add one to hand it tasks from here.</p>
-          )}
-          {adding && <AddMachine close={() => setAdding(false)} onError={setError} ready={Boolean(mesh.plugin?.source)} />}
-          {picked && <MachineCard close={() => setSelected(null)} machine={picked} onError={setError} portal={portal} />}
-          {!adding && (
-            <div className="flex justify-end">
-              <Button
-                onClick={() => {
-                  setAdding(true)
-                  setSelected(null)
-                }}
-                size="sm"
-                variant="outline"
-              >
-                <PlusIcon />
-                Add machine
-              </Button>
-            </div>
-          )}
-          {mesh.plugin && <PluginSourceRow onError={setError} plugin={mesh.plugin} />}
-        </>
-      )}
-      {error && <p className="text-destructive text-sm">{error}</p>}
-    </div>
+    <Skullet data={raw} id="settings-mesh" label="Loading mesh…" sample={SAMPLE_MESH}>
+      {mesh => {
+        const machines = mesh.machines
+        const picked = machines.find(m => m.name === selected)
+        return (
+          <div className="flex flex-col gap-4">
+            {!mesh.hub && <p className="py-10 text-center text-muted-foreground text-sm">This portal isn't a mesh hub.</p>}
+            {mesh.hub && (
+              <>
+                <MeshMap hubName={mesh.name ?? "hub"} machines={machines} pick={setSelected} selected={selected} />
+                {machines.length === 0 && !adding && (
+                  <p className="text-center text-muted-foreground text-sm">No machines yet. Add one to hand it tasks from here.</p>
+                )}
+                {adding && <AddMachine close={() => setAdding(false)} onError={setError} ready={Boolean(mesh.plugin?.source)} />}
+                {picked && <MachineCard close={() => setSelected(null)} machine={picked} onError={setError} portal={portal} />}
+                {!adding && (
+                  <div className="flex justify-end">
+                    <Button
+                      onClick={() => {
+                        setAdding(true)
+                        setSelected(null)
+                      }}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <PlusIcon />
+                      Add machine
+                    </Button>
+                  </div>
+                )}
+                {mesh.plugin && <PluginSourceRow onError={setError} plugin={mesh.plugin} />}
+              </>
+            )}
+            {error && <p className="text-destructive text-sm">{error}</p>}
+          </div>
+        )
+      }}
+    </Skullet>
   )
 }
