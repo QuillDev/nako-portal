@@ -180,7 +180,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     }
   }
 
-  const usage = useUsage(setError)
+  const [usage, setUsage] = useUsage(setError)
   const secrets = useSecrets()
   const providers = useProviders()
   const mcp = useMcp()
@@ -260,7 +260,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
         <ProfileRows onError={setError} />
       </>
     ),
-    usage: usage !== "unsupported" && usage !== "failed" && <UsageSettings state={usage} providers={providers || null} session={portal.route.view === "settings" ? portal.route.fromChat : undefined} />,
+    usage: usage !== "unsupported" && usage !== "failed" && <UsageSettings state={usage} providers={providers || null} session={portal.route.view === "settings" ? portal.route.fromChat : undefined} onUpdate={setUsage} onError={setError} />,
     providers: <ProvidersSettings onError={setError} />,
     secrets: <SecretsSettings onError={setError} />,
     mcp: <McpSettings onError={setError} />,

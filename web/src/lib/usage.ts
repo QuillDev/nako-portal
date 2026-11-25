@@ -2,6 +2,11 @@ import { useEffect, useState } from "react"
 import { d, type Infer } from "@/lib/decode"
 import { api, ApiError } from "@/lib/api"
 
+const resets = d.object({
+  available: d.number(),
+  usable: d.boolean(),
+  account: d.string().optional(),
+})
 const usage = d.object({
   providers: d.array(d.object({
     provider: d.string(),
@@ -10,6 +15,7 @@ const usage = d.object({
       label: d.string(),
       windows: d.array(d.object({ label: d.string(), used_percent: d.number(), resets_at: d.string().nullable() })),
       note: d.string().nullable(),
+      resets: resets.optional(),
     })),
   })),
 })
@@ -29,6 +35,11 @@ export function useUsage(onError: (message: string) => void) {
       })
     return () => { active = false }
   }, [onError])
-  return state
+  return [state, setState] as const
+}
+
+export async function redeemUsageReset(provider: string, account = "", force = true): Promise<Usage> {
+  const raw = await api<unknown>("/api/usage/reset", { method: "POST", body: { provider, account, force } })
+  return usage.parse(raw)
 }
 

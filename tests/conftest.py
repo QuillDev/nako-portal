@@ -264,9 +264,33 @@ class FakeGateway:
     def usage(self):
         if not self.model_controls:
             return None
+        if getattr(self, "usage_rows", None) is not None:
+            return self.usage_rows
         return [{"provider": "big", "label": "Big Co", "accounts": [
             {"label": "home", "windows": [{"label": "Week", "used_percent": 100.0, "resets_at": "2026-11-05T16:00:00+00:00"}], "note": None},
             {"label": "spare", "windows": [], "note": "Signed out"}]}]
+
+    def use_reset(self, provider, account="", force=False):
+        if not self.model_controls:
+            return None
+        if provider != "openai-codex":
+            raise ValueError("That provider doesn't support usage resets")
+        rows = self.usage() or []
+        target = next((a for p in rows if p["provider"] == provider for a in p["accounts"]
+                       if not account or account in (a.get("label"), (a.get("resets") or {}).get("account"))), None)
+        if target is None:
+            raise ValueError("Account not found")
+        resets = target.get("resets") or {}
+        available = int(resets.get("available") or 0)
+        if available <= 0:
+            return {"status": "no_credits_banked", "redeemed": False, "message": "No banked reset credits on this account.", "available": 0}
+        if not resets.get("usable"):
+            return {"status": "nothing_to_reset", "redeemed": False, "message": "Nothing to reset yet.", "available": available}
+        remaining = available - 1
+        for window in target["windows"]:
+            window["used_percent"] = 0.0
+        target["resets"] = {**resets, "available": remaining, "usable": False}
+        return {"status": "reset", "redeemed": True, "message": f"Reset redeemed. {remaining} remaining.", "available": remaining}
 
     def model(self):
         if not self.model_controls:

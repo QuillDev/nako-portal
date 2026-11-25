@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
+import { Button } from "@/components/ui/button"
 import { Skullet } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import type { Provider } from "@/lib/providers"
-import type { Usage } from "@/lib/usage"
+import { redeemUsageReset, type Usage } from "@/lib/usage"
 import { ProviderMark } from "./provider-mark"
 import { cn } from "@/lib/utils"
 
@@ -37,7 +38,9 @@ const SAMPLE_USAGE: Usage = {
   ],
 }
 
-type Window = Usage["providers"][number]["accounts"][number]["windows"][number]
+type Account = Usage["providers"][number]["accounts"][number]
+type Resets = NonNullable<Account["resets"]>
+type Window = Account["windows"][number]
 
 const dateFormat = new Intl.DateTimeFormat([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 
@@ -96,7 +99,45 @@ function Limit({ window, label, length, now }: { window: Window; label: string; 
   )
 }
 
-export function UsageSettings({ state, providers, session }: { state: Usage | null; providers: Provider[] | null; session?: string }) {
+function ResetRow({ provider, targetLabel, resets, maxUsed, onUpdate, onError }: {
+  provider: string; targetLabel: string; resets: Resets; maxUsed: number;
+  onUpdate: (next: Usage) => void; onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false)
+  const count = resets.available === 0
+    ? "No resets available"
+    : `${resets.available} ${resets.available === 1 ? "reset" : "resets"} available`
+  const redeem = async () => {
+    const prompt = maxUsed >= 100
+      ? `Use 1 banked reset for ${targetLabel}? Your limits reset immediately and your new weekly window starts on your next request.`
+      : `${targetLabel} is at ${maxUsed}% used. Using a banked reset now replaces your remaining allowance and restarts your weekly window. Use 1 reset anyway?`
+    if (!window.confirm(prompt)) return
+    setBusy(true)
+    onError("")
+    try {
+      onUpdate(await redeemUsageReset(provider, resets.account ?? "", true))
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex min-h-8 items-center justify-between gap-3 pt-1 text-xs" data-usage-resets={resets.available}>
+      <span className="text-muted-foreground tabular-nums">{count}</span>
+      {resets.available > 0 && (
+        <Button size="sm" variant="outline" disabled={!resets.usable || busy} onClick={() => void redeem()}>
+          {busy ? "Resetting…" : "Use reset"}
+        </Button>
+      )}
+    </div>
+  )
+}
+
+export function UsageSettings({ state, providers, session, onUpdate, onError }: {
+  state: Usage | null; providers: Provider[] | null; session?: string;
+  onUpdate: (next: Usage) => void; onError: (message: string) => void;
+}) {
   const [selection, setSelection] = useState<{ session?: string; provider: string } | null>(null)
   useEffect(() => {
     let active = true
@@ -124,12 +165,23 @@ export function UsageSettings({ state, providers, session }: { state: Usage | nu
             if (!groups.size) return []
             const identity = identities?.find(a => a.id === account.label || a.label === account.label)
             const label = identity?.email || (/^(primary|secondary)$/i.test(account.label) ? `Account ${index + 1}` : account.label)
+            const maxUsed = Math.max(0, ...account.windows.map(w => Math.round(w.used_percent)))
             return <div key={account.label || index} className="space-y-3" data-usage-account={account.label}>
               {label && <p className="break-words font-medium text-sm">{label}</p>}
               {Array.from(groups, ([group, rows]) => <div className="space-y-3" key={group}>
                 {group && <p className="font-medium text-sm">{group}</p>}
                 {rows.sort((a, b) => a.length - b.length).map(row => <Limit key={row.window.label} {...row} now={now} />)}
               </div>)}
+              {account.resets && (
+                <ResetRow
+                  provider={provider.provider}
+                  targetLabel={label ? `${title} (${label})` : title}
+                  resets={{ ...account.resets, account: account.resets.account ?? account.label }}
+                  maxUsed={maxUsed}
+                  onUpdate={onUpdate}
+                  onError={onError}
+                />
+              )}
             </div>
           })
           if (!accounts.length) return []

@@ -997,6 +997,13 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
             return None
         return self._model_client().usage()
 
+    def use_reset(self, provider, account="", force=False):
+        """Redeem a banked usage reset through model-controls; None when unsupported."""
+        api = sys.modules.get("model_controls")
+        if api is None or not hasattr(api.Client, "use_reset"):
+            return None
+        return self._model_client().use_reset(provider, account=account, force=force)
+
     def model_options(self, provider, model):
         from hermes_cli.config import get_compatible_custom_providers, load_config
         from hermes_cli.model_switch import switch_model
