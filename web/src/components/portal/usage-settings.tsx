@@ -103,33 +103,56 @@ function ResetRow({ provider, targetLabel, resets, maxUsed, onUpdate, onError }:
   provider: string; targetLabel: string; resets: Resets; maxUsed: number;
   onUpdate: (next: Usage) => void; onError: (message: string) => void;
 }) {
-  const [busy, setBusy] = useState(false)
-  const count = resets.available === 0
-    ? "No resets available"
-    : `${resets.available} ${resets.available === 1 ? "reset" : "resets"} available`
-  const redeem = async () => {
-    const prompt = maxUsed >= 100
-      ? `Use 1 banked reset for ${targetLabel}? Your limits reset immediately and your new weekly window starts on your next request.`
-      : `${targetLabel} is at ${maxUsed}% used. Using a banked reset now replaces your remaining allowance and restarts your weekly window. Use 1 reset anyway?`
-    if (!window.confirm(prompt)) return
-    setBusy(true)
+  const [busy, setBusy] = useState<string | null>(null)
+  const items = resets.options && resets.options.length > 0
+    ? resets.options.map(option => ({
+        key: option.id,
+        grant: option.id,
+        available: option.available,
+        usable: option.usable,
+        text: `${option.available} ${option.available === 1 ? option.label : `${option.label}s`} available`,
+        prompt: maxUsed >= 100
+          ? `Use 1 ${option.label} for ${targetLabel}?`
+          : `${targetLabel} is at ${maxUsed}% used. Use 1 ${option.label} anyway?`,
+      }))
+    : [{
+        key: "default",
+        grant: "",
+        available: resets.available,
+        usable: resets.usable,
+        text: resets.available === 0
+          ? "No resets available"
+          : `${resets.available} ${resets.available === 1 ? "reset" : "resets"} available`,
+        prompt: maxUsed >= 100
+          ? `Use 1 banked reset for ${targetLabel}? Your limits reset immediately and your new weekly window starts on your next request.`
+          : `${targetLabel} is at ${maxUsed}% used. Using a banked reset now replaces your remaining allowance and restarts your weekly window. Use 1 reset anyway?`,
+      }]
+
+  const redeem = async (item: (typeof items)[number]) => {
+    if (busy !== null || !item.usable) return
+    if (!window.confirm(item.prompt)) return
+    setBusy(item.key)
     onError("")
     try {
-      onUpdate(await redeemUsageReset(provider, resets.account ?? "", true))
+      onUpdate(await redeemUsageReset(provider, resets.account ?? "", true, item.grant))
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
   return (
-    <div className="flex min-h-8 items-center justify-between gap-3 pt-1 text-xs" data-usage-resets={resets.available}>
-      <span className="text-muted-foreground tabular-nums">{count}</span>
-      {resets.available > 0 && (
-        <Button size="sm" variant="outline" disabled={!resets.usable || busy} onClick={() => void redeem()}>
-          {busy ? "Resetting…" : "Use reset"}
-        </Button>
-      )}
+    <div className="space-y-1.5 pt-1 text-xs" data-usage-resets={resets.available}>
+      {items.map(item => (
+        <div key={item.key} className="flex min-h-8 items-center justify-between gap-3" data-usage-reset-option={item.grant || undefined}>
+          <span className="text-muted-foreground tabular-nums">{item.text}</span>
+          {item.available > 0 && (
+            <Button size="sm" variant="outline" disabled={!item.usable || busy !== null} onClick={() => void redeem(item)}>
+              {busy === item.key ? "Resetting…" : "Use reset"}
+            </Button>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

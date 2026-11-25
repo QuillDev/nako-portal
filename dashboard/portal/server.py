@@ -455,8 +455,10 @@ class Portal(AuthRoutes, LocalAPI):
             raise web.HTTPBadRequest(text=json.dumps({"error": "Pick a provider"}), content_type="application/json")
         account = body.get("account") if isinstance(body.get("account"), str) else ""
         force = bool(body.get("force"))
+        grant = body.get("grant") if isinstance(body.get("grant"), str) else ""
         try:
-            result = await asyncio.to_thread(self.hub.backend.use_reset, body["provider"].strip(), account, force)
+            args = (body["provider"].strip(), account, force, grant) if grant else (body["provider"].strip(), account, force)
+            result = await asyncio.to_thread(self.hub.backend.use_reset, *args)
         except ValueError as error:
             raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
         if result is None:

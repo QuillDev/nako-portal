@@ -337,3 +337,32 @@ async def test_usage_reset_redeems_credit_and_returns_refreshed_limits(world):
 
     world.hermes.model_controls = False
     assert (await world.post("/api/usage/reset", {"provider": "openai-codex"})).status == 404
+
+
+async def test_usage_reset_supports_per_grant_claude_options(world):
+    await world.sign_up()
+    world.hermes.usage_rows = [{
+        "provider": "claude-subscription-directsdk-experimental", "label": "Claude", "accounts": [{
+            "label": "work@example.test",
+            "windows": [{"label": "Current week", "used_percent": 92.0, "resets_at": "2026-12-01T23:00:00+00:00"}],
+            "note": None,
+            "resets": {
+                "available": 3, "usable": True, "account": "work@example.test",
+                "options": [
+                    {"id": "full-reset-2611", "label": "weekly reset", "available": 1, "usable": True},
+                    {"id": "launch-2610-fable", "label": "Fable reset", "available": 2, "usable": True},
+                ],
+            },
+        }],
+    }]
+
+    redeemed = await world.post("/api/usage/reset", {
+        "provider": "claude-subscription-directsdk-experimental",
+        "account": "work@example.test",
+        "grant": "full-reset-2611",
+    })
+    assert redeemed.status == 200
+    account = (await redeemed.json())["providers"][0]["accounts"][0]
+    assert account["windows"][0]["used_percent"] == 0.0
+    assert account["resets"]["available"] == 2
+    assert [o["id"] for o in account["resets"]["options"]] == ["launch-2610-fable"]
