@@ -7,6 +7,7 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
 from portal.offline import RESULT_CHARS, Offline, raw_thread, with_results
 
 
@@ -53,6 +54,33 @@ def test_raw_thread_follows_compaction_lineage_and_filters_hidden_or_inactive(tm
         ("assistant", "first answer"),
         ("user", "follow up"),
         ("assistant", "final answer"),
+    ]
+
+
+@pytest.mark.parametrize("visible", [(0, 0), (0, 1), (1, 0), (1, 1)])
+def test_compacted_notifications_keep_their_original_senders(tmp_path, visible):
+    from portal.hub import _as_notification
+
+    db = _create_db(tmp_path)
+    db.execute("ALTER TABLE messages ADD COLUMN message_uid TEXT")
+    db.execute("ALTER TABLE messages ADD COLUMN absorbed_message_uids TEXT")
+    db.execute("ALTER TABLE messages ADD COLUMN display_metadata TEXT")
+    db.execute("INSERT INTO sessions VALUES ('s', 'portal', 'Notifications', 'inbox', NULL, NULL, 0)")
+    alert = '[Cron delivery: build]\nfailed\n\nsee the report'
+    ask = 'which build?\n\ncan you check?'
+    db.executemany(
+        "INSERT INTO messages (session_id, role, content, timestamp, active, message_uid, absorbed_message_uids) "
+        "VALUES ('s', 'user', ?, ?, ?, ?, ?)",
+        [(alert, 1, visible[0], 'notice', None), (ask, 2, visible[1], 'ask', None),
+         (alert + '\n\n' + ask, 3, 1, 'notice', '["ask"]'),
+         ('only surviving text', 4, 1, 'other', '["missing"]')],
+    )
+    db.commit()
+    db.close()
+
+    messages = [_as_notification(m) for m in raw_thread(tmp_path, 's')['messages']]
+    assert [(m['role'], m['text'], m['timestamp']) for m in messages] == [
+        ('assistant', 'failed\n\nsee the report', 1), ('user', ask, 2), ('user', 'only surviving text', 4),
     ]
 
 

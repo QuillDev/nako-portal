@@ -670,7 +670,8 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
                         history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True, include_compacted=True)
                     except TypeError:  # a Hermes from before display reads
                         history = db.get_messages_as_conversation(session, include_ancestors=True, include_row_ids=True)
-                    messages = _portal("offline").with_results(_history_to_messages(history, profile_home=home), history)
+                    offline = _portal("offline")
+                    messages = offline.with_results(_history_to_messages(offline.original_user_messages(home, history), profile_home=home), history)
                 if cache and revision is not None:
                     with self.threads_lock:
                         self.threads.pop(key, None)

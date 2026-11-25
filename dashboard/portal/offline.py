@@ -46,6 +46,50 @@ def with_results(messages, history):
     return out
 
 
+def original_user_messages(home, history):
+    """A model turn can join several user-role messages, including posts from different senders.
+    Show their original rows instead, but only if they account for the entire joined text."""
+    bundles = [(i, r) for i, r in enumerate(history) if r.get("role") == "user" and not r.get("display_kind")
+               and r.get("_absorbed_message_uids")]
+    if not bundles:
+        return history
+    positions = {r["message_uid"]: i for i, r in enumerate(history) if r.get("role") == "user" and r.get("message_uid")
+                 and not r.get("_absorbed_message_uids")}
+    slots = [[row] for row in history]
+    restored = set()
+    for index, bundle in bundles:
+        uids = [bundle.get("message_uid"), *bundle["_absorbed_message_uids"]]
+        parts = {u: history[positions[u]] for u in uids if u in positions}
+        missing = [u for u in uids if u not in parts]
+        if missing and bundle.get("_row_id"):
+            # Older generations keep the originals only as inactive rows. Only look up members
+            # named by this visible bundle, in its own session; never replay inactive history.
+            rows = _query(home, "SELECT m.message_uid, m.id, m.content, m.timestamp, m.display_kind, m.display_metadata "
+                          "FROM messages AS b JOIN messages AS m ON m.session_id=b.session_id WHERE b.id=? "
+                          "AND m.role='user' AND m.message_uid IN (SELECT value FROM json_each(?)) "
+                          "AND m.absorbed_message_uids IS NULL AND m.id<b.id AND (m.display_metadata IS NULL OR json_valid(m.display_metadata)) ORDER BY m.id",
+                          (bundle["_row_id"], json.dumps(missing)))
+            for uid, row_id, content, timestamp, kind, metadata in rows:
+                parts.setdefault(uid, {"role": "user", "content": content, "_row_id": row_id, "timestamp": timestamp,
+                                       "message_uid": uid, "display_kind": kind, "display_metadata": json.loads(metadata) if metadata else None})
+        if not all(isinstance(parts.get(u, {}).get("content"), str) for u in uids):
+            continue
+        if "\n\n".join(parts[u]["content"] for u in uids) != bundle["content"]:
+            continue
+        slots[index] = []
+        pending, anchor = [], None
+        for uid in uids:
+            if uid in positions:
+                anchor = positions[uid]
+                slots[anchor][:0] = pending
+                pending = []
+            elif parts[uid]["_row_id"] not in restored:
+                restored.add(parts[uid]["_row_id"])
+                pending.append(parts[uid])
+        slots[index if anchor is None else anchor].extend(pending)
+    return [row for slot in slots for row in slot]
+
+
 def _homes(home):
     """The home and its profiles' homes: a chat may live in any profile the gateway served."""
     home = Path(home)
@@ -95,40 +139,48 @@ def raw_thread(home, session):
     columns = {row[1] for row in _query(home, "PRAGMA table_info(messages)")}
     active = " AND COALESCE(active, 1)=1" if "active" in columns else ""
     kind = ", display_kind" if "display_kind" in columns else ", NULL"
+    identity = ", message_uid, absorbed_message_uids" if {"message_uid", "absorbed_message_uids", "display_kind", "display_metadata"} <= columns else ", NULL, NULL"
     history, messages, calls = [], [], {}
     for sid in _lineage(home, session):
         rows = _query(
             home,
-            f"SELECT id, role, content, tool_call_id, tool_calls, tool_name, timestamp{kind} FROM messages WHERE session_id=?{active} ORDER BY id",
+            f"SELECT id, role, content, tool_call_id, tool_calls, tool_name, timestamp{kind}{identity} FROM messages WHERE session_id=?{active} ORDER BY id",
             (sid,),
         )
-        for row_id, role, content, call_id, tool_calls, tool_name, timestamp, display_kind in rows:
-            history.append({"role": role, "content": content, "tool_call_id": call_id})
-            if display_kind == "hidden":
-                continue
-            if role == "assistant" and tool_calls:
-                try:
-                    for call in json.loads(tool_calls) or []:
-                        function = call.get("function") or {}
-                        try:
-                            args = json.loads(function.get("arguments") or "{}")
-                        except (TypeError, ValueError):
-                            args = {}
-                        calls[call.get("id")] = (function.get("name"), args)
-                except (TypeError, ValueError, AttributeError):
-                    pass
-            if role == "tool":
-                name, args = calls.get(call_id, (None, {}))
-                tool = {"role": "tool", "name": name or tool_name or "tool", "context": _context(args), "timestamp": timestamp}
-                if call_id:
-                    tool["tool_call_id"] = call_id
-                if args:
-                    tool["args"] = args
-                messages.append(tool)
-                continue
-            if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
-                continue
-            messages.append({"role": role, "text": content, "row_id": row_id, "timestamp": timestamp})
+        history.extend({"_row_id": row_id, "role": role, "content": content, "tool_call_id": call_id, "tool_calls": tool_calls,
+                        "tool_name": tool_name, "timestamp": timestamp, "display_kind": display_kind, "message_uid": uid,
+                        "_absorbed_message_uids": json.loads(absorbed) if absorbed else []}
+                       for row_id, role, content, call_id, tool_calls, tool_name, timestamp, display_kind, uid, absorbed in rows)
+    for row in original_user_messages(home, history):
+        row_id, role, content = row["_row_id"], row["role"], row["content"]
+        call_id, tool_calls, tool_name = row.get("tool_call_id"), row.get("tool_calls"), row.get("tool_name")
+        timestamp, display_kind = row["timestamp"], row.get("display_kind")
+        if display_kind == "hidden":
+            continue
+        if role == "assistant" and tool_calls:
+            try:
+                for call in json.loads(tool_calls) or []:
+                    function = call.get("function") or {}
+                    try:
+                        args = json.loads(function.get("arguments") or "{}")
+                    except (TypeError, ValueError):
+                        args = {}
+                    calls[call.get("id")] = (function.get("name"), args)
+            except (TypeError, ValueError, AttributeError):
+                pass
+        if role == "tool":
+            name, args = calls.get(call_id, (None, {}))
+            tool = {"role": "tool", "name": name or tool_name or "tool", "context": _context(args), "timestamp": timestamp}
+            if call_id:
+                tool["tool_call_id"] = call_id
+            if args:
+                tool["args"] = args
+            messages.append(tool)
+            continue
+        if role not in ("user", "assistant") or not isinstance(content, str) or not content.strip():
+            continue
+        messages.append({"role": role, "text": content, "row_id": row_id, "timestamp": timestamp,
+                         **({"display_kind": display_kind} if display_kind else {})})
     title = _query(home, "SELECT title FROM sessions WHERE id=?", (session,))
     return {"title": (title[0][0] or "") if title else "", "messages": with_results(messages, history)}
 
@@ -139,7 +191,7 @@ def messages_from_store(home, session, store):
 
     request = ConversationRequest(view=TranscriptView.DISPLAY, include_lineage=True, include_row_ids=True)
     history = [row.as_openai_message() for row in store.messages.read_conversation(session, request)]
-    messages = _history_to_messages(history, profile_home=Path(home))
+    messages = _history_to_messages(original_user_messages(home, history), profile_home=Path(home))
     return with_results(messages, history)
 
 
@@ -168,7 +220,7 @@ def hermes_thread(home, session, agent="hermes"):
             record = store.sessions.get(session)
             return {"title": (record.title or "") if record is not None else "",
                     "messages": messages_from_store(home, session, store)}
-    messages = _history_to_messages(history, profile_home=Path(home))
+    messages = _history_to_messages(original_user_messages(home, history), profile_home=Path(home))
     return {"title": title or "", "messages": with_results(messages, history)}
 
 
