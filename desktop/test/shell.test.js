@@ -1,12 +1,12 @@
 import assert from "node:assert/strict"
 import { createHash, generateKeyPairSync, sign } from "node:crypto"
-import { request } from "node:http"
+import { createServer, request } from "node:http"
 import { test } from "node:test"
 
 import { browserAgent } from "../src/agent.js"
 import { backoff, parseAlert } from "../src/alerts.js"
 import { blake2b512, parsePublicKey, verifySignature } from "../src/minisign.js"
-import { ServerOrigin } from "../src/origin.js"
+import { ServerOrigin, resolveOrigin } from "../src/origin.js"
 import { begin } from "../src/signin.js"
 import { announcement, due, newer, platformKey, reason } from "../src/update.js"
 
@@ -141,4 +141,61 @@ test("coming back checks again only after a while, and a failed check says what 
 test("pages see Chrome without the Electron and app tokens", () => {
   const fallback = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) nako/0.3.0 Chrome/146.0.0.0 Electron/45.0.0 Safari/537.36"
   assert.equal(browserAgent(fallback), "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+})
+
+async function serveMe(handler) {
+  const server = createServer(handler)
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+  const origin = ServerOrigin.parse(`http://127.0.0.1:${server.address().port}`)
+  return { origin, close: () => new Promise(resolve => server.close(resolve)) }
+}
+
+test("resolveOrigin follows a verified portal move and rejects unsafe or broken moves", async () => {
+  let targetOrigin
+  const moved = await serveMe((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ signed_in: false, origin: targetOrigin.value }))
+  })
+  targetOrigin = moved.origin
+
+  const old = await serveMe((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ signed_in: true, origin: moved.origin.value }))
+  })
+  const redirector = await serveMe((_req, res) => {
+    res.writeHead(308, { Location: moved.origin.page("/api/me") })
+    res.end()
+  })
+  const legacy = await serveMe((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ signed_in: false }))
+  })
+  const bouncing = await serveMe((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ signed_in: false, origin: "http://127.0.0.1:1" }))
+  })
+  const looper = await serveMe((_req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ signed_in: false, origin: bouncing.origin.value }))
+  })
+
+  try {
+    assert.equal((await resolveOrigin(moved.origin)).value, moved.origin.value)
+    assert.equal((await resolveOrigin(legacy.origin)).value, legacy.origin.value)
+    assert.equal((await resolveOrigin(old.origin)).value, moved.origin.value)
+    assert.equal((await resolveOrigin(redirector.origin)).value, moved.origin.value)
+    await assert.rejects(() => resolveOrigin(bouncing.origin), /can't be reached/)
+    await assert.rejects(() => resolveOrigin(looper.origin), /which reports/)
+    await assert.rejects(
+      () =>
+        resolveOrigin(ServerOrigin.parse("https://old.example.test"), async () => ({
+          ok: true,
+          url: "https://old.example.test/api/me",
+          json: async () => ({ signed_in: false, origin: moved.origin.value }),
+        })),
+      /insecure address/,
+    )
+  } finally {
+    await Promise.all([moved, old, redirector, legacy, bouncing, looper].map(s => s.close()))
+  }
 })

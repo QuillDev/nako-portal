@@ -9,7 +9,7 @@ import { BaseWindow, Menu, Notification, Tray, WebContentsView, app, ipcMain, na
 import { browserAgent as agentFrom } from "./agent.js"
 import { listen } from "./alerts.js"
 import { FloatingNako } from "./bubble.js"
-import { ServerOrigin } from "./origin.js"
+import { ServerOrigin, resolveOrigin } from "./origin.js"
 import { trackNotification } from "./notifications.js"
 import { begin } from "./signin.js"
 import { Updater, announcement, platformKey, readPublicKey } from "./update.js"
@@ -57,16 +57,13 @@ const savedOrigin = () => ServerOrigin.parse(settings().origin)
 
 const saveOrigin = origin => saveSettings({ origin: origin.value })
 
-async function reachable(origin) {
-  let me
+async function reachable(target) {
   try {
-    const response = await fetch(origin.page("/api/me"), { signal: AbortSignal.timeout(10_000) })
-    me = await response.json().catch(() => null)
+    return await resolveOrigin(target)
   } catch (error) {
-    log(`${origin.value}: ${error.message}`)
-    throw new Error(`Can't reach ${origin.value}`)
+    log(`${target.value}: ${error.cause?.message ?? error.message}`)
+    throw error
   }
-  if (!me || !("signed_in" in me)) throw new Error(`${origin.value} isn't a Nako portal`)
 }
 
 const localPage = query => portal.webContents.loadFile(join(root, "ui", "index.html"), { search: query })
@@ -99,6 +96,8 @@ const onPortal = url => Boolean(origin?.opensInApp(url))
 const COMMANDS = {
   start: ["local"],
   connect: ["local"],
+  switch_origin: ["portal"],
+  change_server: ["portal"],
   floating: ["portal"],
   update: ["portal"],
   "plugin:window|minimize": ["local", "portal"],
@@ -121,22 +120,41 @@ ipcMain.handle("nako", async (event, command, args = {}) => {
       const saved = savedOrigin()
       if (!saved) return { kind: "ask", origin: null }
       if (args.change) return { kind: "ask", origin: saved.value }
+      let resolved
       try {
-        await reachable(saved)
+        resolved = await reachable(saved)
       } catch (error) {
         return { kind: "unreachable", origin: saved.value, error: error.message }
       }
-      openPortal(saved)
+      if (resolved.value !== saved.value) {
+        log(`portal moved: ${saved.value} -> ${resolved.value}`)
+        saveOrigin(resolved)
+      }
+      openPortal(resolved)
       return { kind: "open" }
     }
     case "connect": {
       const next = ServerOrigin.parse(args.address)
       if (!next) throw new Error("Enter an address like https://portal.example.com")
-      await reachable(next)
-      saveOrigin(next)
-      openPortal(next)
+      const resolved = await reachable(next)
+      saveOrigin(resolved)
+      openPortal(resolved)
       return null
     }
+    case "switch_origin": {
+      if (!origin) return { moved: false, origin: null }
+      const resolved = await reachable(origin)
+      if (resolved.value !== origin.value) {
+        log(`portal moved: ${origin.value} -> ${resolved.value}`)
+        saveOrigin(resolved)
+        openPortal(resolved)
+        return { moved: true, origin: resolved.value }
+      }
+      return { moved: false, origin: origin.value }
+    }
+    case "change_server":
+      localPage("change=1")
+      return null
     case "floating":
       return setFloating(Boolean(args.on))
     case "update":

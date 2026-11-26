@@ -2,6 +2,7 @@ import { Component, type ComponentType, type ReactNode, lazy, Suspense, useEffec
 import { SkulletProvider } from "skullet/react"
 import { OpeningScreen } from "@/components/portal/screen-loading"
 import { Gate } from "@/components/portal/gate"
+import { MovedOrigin } from "@/components/portal/moved-origin"
 import { DesktopLink } from "@/components/portal/desktop-link"
 import { Elsewhere } from "@/components/portal/elsewhere"
 import { Chat } from "@/components/portal/chat"
@@ -11,7 +12,7 @@ import { SettingsFrame, SettingsPlaceholder } from "@/components/portal/settings
 import { Sidebar } from "@/components/portal/sidebar"
 import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { usePortal } from "@/hooks/use-portal"
+import { movedOrigin, usePortal } from "@/hooks/use-portal"
 import { loadMarkdown, retryMarkdown } from "@/lib/markdown"
 
 const resetScreens: (() => void)[] = []
@@ -101,6 +102,8 @@ function AppContent() {
       </div>
     </main>
   )
+  const moved = movedOrigin(portal.me.origin)
+  if (moved) return <MovedOrigin origin={moved} portal={portal} />
   if (!portal.me.signed_in) return <Gate portal={portal} />
   if (portal.route.view === "desktop") return <DesktopLink query={portal.route.query} />
   return (
