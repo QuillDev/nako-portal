@@ -157,6 +157,8 @@ class FakeGateway:
         self.profile = "default"
         self.profile_models = {}
         self.model_controls = True
+        self.model_providers = None
+        self.sign_off_provider_list = None
         # Background processes per thread, as the gateway's process registry lists them.
         self.procs = {}
         self.proc_logs = {}
@@ -259,6 +261,8 @@ class FakeGateway:
     def models(self):
         if not self.model_controls:
             return []
+        if self.model_providers is not None:
+            return self.model_providers() if callable(self.model_providers) else list(self.model_providers)
         return [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}, {"provider": "big", "label": "Big Co", "models": ["large"]}]
 
     def usage(self):
@@ -442,6 +446,8 @@ class FakeGateway:
         return f"proud of: {reply}"
 
     def sign_off_models(self):
+        if self.sign_off_provider_list is not None:
+            return self.sign_off_provider_list() if callable(self.sign_off_provider_list) else list(self.sign_off_provider_list)
         return [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}]
 
     def sign_off_model(self):

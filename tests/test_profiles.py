@@ -366,3 +366,139 @@ async def test_usage_reset_supports_per_grant_claude_options(world):
     assert account["windows"][0]["used_percent"] == 0.0
     assert account["resets"]["available"] == 2
     assert [o["id"] for o in account["resets"]["options"]] == ["launch-2610-fable"]
+
+
+async def test_model_provider_list_is_cached_until_provider_profile_or_gateway_changes(world):
+    await world.sign_up()
+    world.hermes.add_session("one", "one")
+    world.hermes.provider_list = [
+        {"slug": "openrouter", "label": "OpenRouter", "description": "", "kind": "key", "command": "", "env_var": "OPENROUTER_API_KEY", "env_vars": ["OPENROUTER_API_KEY"], "signup_url": ""},
+        {"slug": "claude-sub", "label": "Claude", "description": "", "kind": "cli", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
+    ]
+    world.hermes.account_logins["claude-sub"] = {
+        "mode": "paste",
+        "accounts": [{"id": "primary", "label": "primary", "email": "alex@example.test", "plan": "Max", "signed_in": True, "removable": True}],
+    }
+    catalog = [{"provider": "fast", "label": "Fast Co", "models": ["tiny", "small"]}]
+    sign_off_catalog = [{"provider": "fast", "label": "Fast Co", "models": ["tiny"]}]
+    calls = {"models": 0, "sign_off": 0}
+
+    def read_models():
+        calls["models"] += 1
+        return list(catalog)
+
+    def read_sign_off():
+        calls["sign_off"] += 1
+        return list(sign_off_catalog)
+
+    world.hermes.model_providers = read_models
+    world.hermes.sign_off_provider_list = read_sign_off
+
+    # Repeated reads across default and chat model endpoints reuse one gateway lookup.
+    first = await (await world.http.get(world.url("/api/model"))).json()
+    second = await (await world.http.get(world.url("/api/sessions/one/model"))).json()
+    third = await (await world.http.get(world.url("/api/model"))).json()
+    assert first["providers"] == second["providers"] == third["providers"] == catalog
+    assert calls["models"] == 1
+
+    # Sign-off models are cached across repeated reads too.
+    assert (await (await world.http.get(world.url("/api/signoff"))).json())["providers"] == sign_off_catalog
+    assert (await (await world.http.get(world.url("/api/signoff"))).json())["providers"] == sign_off_catalog
+    assert calls["sign_off"] == 1
+
+    # Adding a provider key invalidates both cached provider lists.
+    catalog.append({"provider": "openrouter", "label": "OpenRouter", "models": ["or-1"]})
+    sign_off_catalog.append({"provider": "openrouter", "label": "OpenRouter", "models": ["or-1"]})
+    assert (await world.post("/api/providers/openrouter/key", {"value": "sk-test-key"})).status == 200
+    assert (await (await world.http.get(world.url("/api/model"))).json())["providers"] == catalog
+    assert (await (await world.http.get(world.url("/api/signoff"))).json())["providers"] == sign_off_catalog
+    assert calls == {"models": 2, "sign_off": 2}
+
+    # Removing a provider key invalidates the cache.
+    catalog.pop()
+    assert (await world.post("/api/providers/openrouter/remove")).status == 200
+    assert (await (await world.http.get(world.url("/api/sessions/one/model"))).json())["providers"] == catalog
+    assert calls["models"] == 3
+
+    # Adding and removing an account login invalidates the cache.
+    started = await (await world.post("/api/providers/claude-sub/accounts/signin", {})).json()
+    catalog.append({"provider": "claude-sub", "label": "Claude", "models": ["sonnet"]})
+    assert (await world.post(f"/api/providers/claude-sub/accounts/signin/{started['attempt']}/code", {"code": "sam@example.test"})).status == 200
+    assert (await (await world.http.get(world.url("/api/model"))).json())["providers"] == catalog
+    assert calls["models"] == 4
+
+    catalog.pop()
+    assert (await world.post("/api/providers/claude-sub/accounts/sam@example.test/remove", {})).status == 200
+    assert (await (await world.http.get(world.url("/api/model"))).json())["providers"] == catalog
+    assert calls["models"] == 5
+
+    # Switching profiles invalidates the cache so the new profile's providers are read.
+    catalog.append({"provider": "work-only", "label": "Work", "models": ["w-1"]})
+    assert (await world.post("/api/profile", {"profile": "work"})).status == 200
+    assert (await (await world.http.get(world.url("/api/model"))).json())["providers"] == catalog
+    assert calls["models"] == 6
+
+    # Restarting the gateway invalidates the cache so the restarted gateway's providers are read.
+    await world.gateway.stop(world.hub)
+    catalog.append({"provider": "restarted", "label": "Fresh", "models": ["fresh-1"]})
+    await world.gateway.start(world.hub)
+    assert (await (await world.http.get(world.url("/api/model"))).json())["providers"] == catalog
+    assert calls["models"] == 7
+
+
+async def test_model_provider_cache_coalesces_reads_and_drops_stale_inflight_results(world):
+    import asyncio
+    import threading
+
+    await world.sign_up()
+    world.hermes.add_session("one", "one")
+    world.hermes.provider_list = [
+        {"slug": "openrouter", "label": "OpenRouter", "description": "", "kind": "key", "command": "", "env_var": "OPENROUTER_API_KEY", "env_vars": ["OPENROUTER_API_KEY"], "signup_url": ""},
+        {"slug": "openai-codex", "label": "Codex", "description": "", "kind": "signin", "command": "", "env_var": "", "env_vars": [], "signup_url": ""},
+    ]
+    catalog = [{"provider": "fast", "label": "Fast Co", "models": ["tiny"]}]
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+
+    def read_models():
+        nonlocal calls
+        calls += 1
+        snapshot = list(catalog)
+        if calls == 1:
+            entered.set()
+            release.wait(timeout=5)
+        return snapshot
+
+    world.hermes.model_providers = read_models
+
+    async def get_providers(path):
+        async with world.http.get(world.url(path)) as response:
+            assert response.status == 200
+            return (await response.json())["providers"]
+
+    # An in-flight read started before a provider is added must not stick in the cache.
+    pending = asyncio.create_task(get_providers("/api/model"))
+    await asyncio.to_thread(entered.wait, 5)
+    catalog.append({"provider": "openrouter", "label": "OpenRouter", "models": ["or-1"]})
+    assert (await world.post("/api/providers/openrouter/key", {"value": "sk-test-key"})).status == 200
+    release.set()
+    await pending
+
+    assert await get_providers("/api/model") == catalog
+    assert calls == 2
+
+    # Concurrent warm reads share the cached provider list without calling the gateway again.
+    r1, r2 = await asyncio.gather(get_providers("/api/model"), get_providers("/api/sessions/one/model"))
+    assert r1 == r2 == catalog
+    assert calls == 2
+
+    # Approving a device-code provider sign-in invalidates the cache.
+    started = await (await world.post("/api/providers/openai-codex/signin")).json()
+    assert await get_providers("/api/model") == catalog
+    assert calls == 3
+    world.hermes.signin_status["openai-codex"] = "approved"
+    catalog.append({"provider": "openai-codex", "label": "Codex", "models": ["gpt-5"]})
+    assert (await (await world.http.get(world.url(f"/api/providers/openai-codex/signin/{started['session_id']}"))).json())["status"] == "approved"
+    assert await get_providers("/api/model") == catalog
+    assert calls == 4
