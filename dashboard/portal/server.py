@@ -101,6 +101,7 @@ class Portal(AuthRoutes, LocalAPI):
         self.hub = hub
         self.store = store
         hub.sign_off_on = store.meta("signoff", "on") != "off"
+        self._scheme = parsed.scheme
         self.origin = f"{parsed.scheme}://{parsed.netloc}"
         # Passkey ceremonies from the Android app carry its signing-key origin, not the site's.
         self.origins = {self.origin}
@@ -282,12 +283,36 @@ class Portal(AuthRoutes, LocalAPI):
         return route
 
 
+    def _same_host_origin(self, request):
+        """True when Origin matches the host this request arrived on (same-origin on a moved/alias domain)."""
+        origin = request.headers.get("Origin")
+        if not origin or not request.host:
+            return False
+        parsed = urlparse(origin)
+        if parsed.scheme.lower() != self._scheme or not parsed.netloc or parsed.path or parsed.query or parsed.fragment:
+            return False
+        default_port = 443 if self._scheme == "https" else 80
+        host = urlparse(f"{self._scheme}://{request.host}")
+        return (
+            parsed.hostname is not None
+            and host.hostname is not None
+            and parsed.hostname.lower() == host.hostname.lower()
+            and (parsed.port or default_port) == (host.port or default_port)
+        )
+
     @web.middleware
     async def _guard(self, request, handler):
         # Cross-site requests never reach an action: every write and the socket must come from our own page.
         unsafe = request.method not in {"GET", "HEAD"} or request.path == "/ws"
         if unsafe and request.headers.get("Origin") != self.origin:
-            return web.json_response({"error": "bad origin"}, status=403)
+            same_host = self._same_host_origin(request)
+            if not (request.method == "POST" and request.path == "/api/logout" and same_host):
+                if same_host:
+                    return web.json_response(
+                        {"error": f"This portal moved to {self.origin}", "origin": self.origin},
+                        status=403,
+                    )
+                return web.json_response({"error": "bad origin"}, status=403)
         try:
             response = await handler(request)
         except web.HTTPException as error:

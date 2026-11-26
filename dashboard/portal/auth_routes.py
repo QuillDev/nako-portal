@@ -62,7 +62,12 @@ class AuthRoutes:
 
     async def me(self, request):
         signed_in = self._signed_in(request) is not None
-        me = {"signed_in": signed_in, "has_passkeys": self.store.has_credentials(), "connected": self.hub.connected}
+        me = {
+            "signed_in": signed_in,
+            "has_passkeys": self.store.has_credentials(),
+            "connected": self.hub.connected,
+            "origin": self.origin,
+        }
         if signed_in:
             me["name"] = self.store.meta("name", "")
             me["environments"] = self.environments is not None
@@ -167,7 +172,7 @@ class AuthRoutes:
         self.store.end_login(token)
         await self._revoke_clients(lambda client: client.token == token)
         response = web.json_response({"ok": True})
-        response.del_cookie(self.cookie, path="/")
+        response.del_cookie(self.cookie, path="/", secure=self.secure, httponly=True, samesite="Strict")
         return response
 
 

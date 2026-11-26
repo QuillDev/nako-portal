@@ -77,6 +77,58 @@ async def test_writes_from_another_site_are_refused_even_when_signed_in(world):
     assert refused.value.status == 403
 
 
+async def test_stale_origin_can_sign_out_and_learns_where_the_portal_moved(world):
+    sid = world.hermes.add_session("20261024_010102_bbbbbb", "domain switch")
+    await world.sign_up()
+
+    me = await (await world.http.get(world.url("/api/me"))).json()
+    assert me["origin"] == ORIGIN
+
+    stale = {"Host": "old.portal.test", "Origin": "http://old.portal.test"}
+    blocked = await world.http.post(world.url(f"/api/sessions/{sid}/archive"), json={"archived": True}, headers=stale)
+    assert blocked.status == 403
+    assert (await blocked.json())["origin"] == ORIGIN
+    assert not world.hermes.sessions[sid].get("archived")
+    with pytest.raises(aiohttp.WSServerHandshakeError) as refused:
+        await world.http.ws_connect(world.url("/ws"), headers=stale)
+    assert refused.value.status == 403
+
+    # Cross-site logout is still blocked even when aimed at the old host.
+    forged_logout = await world.http.post(
+        world.url("/api/logout"), headers={"Host": "old.portal.test", "Origin": "https://evil.test"}
+    )
+    assert forged_logout.status == 403
+    assert (await forged_logout.json()) == {"error": "bad origin"}
+    assert (await world.http.get(world.url("/api/sessions"))).status == 200
+
+    # Same-origin logout from the stale host works and revokes the session.
+    signed_out = await world.http.post(world.url("/api/logout"), headers=stale)
+    assert signed_out.status == 200
+    assert (await world.http.get(world.url("/api/sessions"))).status == 401
+
+
+async def test_https_logout_deletes_host_cookie_with_secure_attribute(world):
+    from aiohttp.test_utils import TestServer
+    from portal.server import Portal
+
+    portal = Portal(world.hub, world.store, origin="https://portal.test", web_root=ROOT / "dashboard" / "web")
+    server = TestServer(portal.app())
+    await server.start_server()
+    try:
+        async with aiohttp.ClientSession() as http:
+            response = await http.post(
+                str(server.make_url("/api/logout")),
+                headers={"Host": "old.portal.test", "Origin": "https://old.portal.test"},
+            )
+            assert response.status == 200
+            set_cookie = response.headers.get("Set-Cookie", "")
+            assert "__Host-portal=" in set_cookie
+            assert "Max-Age=0" in set_cookie
+            assert "Secure" in set_cookie
+    finally:
+        await server.close()
+
+
 async def test_a_message_goes_to_the_gateway_and_its_reply_streams_back(world):
     sid = world.hermes.add_session(
         "20261024_020202_bbbbbb", "fix the build", messages=[("user", "why is ci red"), ("assistant", "lint failed")]

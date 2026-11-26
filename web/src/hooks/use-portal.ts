@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { ModelSelection } from "@/components/portal/model-picker"
 import { d } from "@/lib/decode"
-import { api, dataUrlToFile, sessionPath, whenSignedOut } from "@/lib/api"
+import { api, dataUrlToFile, sessionPath, whenOriginMoved, whenSignedOut } from "@/lib/api"
+import { desktopApp } from "@/lib/desktop-window"
 import { reloadMcp } from "@/lib/mcp"
 import { reloadProviders } from "@/lib/providers"
 import { reloadSecrets } from "@/lib/secrets"
@@ -34,6 +35,29 @@ function parseRoute(hash: string): Route {
 
 export function navigate(hash: string) {
   if (location.hash !== hash) location.hash = hash
+}
+
+/** The canonical origin when this page was loaded on a stale/moved domain, else null. */
+export function movedOrigin(origin?: string | null): string | null {
+  if (!origin) return null
+  try {
+    const parsed = new URL(origin)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null
+    return parsed.origin !== location.origin ? parsed.origin : null
+  } catch {
+    return null
+  }
+}
+
+const isDesktopShell = () => /NakoDesktop\//.test(navigator.userAgent)
+const isAndroidShell = () => /NakoAndroid\//.test(navigator.userAgent)
+
+function followMovedOrigin(moved: string) {
+  if (isDesktopShell()) {
+    void desktopApp()?.invoke("switch_origin").catch(() => {})
+  } else if (!isAndroidShell()) {
+    location.replace(`${moved}${location.pathname}${location.search}${location.hash}`)
+  }
 }
 
 const emptyLive = (): Live => ({ messages: [], tools: [] })
@@ -291,7 +315,7 @@ export function usePortal() {
     socket.onclose = () => {
       socketRef.current = null
       setLinked(false)
-      setTimeout(() => meRef.current?.signed_in && connect(), retryRef.current)
+      setTimeout(() => meRef.current?.signed_in && !movedOrigin(meRef.current.origin) && connect(), retryRef.current)
       retryRef.current = Math.min(retryRef.current * 2, 15000)
     }
   }, [])
@@ -302,6 +326,14 @@ export function usePortal() {
   const boot = useCallback(async () => {
     setError("")
     const who = await api<Me>("/api/me")
+    const moved = movedOrigin(who.origin)
+    if (moved) {
+      socketRef.current?.close()
+      socketRef.current = null
+      setMe(who)
+      followMovedOrigin(moved)
+      return
+    }
     try { if (who.signed_in) sessionStorage.setItem("portal-seen-session", "1"); else sessionStorage.removeItem("portal-seen-session") } catch { /* Storage can be unavailable. */ }
     setMe(who)
     if (!who.signed_in) return
@@ -312,6 +344,14 @@ export function usePortal() {
 
   useEffect(() => {
     whenSignedOut(() => setMe(m => ({ ...(m || { has_passkeys: true, connected: true }), signed_in: false })))
+    whenOriginMoved(origin => {
+      const moved = movedOrigin(origin)
+      if (!moved) return
+      socketRef.current?.close()
+      socketRef.current = null
+      setMe(m => ({ ...(m || { signed_in: false, has_passkeys: true, connected: true }), origin: moved }))
+      followMovedOrigin(moved)
+    })
     boot().catch(e => setError((e as Error).message))
     const onHash = () => {
       const next = parseRoute(location.hash)
