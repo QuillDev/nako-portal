@@ -141,6 +141,10 @@ class Hub:
         # in there are and which of those sessions run a turn now. The app only watches them, so
         # they stay out of `status`: no alerts, no unread marks, nothing on the sticker.
         self.outside_now = {"sources": [], "running": []}
+        # Cached provider/model lists from the gateway, cleared when providers, profile or gateway change.
+        self._models_cache = {}
+        self._models_locks = {}
+        self._models_gen = 0
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -478,15 +482,15 @@ class Hub:
 
     async def set_provider_key(self, slug, value):
         await asyncio.to_thread(self.backend.set_provider_key, str(slug), value)
-        await self.broadcast({"kind": "providers.changed"})
+        await self.providers_changed()
 
     async def remove_provider_key(self, slug):
         await asyncio.to_thread(self.backend.remove_provider_key, str(slug))
-        await self.broadcast({"kind": "providers.changed"})
+        await self.providers_changed()
 
     async def start_provider_signin(self, slug):
         started = await asyncio.to_thread(self.backend.start_provider_signin, str(slug))
-        await self.broadcast({"kind": "providers.changed"})
+        await self.providers_changed()
         return started
 
     async def provider_signin(self, slug, session):
@@ -517,7 +521,33 @@ class Hub:
         await self.providers_changed()
 
     async def providers_changed(self):
+        self.invalidate_models()
         await self.broadcast({"kind": "providers.changed"})
+
+    def invalidate_models(self):
+        self._models_gen += 1
+        self._models_cache.clear()
+
+    async def _cached_models(self, key, fetch):
+        cached = self._models_cache.get(key)
+        if cached is not None:
+            return cached
+        lock = self._models_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            cached = self._models_cache.get(key)
+            if cached is not None:
+                return cached
+            gen = self._models_gen
+            rows = await asyncio.to_thread(fetch)
+            if self._models_gen == gen:
+                self._models_cache[key] = rows
+            return rows
+
+    async def models(self):
+        return await self._cached_models("models", self.backend.models)
+
+    async def sign_off_models(self):
+        return await self._cached_models("sign_off_models", self.backend.sign_off_models)
 
     # MCP servers: what `hermes mcp` keeps, read and changed from Settings.
 
@@ -589,7 +619,7 @@ class Hub:
         if not await asyncio.to_thread(self.backend.chat_of, session):
             raise ValueError("No chat with that id")
         current, providers = await asyncio.gather(
-            asyncio.to_thread(self.backend.session_model, session), asyncio.to_thread(self.backend.models))
+            asyncio.to_thread(self.backend.session_model, session), self.models())
         if current is None:
             raise ValueError("model-controls is not enabled")
         return {**current, "providers": providers}

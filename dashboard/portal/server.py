@@ -145,10 +145,12 @@ class Portal(AuthRoutes, LocalAPI):
                     await asyncio.to_thread(self.hub.backend.use_profile, saved)
                 except Exception:
                     log.warning("portal: can't show saved profile %r; showing the default", saved, exc_info=True)
+            self.hub.invalidate_models()
             self.hub.connected = True
             await self.hub.broadcast(self._gateway_frame())
             return
         self.hub.connected = False
+        self.hub.invalidate_models()
         self.hub.running.clear()
         self.hub.progress.clear()
         self.hub.requests.clear()
@@ -377,7 +379,7 @@ class Portal(AuthRoutes, LocalAPI):
         """Settings for Nako's line after a turn: on or off, the model it uses, the models it could."""
         self._require(request)
         backend = self.hub.backend
-        current, providers = await asyncio.gather(asyncio.to_thread(backend.sign_off_model), asyncio.to_thread(backend.sign_off_models))
+        current, providers = await asyncio.gather(asyncio.to_thread(backend.sign_off_model), self.hub.sign_off_models())
         return web.json_response({"on": self.hub.sign_off_on, **current, "providers": providers})
 
     async def set_sign_off(self, request):
@@ -388,7 +390,7 @@ class Portal(AuthRoutes, LocalAPI):
             self.store.set_meta("signoff", "on" if self.hub.sign_off_on else "off")
         if body.get("model"):
             provider, model = str(body.get("provider") or ""), str(body["model"])
-            offered = await asyncio.to_thread(self.hub.backend.sign_off_models)
+            offered = await self.hub.sign_off_models()
             if not any(p["provider"] == provider and model in p["models"] for p in offered):
                 raise web.HTTPBadRequest(text=json.dumps({"error": "That model isn't available"}), content_type="application/json")
             await asyncio.to_thread(self.hub.backend.set_sign_off_model, provider, model)
@@ -426,6 +428,7 @@ class Portal(AuthRoutes, LocalAPI):
             raise web.HTTPBadRequest(text=json.dumps({"error": str(error)}), content_type="application/json") from error
         self.store.set_meta("profile", shown["profile"])
         self.hub.inboxes = None
+        self.hub.invalidate_models()
         self.shown.clear()
         await self.hub.broadcast({"kind": "profile.changed", "profile": shown["profile"]})
         return web.json_response(shown)
@@ -434,7 +437,7 @@ class Portal(AuthRoutes, LocalAPI):
         """The model the shown profile's turns run on, and the ones it could."""
         self._require(request)
         backend = self.hub.backend
-        current, providers = await asyncio.gather(asyncio.to_thread(backend.model), asyncio.to_thread(backend.models))
+        current, providers = await asyncio.gather(asyncio.to_thread(backend.model), self.hub.models())
         if current is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "model-controls is not enabled"}), content_type="application/json")
         return web.json_response({**current, "providers": providers})
