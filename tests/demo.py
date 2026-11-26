@@ -56,6 +56,7 @@ class DemoGateway(FakeGateway):
                 {"label": "primary", "windows": [
                     {"label": "Current session", "used_percent": 58.0, "resets_at": session},
                     {"label": "Current week", "used_percent": claude_week, "resets_at": (now + timedelta(hours=20)).isoformat()},
+                    {"label": "Fable week", "used_percent": 78.0, "resets_at": (now + timedelta(hours=20)).isoformat(), "scope": "model"},
                 ], "note": None, **({"resets": claude_resets} if claude_resets else {})},
                 {"label": "sam@example.test", "windows": [
                     {"label": "Current session", "used_percent": 4.0, "resets_at": None},

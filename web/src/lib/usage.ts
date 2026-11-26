@@ -21,7 +21,7 @@ const usage = d.object({
     label: d.string(),
     accounts: d.array(d.object({
       label: d.string(),
-      windows: d.array(d.object({ label: d.string(), used_percent: d.number(), resets_at: d.string().nullable() })),
+      windows: d.array(d.object({ label: d.string(), used_percent: d.number(), resets_at: d.string().nullable(), scope: d.string().optional() })),
       note: d.string().nullable(),
       resets: resets.optional(),
     })),

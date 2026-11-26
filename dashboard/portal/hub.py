@@ -28,7 +28,7 @@ backend:
   profiles() -> {profile, profiles}         the Hermes profile shown, and the ones served
   use_profile(name) -> profiles()           show another profile's chats (ValueError if not served)
   models() / model() / set_model(provider, model)   the shown profile's own model (ValueError if refused)
-  usage() -> [{provider, label, accounts: [{label, windows: [{label, used_percent, resets_at}], note, resets?}]}] or None
+  usage() -> [{provider, label, accounts: [{label, windows: [{label, used_percent, resets_at, scope?}], note, resets?}]}] or None
                                             plan limits per account; None: model-controls can't report them
   use_reset(provider, account, force, grant?) -> {status, redeemed, message, available} or None
                                             redeem a banked usage reset credit; None: model-controls can't
