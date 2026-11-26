@@ -14,6 +14,7 @@ import { UpdatingScreen } from "@/components/portal/updating"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { movedOrigin, usePortal } from "@/hooks/use-portal"
 import { loadMarkdown, retryMarkdown } from "@/lib/markdown"
+import { ConfirmHost } from "@/components/portal/panel"
 
 const resetScreens: (() => void)[] = []
 const CHUNK_RELOAD = "nako-chunk-reload"
@@ -84,7 +85,7 @@ function useWarmSettings(signedIn: boolean) {
 }
 
 export function App() {
-  return <ErrorBoundary><SkulletProvider reveal="smart"><AppContent /><UpdatingScreen /></SkulletProvider></ErrorBoundary>
+  return <ErrorBoundary><SkulletProvider reveal="smart"><AppContent /><UpdatingScreen /><ConfirmHost /></SkulletProvider></ErrorBoundary>
 }
 
 function AppContent() {

@@ -22,6 +22,7 @@ import { SettingsFrame, SettingsPlaceholder } from "./settings-frame"
 import { SettingsLoading } from "./settings-loading"
 import { useUsage } from "@/lib/usage"
 import { type ModelChoice, modelChoice, ModelPicker } from "./model-picker"
+import { confirmAction } from "./panel"
 
 const McpSettings = lazy(() => import("./mcp").then(m => ({ default: m.McpSettings })))
 const ProvidersSettings = lazy(() => import("./providers").then(m => ({ default: m.ProvidersSettings })))
@@ -299,7 +300,7 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
                   {!k.current && (
                     <Button
                       onClick={attempt(async () => {
-                        if (!confirm("Remove this passkey? That device will be signed out.")) return
+                        if (!(await confirmAction({ title: "Remove this passkey?", body: "That device will be signed out.", action: "Remove", destructive: true }))) return
                         await api(`/api/passkeys/${encodeURIComponent(k.id)}/remove`, { method: "POST" })
                         await load()
                       })}

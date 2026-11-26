@@ -6,6 +6,7 @@ import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, Di
 import { api } from "@/lib/api"
 import { reloadSecrets, type SecretInfo, secretPath, useSecrets } from "@/lib/secrets"
 import { CHECK_MS, SavedCheck, useCopy, useReveal, Value } from "./secrets"
+import { confirmAction, PANEL } from "./panel"
 
 const dayFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })
 const fullFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" })
@@ -20,10 +21,6 @@ const NAME_CHARS = /[^A-Za-z0-9_]/g
 
 // Search text with case and underscores folded, so "resend api" finds RESEND_API_KEY.
 const words = (text: string) => text.toLowerCase().replace(/[_\s]+/g, " ").trim()
-
-// A bottom sheet on phones, a centered panel on wider screens.
-const PANEL =
-  "gap-3 rounded-[22px] bg-card p-4 sm:max-w-[440px] max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(1.75rem,env(safe-area-inset-bottom))] max-sm:data-[state=open]:zoom-in-100 max-sm:data-[state=closed]:zoom-out-100 max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:slide-out-to-bottom"
 
 // The value field, shaped like the chat composer's secret request: masked input, eye, round save.
 function ValueComposer({ label, onSave, busy, done = false, focus = true }: { label: string; onSave: (value: string) => void; busy: boolean; done?: boolean; focus?: boolean }) {
@@ -107,7 +104,7 @@ function SecretPanel({ secret, onClose, onError }: { secret: SecretInfo; onClose
     }, CHECK_MS + 150)
   }
   const remove = async () => {
-    if (!confirm(`Delete ${secret.name}? Nako won't be able to use it any more.`)) return
+    if (!(await confirmAction({ title: `Delete ${secret.name}?`, body: "Nako won't be able to use it any more.", action: "Delete", destructive: true }))) return
     if (await run(() => api(`${secretPath(secret.name)}/remove`, { method: "POST" }))) onClose()
   }
   return (

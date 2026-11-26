@@ -10,6 +10,7 @@ import type { Portal } from "@/hooks/use-portal"
 import { api } from "@/lib/api"
 import { ChatGroup, type GroupColor } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { PANEL } from "./panel"
 
 // One hue per color name, light enough to read on the dark sidebar and dark enough on the light one.
 export const GROUP_HEX: Record<GroupColor, string> = {
@@ -62,7 +63,7 @@ export function useGroupPicker(portal: Pick<Portal, "sessions" | "setError" | "s
   const exact = groups.some(g => g.name.toLowerCase() === typed.toLowerCase())
   const dialog = (
     <Dialog onOpenChange={open => !open && setTarget(null)} open={target !== null}>
-      <DialogContent className="overflow-hidden p-0 sm:max-w-sm" showCloseButton={false}>
+      <DialogContent className={cn(PANEL, "overflow-hidden p-0 sm:max-w-sm")} showCloseButton={false}>
         <DialogHeader className="sr-only">
           <DialogTitle>Move to group</DialogTitle>
           <DialogDescription>Pick a group for this chat, or type a name to make one</DialogDescription>
@@ -109,7 +110,7 @@ export function useGroupRename(portal: Pick<Portal, "updateGroup">) {
   const start = useCallback((group: ChatGroup) => setTarget({ id: group.id, name: group.name }), [])
   const dialog = (
     <Dialog onOpenChange={open => !open && setTarget(null)} open={target !== null}>
-      <DialogContent>
+      <DialogContent className={PANEL}>
         <form
           className="flex flex-col gap-4"
           onSubmit={e => {

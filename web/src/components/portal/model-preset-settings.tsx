@@ -11,6 +11,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { type ModelPreset, presetDetails, presetMatches, putModelPreset, removeModelPreset, useModelPresets, usePicksLoadState } from "@/lib/model-presets"
 import { type ModelChoice, PresetIcon } from "./model-picker"
 import { PresetEmoji } from "./preset-emoji"
+import { PANEL } from "./panel"
+import { cn } from "@/lib/utils"
 
 const SAMPLE_PRESETS: ModelPreset[] = [
   { id: "sample", name: "Daily coding", icon: "✨", pick: { provider: "anthropic", model: "claude-sonnet-5-5", effort: "high", speed: "" } },
@@ -56,7 +58,7 @@ export function ModelPresetSettings({ value }: { value: ModelChoice }) {
     </Skullet>
     {!editing && error && <p role="alert" className="text-destructive">{error}</p>}
     {editing && <Dialog open onOpenChange={open => { if (!open) { setEditing(null); setError("") } }}>
-      <DialogContent className="max-h-[95dvh] overflow-y-auto sm:max-w-sm" aria-describedby={undefined}>
+      <DialogContent className={cn(PANEL, "max-h-[95dvh] overflow-y-auto sm:max-w-sm")} aria-describedby={undefined}>
         <DialogTitle>{presets.some(preset => preset.id === editing.id) ? "Edit preset" : "Add preset"}</DialogTitle>
         <PresetForm value={value} preset={editing} error={error} onCancel={() => { setEditing(null); setError("") }} onSave={preset => {
           putModelPreset(preset).then(() => { setEditing(null); setError("") }, e => setError(e instanceof Error ? e.message : String(e)))

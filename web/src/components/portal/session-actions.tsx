@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import type { Portal } from "@/hooks/use-portal"
+import { PANEL } from "./panel"
 
 export type SessionAction = { label: string; icon: LucideIcon; run: () => void }
 
@@ -34,7 +35,7 @@ export function useRenameDialog(portal: Pick<Portal, "rename" | "sessions"> & { 
   }, [])
   const dialog = (
     <Dialog onOpenChange={open => !open && setTarget(null)} open={target !== null}>
-      <DialogContent>
+      <DialogContent className={PANEL}>
         <form
           className="flex flex-col gap-4"
           onSubmit={e => {

@@ -9,6 +9,7 @@ import { api } from "@/lib/api"
 import { health, type Health, loadMesh, machineKind, machineState, useMesh } from "@/lib/mesh"
 import type { Machine, Mesh, PluginSource } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import { confirmAction } from "./panel"
 
 const KIND_ICON = { laptop: LaptopIcon, desktop: MonitorIcon, server: ServerIcon }
 const DOT: Record<Health, string> = { online: "bg-emerald-500", degraded: "bg-amber-500", offline: "bg-muted-foreground/40" }
@@ -93,7 +94,7 @@ function MeshMap({ hubName, machines, selected, pick }: { hubName: string; machi
 function MachineCard({ machine, portal, close, onError }: { machine: Machine; portal: Portal; close: () => void; onError: (m: string) => void }) {
   const chats = portal.sessions.filter(s => s.machine === machine.name)
   const remove = async () => {
-    if (!confirm(`Remove ${machine.name}? It disconnects now and needs a new setup line to come back.`)) return
+    if (!(await confirmAction({ title: `Remove ${machine.name}?`, body: "It disconnects now and needs a new setup line to come back.", action: "Remove", destructive: true }))) return
     try {
       await api(`/api/mesh/machines/${encodeURIComponent(machine.name)}/remove`, { method: "POST" })
       close()

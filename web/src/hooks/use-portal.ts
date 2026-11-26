@@ -11,6 +11,7 @@ import { reloadSecrets } from "@/lib/secrets"
 import { cachedLive, caughtUp, isCurrentRequest, reconcileSession, sentMessage } from "@/lib/portal-state"
 import { rememberTitles } from "@/lib/session-refs"
 import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type Live, type Me, type OpenSession, type Outside, type SessionRow } from "@/lib/types"
+import { confirmAction } from "@/components/portal/panel"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
@@ -449,7 +450,7 @@ export function usePortal() {
         } else {
           const created = d.object({ session: d.string(), confirmation: d.string().optional(), message: d.string().optional() }).parse(await api<unknown>("/api/sessions", { method: "POST", form }))
           if (created.confirmation) {
-            if (!window.confirm(created.message)) throw new Error("Message not sent")
+            if (!(await confirmAction({ title: "Send anyway?", body: created.message, action: "Send" }))) throw new Error("Message not sent")
             const selected = d.object({ confirmation: d.string().optional() }).parse(await api<unknown>(sessionPath(created.session, "/model"), { method: "POST", body: { ...model, confirm: created.confirmation } }))
             if (selected.confirmation) throw new Error("Model selection changed. Pick it again before sending.")
             await api(sessionPath(created.session, "/messages"), { method: "POST", form })
