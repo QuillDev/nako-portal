@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
+import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import type { Live, Status } from "@/lib/types"
 
@@ -11,6 +11,12 @@ export function activity(live: Live | null): Exclude<Activity, "idle"> {
   if (tools.some(t => t.state === "running")) return "tools"
   if (live?.messages.some(m => m.text.trim() && (m.after ?? 0) >= tools.length)) return "replying"
   return tools.length ? "tools" : "thinking"
+}
+
+function presenceKey(live: Live | null) {
+  const now = activity(live)
+  const tool = now === "tools" ? (live?.tools.findLast(t => t.state === "running") ?? live?.tools.at(-1)) : undefined
+  return tool ? `${now}:${tool.id || tool.name}:${tool.name}:${tool.context ?? ""}` : now
 }
 
 const SAYS = { idle: "ready when you are", thinking: "hmm, let me think", replying: "writing it up" }
@@ -105,54 +111,58 @@ function Swap({ id, children }: { id: string; children: ReactNode }) {
 // doing and the bubble says it (the tool she's on, one at a time); afterwards she signs off and
 // waits, and stays while the person types. Bare: the floating panel, where her sticker already
 // floats outside, so only the bubble shows.
-export function Presence({
-  live,
-  running,
-  outcome,
-  signOff: line,
-  bare = false,
-}: { live: Live | null; running: boolean; outcome?: Status | null; signOff: string; bare?: boolean }) {
-  const signOff = useSignOff(running, outcome, line)
-  useEffect(() => {
-    if (!bare) warmStickers()
-  }, [bare])
-  const now: Activity = running ? activity(live) : signOff.proud ? "replying" : "idle"
-  const tool = now === "tools" ? (live?.tools.findLast(t => t.state === "running") ?? live?.tools.at(-1)) : undefined
-  const busy = running || signOff.waiting
-  const said = tool
-    ? `${tool.name}${tool.context ? ` ${tool.context}` : ""}`
-    : running
-      ? SAYS[now as keyof typeof SAYS]
-      : signOff.waiting
-        ? WRAPPING_UP
-        : signOff.text || SAYS.idle
-  return (
-    <div aria-live="polite" className={`mx-auto flex w-full max-w-3xl items-end gap-2.5 pb-1 ${bare ? "px-3" : "px-4"}`} data-activity={now}>
-      {!bare && (
-        <picture className="-ml-1.5 size-[76px] shrink-0">
-          <source media="(prefers-reduced-motion: reduce)" srcSet={`/nako/${now}-still.png`} />
-          <img alt="" className="size-full" src={`/nako/${now}.webp`} />
-        </picture>
-      )}
-      {/* A thought bubble: raised beside her head, with two puffs trailing down to her. Bare, it sits
-          on the composer with no puffs, since there's no her to trail to. */}
-      <div className={`relative min-w-0 max-w-[17rem] rounded-3xl border bg-card px-4 py-2 text-sm ${bare ? "mb-1" : "mb-[50px] -ml-2"}`} data-bubble>
+type PresenceProps = { live: Live | null; running: boolean; outcome?: Status | null; signOff: string; bare?: boolean }
+
+export const Presence = memo(
+  function Presence({ live, running, outcome, signOff: line, bare = false }: PresenceProps) {
+    const signOff = useSignOff(running, outcome, line)
+    useEffect(() => {
+      if (!bare) warmStickers()
+    }, [bare])
+    const now: Activity = running ? activity(live) : signOff.proud ? "replying" : "idle"
+    const tool = now === "tools" ? (live?.tools.findLast(t => t.state === "running") ?? live?.tools.at(-1)) : undefined
+    const busy = running || signOff.waiting
+    const said = tool
+      ? `${tool.name}${tool.context ? ` ${tool.context}` : ""}`
+      : running
+        ? SAYS[now as keyof typeof SAYS]
+        : signOff.waiting
+          ? WRAPPING_UP
+          : signOff.text || SAYS.idle
+    return (
+      <div aria-live="polite" className={`mx-auto flex w-full max-w-3xl items-end gap-2.5 pb-1 ${bare ? "px-3" : "px-4"}`} data-activity={now}>
         {!bare && (
-          <>
-            <span aria-hidden className="absolute -bottom-4 left-1 size-3 rounded-full border bg-card" />
-            <span aria-hidden className="absolute bottom-[-29px] -left-1.5 size-[7px] rounded-full border bg-card" />
-          </>
+          <picture className="-ml-1.5 size-[76px] shrink-0">
+            <source media="(prefers-reduced-motion: reduce)" srcSet={`/nako/${now}-still.png`} />
+            <img alt="" className="size-full" src={`/nako/${now}.webp`} />
+          </picture>
         )}
-        <Swap id={tool ? `tool:${tool.id || tool.name}` : said}>
-          {busy ? (
-            <Shimmer as="span" className={tool ? "block truncate" : undefined}>
-              {said}
-            </Shimmer>
-          ) : (
-            said
+        {/* A thought bubble: raised beside her head, with two puffs trailing down to her. Bare, it sits
+            on the composer with no puffs, since there's no her to trail to. */}
+        <div className={`relative min-w-0 max-w-[17rem] rounded-3xl border bg-card px-4 py-2 text-sm ${bare ? "mb-1" : "mb-[50px] -ml-2"}`} data-bubble>
+          {!bare && (
+            <>
+              <span aria-hidden className="absolute -bottom-4 left-1 size-3 rounded-full border bg-card" />
+              <span aria-hidden className="absolute bottom-[-29px] -left-1.5 size-[7px] rounded-full border bg-card" />
+            </>
           )}
-        </Swap>
+          <Swap id={tool ? `tool:${tool.id || tool.name}` : said}>
+            {busy ? (
+              <Shimmer as="span" className={tool ? "block truncate" : undefined}>
+                {said}
+              </Shimmer>
+            ) : (
+              said
+            )}
+          </Swap>
+        </div>
       </div>
-    </div>
-  )
-}
+    )
+  },
+  (prev, next) =>
+    prev.running === next.running &&
+    prev.outcome === next.outcome &&
+    prev.signOff === next.signOff &&
+    prev.bare === next.bare &&
+    (!next.running || prev.live === next.live || presenceKey(prev.live) === presenceKey(next.live)),
+)

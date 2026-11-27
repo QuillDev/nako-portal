@@ -117,9 +117,8 @@ function TurnSkeletons({ count }: { count: number }) {
 
 // Sits above the loaded turns while older ones remain. Coming near it loads the page before,
 // and the view stays on what was being read instead of jumping as that page lands above it.
-function OlderTurns({ portal }: { portal: Portal }) {
+const OlderTurns = memo(function OlderTurns({ start, loadOlder }: { start: number; loadOlder: () => void }) {
   const { scrollRef } = useStickToBottomContext()
-  const start = portal.current?.start ?? 0
   const top = useRef<HTMLDivElement>(null)
   const sentinel = useRef<HTMLDivElement>(null)
   const fromBottom = useRef(0)
@@ -152,10 +151,10 @@ function OlderTurns({ portal }: { portal: Portal }) {
     const root = scrollRef.current
     const target = sentinel.current
     if (!root || !target) return
-    const observer = new IntersectionObserver(([entry]) => entry.isIntersecting && portal.loadOlder(), { root, rootMargin: "800px 0px 0px 0px" })
+    const observer = new IntersectionObserver(([entry]) => entry.isIntersecting && loadOlder(), { root, rootMargin: "800px 0px 0px 0px" })
     observer.observe(target)
     return () => observer.disconnect()
-  }, [scrollRef, start, portal.loadOlder])
+  }, [scrollRef, start, loadOlder])
 
   return (
     <div className="-mb-6" ref={top}>
@@ -166,14 +165,14 @@ function OlderTurns({ portal }: { portal: Portal }) {
       )}
     </div>
   )
-}
+})
 
 // Keeps a chat that was at the bottom there, without animating, when the layout around it changes
 // rather than the conversation: the scroller getting shorter (Nako's bubble growing under it) or the
 // text rewrapping to a new width (the sidebar opening or closing). StickToBottom only follows content
 // growth, smoothly, so the first left the last lines hidden under the bubble and the second scrolled
 // the chat up and back down.
-function KeepBottom({ dock }: { dock: number }) {
+const KeepBottom = memo(function KeepBottom({ dock }: { dock: number }) {
   const { scrollRef, contentRef, isAtBottom } = useStickToBottomContext()
   // StickToBottom's own view of it, which stays true while it eases toward new content.
   const following = useRef(isAtBottom)
@@ -201,7 +200,7 @@ function KeepBottom({ dock }: { dock: number }) {
     return () => observer.disconnect()
   }, [scrollRef, contentRef])
   return null
-}
+})
 
 function partOfDay(hour: number) {
   return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening"
@@ -259,7 +258,7 @@ function ReadOnlyChat({ portal, source, find }: { portal: Portal; source: string
       <Conversation className="min-h-0 flex-1" initial="instant" key={`${c.session}:${loading}`}>
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {loading && <TurnSkeletons count={3} />}
-          {!loading && <OlderTurns portal={portal} />}
+          {!loading && <OlderTurns loadOlder={portal.loadOlder} start={c.start} />}
           {!loading && <KeepBottom dock={0} />}
           {!loading && <Transcript live={null} messages={c.messages} notes={NO_NOTES} quiet={false} running={running} session={c.session} />}
           {portal.error && <p className="text-destructive text-sm">{portal.error}</p>}
@@ -311,6 +310,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
   // Nako waits on a secret until it's answered, so the composer becomes its field until then.
   const secret = c?.requests.find(r => r.method === "secret")
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
+  const row = c ? portal.sessions.find(s => s.id === c.session) : undefined
   if (!c)
     return (
       <>
@@ -321,7 +321,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
     )
   return (
     <>
-      <ChatHeader environments={Boolean(portal.me?.environments)} running={c.running} actions={actions} pinned={Boolean(portal.sessions.find(s => s.id === c.session)?.pinned)} groupable={!portal.sessions.find(s => s.id === c.session)?.machine} session={c.session} title={c.title || portal.sessions.find(row => row.id === c.session)?.title || "chat"} />
+      <ChatHeader environments={Boolean(portal.me?.environments)} running={c.running} actions={actions} pinned={Boolean(row?.pinned)} groupable={!row?.machine} session={c.session} title={c.title || row?.title || "chat"} />
       {rename.dialog}
       {picker.dialog}
       {offline}
@@ -331,7 +331,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
         {/* Scrollable from the first layout (StickToBottom only sets overflow later), so OlderTurns can pin the bottom before paint. */}
         <ConversationContent className="mx-auto w-full max-w-3xl gap-6" scrollClassName="overflow-y-auto">
           {loading && <TurnSkeletons count={3} />}
-          {!loading && <OlderTurns portal={portal} />}
+          {!loading && <OlderTurns loadOlder={portal.loadOlder} start={c.start} />}
           {!loading && <KeepBottom dock={dock} />}
           {!loading && <Transcript
               live={portal.live}
@@ -354,7 +354,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
                 bare={inBubble}
                 key={c.session}
                 live={portal.live}
-                outcome={portal.sessions.find(s => s.id === c.session)?.status}
+                outcome={row?.status}
                 running={c.running}
                 signOff={portal.signOff?.session === c.session ? portal.signOff.text : ""}
               />
@@ -362,7 +362,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
           </Dock>
         )}
       </Conversation>
-      {c.loading && !portal.sessions.some(row => row.id === c.session) ? <ComposerPlaceholder /> : <SecretDock answer={portal.answer} key={c.session} request={secret}>
+      {c.loading && !row ? <ComposerPlaceholder /> : <SecretDock answer={portal.answer} key={c.session} request={secret}>
         <Composer
           command={portal.command}
           commands={portal.commands}

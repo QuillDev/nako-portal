@@ -20,6 +20,7 @@ export function MarkdownTable(props: ComponentProps<typeof defaultComponents.tab
   // React has committed the table's toolbar before layout effects run. No subtree observer
   // is needed, and ordinary Markdown bodies never mount this component at all.
   useLayoutEffect(() => {
+    if (host?.isConnected) return
     const bar = table.current?.closest('[data-streamdown="table-wrapper"]')?.querySelector<HTMLElement>(TOOLBAR)
     if (!bar) return
     let next = bar.querySelector<HTMLElement>(":scope > [data-table-menu]")

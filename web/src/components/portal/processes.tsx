@@ -15,20 +15,37 @@ export function since(seconds: number) {
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
+function sameProcesses(a: BackgroundProcess[], b: BackgroundProcess[]) {
+  if (a.length !== b.length) return false
+  return a.every((p, i) => {
+    const q = b[i]
+    return p.id === q.id && p.running === q.running && p.exit_code === q.exit_code && p.ended === q.ended && p.started_at === q.started_at && p.exited_at === q.exited_at && p.label === q.label
+  })
+}
+
 // The chat's background processes: read on open, when a turn starts or ends, and on a timer while it's open.
 function useProcesses(session: string, running: boolean) {
   const [procs, setProcs] = useState<BackgroundProcess[]>([])
   useEffect(() => {
     let live = true
-    const read = () =>
+    const read = () => {
+      if (document.hidden) return
       api<BackgroundProcess[]>(`/api/sessions/${session}/processes`)
-        .then(p => live && setProcs(p))
+        .then(next => {
+          if (!live) return
+          // Keep re-rendering when any process is running so its uptime ticks; skip idle no-op refreshes.
+          setProcs(prev => (!next.some(p => p.running) && sameProcesses(prev, next) ? prev : next))
+        })
         .catch(() => {})
+    }
     read()
     const timer = setInterval(read, REFRESH_MS)
+    const onVisible = () => { if (!document.hidden) read() }
+    document.addEventListener("visibilitychange", onVisible)
     return () => {
       live = false
       clearInterval(timer)
+      document.removeEventListener("visibilitychange", onVisible)
     }
   }, [session, running])
   return procs

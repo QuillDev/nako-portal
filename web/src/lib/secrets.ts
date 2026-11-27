@@ -14,6 +14,7 @@ export type ReplyPart = { text: string; secret?: undefined } | { secret: string;
 /** A reply cut at its SECRET: lines, so each secret shows where the line was. Lines inside code
  * stay text, and so does a last line still streaming in (its name may not be complete yet). */
 export function splitSecrets(text: string, streaming = false): ReplyPart[] {
+  if (!text.includes("SECRET:")) return [{ text }]
   const masked = text.replace(CODE, m => " ".repeat(m.length))
   const found = [...masked.matchAll(LINE)].filter(m => !streaming || m.index + m[0].length < text.trimEnd().length)
   if (!found.length) return [{ text }]

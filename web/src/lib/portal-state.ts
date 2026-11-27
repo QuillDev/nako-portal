@@ -4,15 +4,23 @@ export type RequestGeneration = { request: number; turn: number }
 export const isCurrentRequest = (started: RequestGeneration, latest: RequestGeneration) =>
   started.request === latest.request && started.turn === latest.turn
 
+function sameValue(x: unknown, y: unknown): boolean {
+  if (x === y) return true
+  if (Array.isArray(x) && Array.isArray(y)) return x.length === y.length && x.every((v, i) => v === y[i])
+  if (x && y && typeof x === "object" && typeof y === "object" && !Array.isArray(x) && !Array.isArray(y)) {
+    const ax = x as Record<string, unknown>
+    const ay = y as Record<string, unknown>
+    const keys = Object.keys(ax)
+    return keys.length === Object.keys(ay).length && keys.every(k => ax[k] === ay[k])
+  }
+  return false
+}
+
 function sameMessage(a: HistoryMessage, b: HistoryMessage) {
   if (a === b) return true
   const keys = Object.keys(a) as (keyof HistoryMessage)[]
   if (keys.length !== Object.keys(b).length) return false
-  return keys.every(k => {
-    const x = a[k] as unknown
-    const y = b[k] as unknown
-    return x === y || (Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => v === y[i]))
-  })
+  return keys.every(k => sameValue(a[k], b[k]))
 }
 
 export function reuse(shown: HistoryMessage[], fresh: HistoryMessage[]) {

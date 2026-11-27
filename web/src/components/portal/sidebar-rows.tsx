@@ -1,4 +1,4 @@
-import { memo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { ChevronDownIcon, FolderMinusIcon, PencilIcon, type LucideIcon } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { type ChatGroup, GROUP_COLORS, type GroupColor, type SessionRow, type Status } from "@/lib/types";
@@ -39,6 +39,7 @@ export const ChatRow = memo(function ChatRow({
   drag,
 }: RowProps) {
   const hover = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(hover.current), []);
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
