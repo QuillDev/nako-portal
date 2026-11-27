@@ -1,1 +1,0 @@
-export{i as Mermaid}from"./dist-CS2G7TbO.js";
