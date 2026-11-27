@@ -611,3 +611,182 @@ async def test_mid_turn_session_rotation_routes_approval_stream_and_completion_t
     assert child2 not in world.hub.running
     await ws.close()
 
+
+def test_readonly_pool_sees_wal_writes_allows_checkpoints_survives_replacement_and_cross_thread_reads(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    plugin = load_plugin()
+    main_home = tmp_path / 'main'
+    other_home = tmp_path / 'other'
+    main_home.mkdir()
+    other_home.mkdir()
+
+    def init_db(db_path, rows):
+        conn = sqlite3.connect(db_path)
+        conn.execute('PRAGMA journal_mode=WAL')
+        conn.execute('CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT)')
+        conn.executemany('INSERT INTO sessions VALUES (?, ?, ?)', rows)
+        conn.commit()
+        return conn
+
+    main_writer = init_db(main_home / 'state.db', [('s1', 'first', 'portal')])
+    other_writer = init_db(other_home / 'state.db', [('o1', 'other-first', 'portal')])
+
+    class Backend(plugin.HermesBackend):
+        def homes(self):
+            return {'default': main_home, 'other': other_home}
+
+    backend = Backend(None, main_home)
+    try:
+        assert backend.title_of('s1') == 'first'
+
+        # Concurrent WAL write is visible immediately on the next read, and idle pooled
+        # connections never hold a read mark that blocks WAL truncation checkpoints.
+        main_writer.execute("INSERT INTO sessions VALUES ('s2', 'second-wal', 'portal')")
+        main_writer.commit()
+        assert backend.title_of('s2') == 'second-wal'
+        assert main_writer.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()[0][0] == 0
+
+        # Cross-thread concurrent reads across multiple profiles return exact rows.
+        def read_profile(i):
+            prof = 'default' if i % 2 == 0 else 'other'
+            sid = 's2' if prof == 'default' else 'o1'
+            rows = backend._read('SELECT title FROM sessions WHERE id=?', (sid,), prof)
+            return rows[0][0]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(read_profile, range(40)))
+        assert results == ['second-wal' if i % 2 == 0 else 'other-first' for i in range(40)]
+
+        # Profile switch reads the active profile's state.db immediately.
+        backend.profile = 'other'
+        assert backend.title_of('o1') == 'other-first'
+        assert backend.title_of('s1') is None
+        backend.profile = 'default'
+
+        # Atomic replacement of state.db (new inode) never reads stale rows from the unlinked inode.
+        main_writer.close()
+        replacement = main_home / 'state.db.new'
+        w_new = init_db(replacement, [('s1', 'replaced-db', 'portal')])
+        w_new.close()
+        replacement.replace(main_home / 'state.db')
+        assert backend.title_of('s1') == 'replaced-db'
+        assert backend.title_of('s2') is None
+
+        # Deleting state.db returns empty results cleanly, and recreating it works immediately.
+        (main_home / 'state.db').unlink()
+        assert backend.title_of('s1') is None
+        w_recreated = init_db(main_home / 'state.db', [('s3', 'recreated', 'portal')])
+        w_recreated.close()
+        assert backend.title_of('s3') == 'recreated'
+
+        # Closing releases pooled connections while remaining safe if a late read arrives.
+        backend.close()
+        assert backend.title_of('s3') == 'recreated'
+    finally:
+        other_writer.close()
+        backend.close()
+
+
+def test_homes_cache_tracks_config_and_profile_lifecycle_edits(tmp_path, monkeypatch):
+    plugin = load_plugin()
+    root = tmp_path / 'hermes'
+    profiles_root = root / 'profiles'
+    elsewhere_root = root / 'profiles_run_elsewhere'
+    root.mkdir()
+    cfg_path = root / 'config.yaml'
+    cfg_path.write_text('multiplex: false\n')
+
+    # Stand-in modules shaped like hermes_cli.config and hermes_cli.profiles where functions
+    # belong to their own modules (matching real Hermes, unlike ad-hoc test monkeypatches).
+    config_mod = types.ModuleType('hermes_cli.config')
+    profiles_mod = types.ModuleType('hermes_cli.profiles')
+    hermes_cli_pkg = types.ModuleType('hermes_cli')
+    hermes_cli_pkg.config = config_mod
+    hermes_cli_pkg.profiles = profiles_mod
+
+    def get_config_path():
+        return cfg_path
+
+    def load_config():
+        return {'gateway': {'multiplex_profiles': 'multiplex: true' in cfg_path.read_text()}}
+
+    def get_profile_dir(name):
+        return root if name == 'default' else profiles_root / name
+
+    def _get_profiles_root():
+        return profiles_root
+
+    def profiles_to_serve(*, multiplex):
+        if not multiplex:
+            return [('default', root)]
+        out = [('default', root)]
+        if profiles_root.is_dir():
+            for entry in sorted(profiles_root.iterdir()):
+                if not entry.is_dir():
+                    continue
+                if (entry / '.profile_deleted').exists() or (entry / 'gateway.parked').exists():
+                    continue
+                if (elsewhere_root / f'{entry.name}.json').exists():
+                    continue
+                if (entry / 'config.yaml').exists() and 'standalone: true' in (entry / 'config.yaml').read_text():
+                    continue
+                if any((entry / m).exists() for m in ('config.yaml', '.env', 'state.db')):
+                    out.append((entry.name, entry))
+        return out
+
+    for fn in (get_config_path, load_config):
+        fn.__module__ = config_mod.__name__
+    for fn in (get_profile_dir, _get_profiles_root, profiles_to_serve):
+        fn.__module__ = profiles_mod.__name__
+    config_mod.get_config_path = get_config_path
+    config_mod.load_config = load_config
+    profiles_mod.get_profile_dir = get_profile_dir
+    profiles_mod._get_profiles_root = _get_profiles_root
+    profiles_mod.profiles_to_serve = profiles_to_serve
+    monkeypatch.setitem(sys.modules, 'hermes_cli', hermes_cli_pkg)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.config', config_mod)
+    monkeypatch.setitem(sys.modules, 'hermes_cli.profiles', profiles_mod)
+
+    backend = plugin.HermesBackend(None, root)
+    try:
+        assert backend.homes() == {'default': root}
+
+        # Enabling multiplex_profiles in config.yaml picks up profiles immediately.
+        work = profiles_root / 'work'
+        work.mkdir(parents=True)
+        (work / 'config.yaml').write_text('standalone: false\n')
+        cfg_path.write_text('multiplex: true\n')
+        assert backend.homes() == {'default': root, 'work': work}
+
+        # Parking, unparking, standalone flag, tombstone, and run-elsewhere markers all take effect immediately.
+        (work / 'gateway.parked').write_text('')
+        assert backend.homes() == {'default': root}
+        (work / 'gateway.parked').unlink()
+        assert backend.homes() == {'default': root, 'work': work}
+
+        (work / 'config.yaml').write_text('standalone: true\n')
+        assert backend.homes() == {'default': root}
+        (work / 'config.yaml').write_text('standalone: false\n')
+        assert backend.homes() == {'default': root, 'work': work}
+
+        elsewhere_root.mkdir()
+        (elsewhere_root / 'work.json').write_text('{}')
+        assert backend.homes() == {'default': root}
+        (elsewhere_root / 'work.json').unlink()
+        assert backend.homes() == {'default': root, 'work': work}
+
+        # Adding a second profile via another identity marker appears immediately.
+        research = profiles_root / 'research'
+        research.mkdir()
+        assert backend.homes() == {'default': root, 'work': work}
+        (research / '.env').write_text('')
+        assert backend.homes() == {'default': root, 'work': work, 'research': research}
+
+        # Disabling multiplex_profiles collapses back to default immediately.
+        cfg_path.write_text('multiplex: false\n')
+        assert backend.homes() == {'default': root}
+    finally:
+        backend.close()
+
+
