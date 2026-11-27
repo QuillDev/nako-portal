@@ -1,112 +1,32 @@
-@import "tailwindcss";
-@import "tw-animate-css";
+@import "nakomponents/theme.css";
 @source "../node_modules/streamdown/dist/*.js";
 
-@custom-variant dark (&:where(.dark, .dark *));
-
-/* Neutral surfaces with Nako's pink kept for actions. Dark is the default; html.light swaps the palette. */
+/* Portal-only tokens on top of the shared theme. */
 :root {
-  color-scheme: dark;
-  --radius: 0.75rem;
-  --background: #09090b;
-  --foreground: #ececef;
-  --card: #111114;
-  --card-foreground: #ececef;
-  --popover: #111114;
-  --popover-foreground: #ececef;
-  --primary: #db2777;
-  --primary-foreground: #ffffff;
-  --secondary: #17171b;
-  --secondary-foreground: #ececef;
-  --muted: #17171b;
-  --muted-foreground: #8e8e99;
-  --accent: #18181c;
-  --accent-foreground: #ececef;
-  --destructive: #f87171;
-  --border: rgb(255 255 255 / 7%);
-  --input: rgb(255 255 255 / 10%);
-  --focus-fill: rgb(255 255 255 / 17%);
-  --sidebar: #09090b;
   --skullet-base: rgb(255 255 255 / 7%);
   --skullet-highlight: rgb(255 255 255 / 11%);
   --skullet-radius: 0.375rem;
 }
 
 :root.light {
-  color-scheme: light;
-  --background: #fbfbfc;
-  --foreground: #18181b;
-  --card: #ffffff;
-  --card-foreground: #18181b;
-  --popover: #ffffff;
-  --popover-foreground: #18181b;
-  --primary: #db2777;
-  --secondary: #f1f1f4;
-  --secondary-foreground: #18181b;
-  --muted: #f1f1f4;
-  --muted-foreground: #6b6b76;
-  --accent: #ededf0;
-  --accent-foreground: #18181b;
-  --destructive: #dc2626;
-  --border: rgb(0 0 0 / 8%);
-  --input: rgb(0 0 0 / 12%);
-  --focus-fill: rgb(0 0 0 / 13%);
-  --sidebar: #fbfbfc;
   --skullet-base: rgb(0 0 0 / 7%);
   --skullet-highlight: rgb(255 255 255 / 60%);
   --skullet-radius: 0.375rem;
 }
 
 @theme inline {
-  --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-serif: "Instrument Serif", ui-serif, Georgia, serif;
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-sidebar: var(--sidebar);
+  /* Focus outlines stay neutral; no pink rings. */
+  --color-ring: currentColor;
 }
 
 @layer base {
-  * {
-    @apply border-border;
-  }
+  /* The app shell fills the window exactly. */
   html,
   body,
   #root {
     height: 100%;
   }
-  body {
-    @apply bg-background text-foreground antialiased;
-    overscroll-behavior: none;
-  }
-  /* Thin, quiet scrollbars instead of the system's boxed ones with arrows. */
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--input) transparent;
-  }
-}
-
-/* Keep keyboard focus subtle; text fields supply their own focus border. */
-:where(button, a[href], input, textarea, select, [contenteditable="true"], [tabindex]:not([tabindex="-1"])):focus-visible {
-  outline: none;
 }
 
 /* Text entry already has a caret. Do not wash out its background on focus. */

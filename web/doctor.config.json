@@ -1,0 +1,319 @@
+{
+  "ignore": {
+    "overrides": [
+      {
+        "files": [
+          "src/components/portal/chat.tsx",
+          "src/components/portal/environments.tsx",
+          "src/components/portal/mcp.tsx",
+          "src/components/portal/model-picker.tsx",
+          "src/components/portal/presence.tsx",
+          "src/components/portal/settings.tsx",
+          "src/components/portal/sidebar.tsx",
+          "src/components/portal/transcript.tsx",
+          "src/hooks/use-portal.ts"
+        ],
+        "rules": [
+          "eslint/complexity"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/drawer.tsx",
+          "src/components/portal/settings.tsx",
+          "src/components/portal/sidebar.tsx",
+          "src/hooks/use-portal.ts"
+        ],
+        "rules": [
+          "eslint/max-lines-per-function"
+        ]
+      },
+      {
+        "files": [
+          "src/main.tsx"
+        ],
+        "rules": [
+          "import/no-unassigned-import"
+        ]
+      },
+      {
+        "files": [
+          "public/sw.js",
+          "src/lib/environments.ts",
+          "src/lib/model-presets.ts"
+        ],
+        "rules": [
+          "react-doctor/async-await-in-loop"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/gateway-restart.tsx",
+          "src/components/portal/process-log.tsx",
+          "src/hooks/use-portal.ts"
+        ],
+        "rules": [
+          "react-doctor/effect-needs-cleanup"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/code-fullscreen.tsx",
+          "src/components/portal/table-menu.tsx"
+        ],
+        "rules": [
+          "react-doctor/exhaustive-deps"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/mcp.tsx",
+          "src/components/portal/model-picker.tsx",
+          "src/components/portal/providers.tsx",
+          "src/components/portal/secrets-settings.tsx",
+          "src/components/portal/slash-menu.tsx",
+          "src/lib/portal-state.ts"
+        ],
+        "rules": [
+          "react-doctor/js-set-map-lookups"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/confirmation.tsx",
+          "src/components/ai-elements/reasoning.tsx"
+        ],
+        "rules": [
+          "react-doctor/jsx-no-constructed-context-values"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/reasoning.tsx",
+          "src/components/portal/presence.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-adjust-state-on-prop-change"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/gateway-restart.tsx",
+          "src/components/portal/settings-frame.tsx",
+          "src/components/portal/transcript.tsx",
+          "src/components/portal/usage-settings.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-array-index-as-key"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/providers.tsx",
+          "src/components/portal/secrets.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-autofocus"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/prompt-input.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-create-object-url-without-revoke"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/prompt-input.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-derived-state"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/prompt-input.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-derived-state-effect"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/mcp.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-derived-useState"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/chat.tsx",
+          "src/components/portal/drawer.tsx",
+          "src/components/portal/environments.tsx",
+          "src/components/portal/mcp.tsx",
+          "src/components/portal/model-picker.tsx",
+          "src/components/portal/moved-origin.tsx",
+          "src/components/portal/presence.tsx",
+          "src/components/portal/providers.tsx",
+          "src/components/portal/screen-loading.tsx",
+          "src/components/portal/settings.tsx",
+          "src/components/portal/sidebar.tsx",
+          "src/components/portal/usage-settings.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-high-complexity-react-function"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/sidebar-utils.ts"
+        ],
+        "rules": [
+          "react-doctor/no-impure-state-updater"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/secrets.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-inline-prop-on-memo-component"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/elsewhere.tsx",
+          "src/components/portal/secrets.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-loading-flag-reset-outside-finally"
+        ]
+      },
+      {
+        "files": [
+          "src/lib/use-controllable.ts"
+        ],
+        "rules": [
+          "react-doctor/no-pass-live-state-to-parent"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/prompt-input.tsx",
+          "src/components/portal/chat.tsx",
+          "src/components/portal/drawer.tsx",
+          "src/components/portal/groups.tsx",
+          "src/components/portal/html-viewer.tsx",
+          "src/components/portal/image-viewer.tsx",
+          "src/components/portal/providers.tsx",
+          "src/components/portal/session-actions.tsx",
+          "src/components/portal/transcript.tsx",
+          "src/hooks/use-portal.ts"
+        ],
+        "rules": [
+          "react-doctor/no-ref-current-in-render"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/mesh.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-reset-all-state-on-prop-change"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/sidebar-utils.ts"
+        ],
+        "rules": [
+          "react-doctor/no-side-effect-in-state-updater-function"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/code-fullscreen.tsx",
+          "src/components/portal/html-viewer.tsx"
+        ],
+        "rules": [
+          "react-doctor/no-transition-all"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/confirmation.tsx",
+          "src/components/portal/chat-search.tsx",
+          "src/components/portal/groups.tsx",
+          "src/components/portal/markdown-link.tsx",
+          "src/components/portal/model-picker.tsx",
+          "src/components/portal/presence.tsx",
+          "src/components/portal/processes.tsx",
+          "src/components/portal/sidebar-rows.tsx",
+          "src/components/portal/slash-menu.tsx"
+        ],
+        "rules": [
+          "react-doctor/only-export-components"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/code-fullscreen.tsx"
+        ],
+        "rules": [
+          "react-doctor/prefer-html-dialog"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/chat-find.tsx"
+        ],
+        "rules": [
+          "react-doctor/prefer-tag-over-role"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/settings.tsx"
+        ],
+        "rules": [
+          "react-doctor/rerender-lazy-state-init"
+        ]
+      },
+      {
+        "files": [
+          "src/components/ai-elements/prompt-input.tsx"
+        ],
+        "rules": [
+          "react-doctor/rerender-state-only-in-handlers"
+        ]
+      },
+      {
+        "files": [
+          "src/lib/push.ts"
+        ],
+        "rules": [
+          "react-doctor/server-sequential-independent-await"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/settings-loading.tsx"
+        ],
+        "rules": [
+          "react-doctor/shadcn-icon-button-requires-label"
+        ]
+      },
+      {
+        "files": [
+          "src/components/portal/transcript.tsx"
+        ],
+        "rules": [
+          "react/no-array-index-key"
+        ]
+      }
+    ]
+  }
+}
