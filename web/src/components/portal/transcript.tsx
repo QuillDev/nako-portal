@@ -96,6 +96,8 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
 // scroller's own context changes as it scrolls; keeping the subscription in this tiny wrapper
 // prevents scroll updates from re-rendering the transcript rows below it.
 const StopScroll = createContext<() => void>(() => {})
+// Compact: tighter typography and thumbnail sizing when Transcript is embedded in a mini chat.
+const Compact = createContext(false)
 
 function StopScrollProvider({ children }: { children: ReactNode }) {
   const { stopScroll } = useStickToBottomContext()
@@ -151,8 +153,9 @@ type Item = { url: string; name: string; path: string; download?: string }
 
 function Thumb({ item, onOpen, onBroken }: { item: Item; onOpen: () => void; onBroken: () => void }) {
   const [ready, setReady] = useState(false)
+  const compact = useContext(Compact)
   return (
-    <button aria-label={`Open ${item.name}`} className="relative h-48 w-64 max-w-full cursor-zoom-in rounded-md outline-none" onClick={onOpen} type="button">
+    <button aria-label={`Open ${item.name}`} className={compact ? "relative h-28 w-40 max-w-full cursor-zoom-in rounded-md outline-none" : "relative h-48 w-64 max-w-full cursor-zoom-in rounded-md outline-none"} onClick={onOpen} type="button">
       <img alt={item.name} className="size-full rounded-md border object-contain" loading="lazy" onLoad={() => setReady(true)} onError={onBroken} src={item.url} />
       {!ready && <Skeleton role="status" aria-label="Loading image" className="absolute inset-0" />}
     </button>
@@ -163,6 +166,7 @@ function Files({ urls }: { urls: Item[] }) {
   const [broken, setBroken] = useState<Set<string>>(() => new Set())
   const [open, setOpen] = useState<number | null>(null)
   const [htmlOpen, setHtmlOpen] = useState<Item | null>(null)
+  const compact = useContext(Compact)
   if (!urls.length) return null
   // One viewer per message: swiping and the arrows move between this message's images that still load.
   const pictures = urls.filter(u => isImage(u.path) && !broken.has(u.url))
@@ -175,7 +179,7 @@ function Files({ urls }: { urls: Item[] }) {
         if (isImage(path)) {
           if (broken.has(url))
             return (
-              <span className="inline-flex h-48 w-64 max-w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2 text-muted-foreground text-xs" key={url}>
+              <span className={`inline-flex ${compact ? "h-28 w-40" : "h-48 w-64"} max-w-full items-center justify-center gap-2 rounded-md border border-dashed px-3 py-2 text-muted-foreground text-xs`} key={url}>
                 <ImageOffIcon className="size-4" />
                 {name} is no longer on disk
               </span>
@@ -273,11 +277,12 @@ const Day = memo(function Day({ at }: { at: number }) {
 })
 
 const User = memo(function User({ session, text, at, images, steered }: { session: string; text: string; at?: number; images?: string[]; steered?: boolean }) {
+  const compact = useContext(Compact)
   const turn = splitUserTurn(text)
   const shown = [...(images || []).map(url => ({ url, name: "image", path: "image.png" })), ...turn.images.map(path => sessionFile(session, path))]
   return (
-    <Message from="user">
-      <MessageContent className="whitespace-pre-wrap" data-find-text>
+    <Message className={compact ? "gap-1" : undefined} from="user">
+      <MessageContent className={compact ? "whitespace-pre-wrap text-[13px] group-[.is-user]:px-3 group-[.is-user]:py-2" : "whitespace-pre-wrap"} data-find-text>
         <Files urls={shown} />
         {turn.body}
       </MessageContent>
@@ -340,6 +345,12 @@ function CopyReply({ text }: { text: string }) {
   </>
 }
 
+function assistantCompactClasses(compact: boolean) {
+  return compact
+    ? { message: "gap-1", content: "w-full text-[13px]" }
+    : { message: undefined, content: "w-full" }
+}
+
 const Assistant = memo(function Assistant({
   session,
   text,
@@ -357,9 +368,10 @@ const Assistant = memo(function Assistant({
   const fileItems = useMemo(() => files.map(path => sessionFile(session, path)), [session, files])
   const copyable = useMemo(() => (streaming ? "" : copyReplyText(text)), [streaming, text])
   const stopScroll = useContext(StopScroll)
+  const cls = assistantCompactClasses(useContext(Compact))
   return (
-    <Message from="assistant">
-      <MessageContent className="w-full" data-find-text>
+    <Message className={cls.message} from="assistant">
+      <MessageContent className={cls.content} data-find-text>
         {label && <p className="text-muted-foreground text-xs">{label}</p>}
         {sender && <From sender={sender} steered={steered} />}
         {/* Another thread's message: a pink rule down its side, however long it runs. */}
@@ -456,13 +468,16 @@ export const Transcript = memo(function Transcript({
   running,
   notes,
   quiet = false,
-}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; quiet?: boolean }) {
+  compact = false,
+}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; quiet?: boolean; compact?: boolean }) {
   return (
-    <TooltipProvider delayDuration={300}>
-      <StopScrollProvider>
-        <HistoryBlocks messages={messages} notes={notes} quiet={quiet} session={session} />
-        <LiveTail live={live} messages={messages} quiet={quiet} running={running} session={session} />
-      </StopScrollProvider>
-    </TooltipProvider>
+    <Compact.Provider value={compact}>
+      <TooltipProvider delayDuration={300}>
+        <StopScrollProvider>
+          <HistoryBlocks messages={messages} notes={notes} quiet={quiet} session={session} />
+          <LiveTail live={live} messages={messages} quiet={quiet} running={running} session={session} />
+        </StopScrollProvider>
+      </TooltipProvider>
+    </Compact.Provider>
   )
 })

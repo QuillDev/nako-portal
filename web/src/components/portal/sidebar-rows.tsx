@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef } from "react";
-import { ChevronDownIcon, FolderMinusIcon, PencilIcon, type LucideIcon } from "lucide-react";
+import { ArrowUpIcon, ChevronDownIcon, FolderMinusIcon, MessageSquareIcon, PencilIcon, type LucideIcon } from "lucide-react";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { type ChatGroup, GROUP_COLORS, type GroupColor, type SessionRow, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,25 @@ export const DOT: Partial<Record<Status, string>> = {
 
 // A chat with something you haven't read yet: a reply that landed while you were elsewhere, or a post.
 const NEW = "bg-emerald-500";
+
+function StatusDot({ row, selected }: { row: SessionRow; selected: boolean }) {
+  if (row.status && DOT[row.status]) {
+    return <span className={cn("size-2 shrink-0 rounded-full", DOT[row.status])} title={row.status} />;
+  }
+  if (row.group_status === "needs_you") {
+    return <span className="size-2 shrink-0 rounded-full bg-amber-500" title="needs you" />;
+  }
+  if (row.group_status === "working") {
+    return <span className="size-2 shrink-0 animate-pulse rounded-full bg-primary" title="working" />;
+  }
+  if (row.group_status === "waiting") {
+    return <span className="size-2 shrink-0 rounded-full bg-sky-500" title="waiting" />;
+  }
+  if (row.finished && !selected) {
+    return <span className={cn("size-2 shrink-0 rounded-full", NEW)} title="new reply" />;
+  }
+  return null;
+}
 
 type RowProps = {
   row: SessionRow;
@@ -79,19 +98,11 @@ export const ChatRow = memo(function ChatRow({
           {row.machine && (
             <span className="max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">{row.machine}</span>
           )}
-          {row.status && DOT[row.status] ? (
-            <span
-              className={cn("size-2 shrink-0 rounded-full", DOT[row.status])}
-              title={row.status}
-            />
-          ) : (
-            row.finished &&
-            !selected && <span className={cn("size-2 shrink-0 rounded-full", NEW)} title="new reply" />
-          )}
+          <StatusDot row={row} selected={selected} />
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        {sessionActions(actions, row.id, Boolean(row.pinned), !row.machine).map((a) => (
+        {sessionActions(actions, row.id, Boolean(row.pinned), !row.machine, row.group).map((a) => (
           <ContextMenuItem key={a.label} onSelect={a.run}>
             <a.icon className="size-4 text-muted-foreground" />
             {a.label}
@@ -113,82 +124,228 @@ type GroupProps = {
   actions: ChatActions;
   groupActions: GroupActions;
   drag?: ChatDrag;
-  // A dragged chat is over this group and would land in it.
+  // A dragged chat is hovering over this group.
   target: boolean;
 };
 
-type GroupActions = {
+export type GroupActions = {
   rename: (group: ChatGroup) => void;
   recolor: (group: string, color: GroupColor) => void;
   ungroup: (group: string) => void;
+  setLead: (group: string, session: string | null) => void;
 };
 
-// A chat group: its name row (click folds it; right-click renames, recolors or ungroups) and its chats.
-export const GroupBlock = memo(function GroupBlock({ group, rows, folded, open, fold, go, prefetch, actions, groupActions, drag, target }: GroupProps) {
+function groupRollup(rows: SessionRow[], open: string | null) {
+  const needsAttention = rows.some((r) => r.status === "needs you" || r.status === "failed" || r.group_status === "needs_you");
+  const hasWorking = rows.some((r) => r.status === "working" || r.group_status === "working");
+  const hasUnread = rows.some((r) => r.finished && open !== r.id);
+  return { needsAttention, hasWorking, hasUnread };
+}
+
+function FoldedRollup({ rows, childCount, open }: { rows: SessionRow[]; childCount: number; open: string | null }) {
+  const { needsAttention, hasWorking, hasUnread } = groupRollup(rows, open);
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {needsAttention && <span className="size-1.5 rounded-full bg-amber-500" title="needs you" />}
+      {hasWorking && <span className="size-1.5 animate-pulse rounded-full bg-primary" title="working" />}
+      {!needsAttention && !hasWorking && hasUnread && <span className={cn("size-1.5 rounded-full", NEW)} title="new reply" />}
+      {childCount > 0 && <span className="text-[11px] text-muted-foreground tabular-nums">{childCount}</span>}
+    </span>
+  );
+}
+
+function GroupRowMenu({
+  group,
+  leadId,
+  targetId,
+  firstRowId,
+  go,
+  groupActions,
+}: {
+  group: ChatGroup;
+  leadId: string | null;
+  targetId: string | null;
+  firstRowId: string | null;
+  go: (hash: string) => void;
+  groupActions: GroupActions;
+}) {
+  return (
+    <ContextMenuContent>
+      {targetId && (
+        <ContextMenuItem onSelect={() => go(`#/c/${targetId}`)}>
+          <MessageSquareIcon className="size-4 text-muted-foreground" />
+          {leadId ? "Open main chat" : "Open latest chat"}
+        </ContextMenuItem>
+      )}
+      {!leadId && firstRowId && (
+        <ContextMenuItem onSelect={() => groupActions.setLead(group.id, firstRowId)}>
+          <ArrowUpIcon className="size-4 text-muted-foreground" />
+          Set latest as main chat
+        </ContextMenuItem>
+      )}
+      <ContextMenuItem onSelect={() => groupActions.rename(group)}>
+        <PencilIcon className="size-4 text-muted-foreground" />
+        Rename group
+      </ContextMenuItem>
+      <div className="flex gap-1.5 px-2 py-1.5">
+        {GROUP_COLORS.map((color) => (
+          <ContextMenuItem
+            aria-label={color}
+            className={cn(
+              "size-5 rounded-[5px] p-0",
+              color === group.color && "outline-2 outline-foreground outline-offset-2",
+            )}
+            key={color}
+            onSelect={() => groupActions.recolor(group.id, color)}
+            style={{ background: GROUP_HEX[color] }}
+            title={color}
+          />
+        ))}
+      </div>
+      <ContextMenuItem onSelect={() => groupActions.ungroup(group.id)}>
+        <FolderMinusIcon className="size-4 text-muted-foreground" />
+        Ungroup
+      </ContextMenuItem>
+    </ContextMenuContent>
+  );
+}
+
+function splitGroupRows(group: ChatGroup, rows: SessionRow[]) {
+  const leadId = group.lead_session ?? null;
+  const leadRow = leadId ? rows.find((r) => r.id === leadId) ?? null : null;
+  const childRows = leadId ? rows.filter((r) => r.id !== leadId) : rows;
+  return { leadId, leadRow, childRows, targetId: leadId ?? rows[0]?.id ?? null };
+}
+
+function GroupHeaderButton({
+  group,
+  leadRow,
+  targetId,
+  folded,
+  isLeadOpen,
+  childCount,
+  open,
+  rows,
+  go,
+  prefetch,
+}: {
+  group: ChatGroup;
+  leadRow: SessionRow | null;
+  targetId: string | null;
+  folded: boolean;
+  isLeadOpen: boolean;
+  childCount: number;
+  open: string | null;
+  rows: SessionRow[];
+  go: (hash: string) => void;
+  prefetch: (session: string) => void;
+}) {
+  const hover = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(hover.current), []);
+  return (
+    <button
+      className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-2 text-left"
+      onClick={() => targetId && go(`#/c/${targetId}`)}
+      onFocus={() => targetId && prefetch(targetId)}
+      onPointerDown={() => targetId && prefetch(targetId)}
+      onPointerEnter={() => {
+        if (!targetId) return;
+        clearTimeout(hover.current);
+        hover.current = setTimeout(() => prefetch(targetId), HOVER_MS);
+      }}
+      onPointerLeave={() => clearTimeout(hover.current)}
+      title={leadRow ? `${group.name} — ${leadRow.title}` : group.name}
+      type="button"
+    >
+      <GroupSwatch color={group.color} />
+      <span className="min-w-0 flex-1 truncate font-medium">{group.name}</span>
+      {folded ? (
+        <FoldedRollup childCount={childCount} open={open} rows={rows} />
+      ) : (
+        leadRow && <StatusDot row={leadRow} selected={isLeadOpen} />
+      )}
+    </button>
+  );
+}
+
+// A chat group: the group row itself IS the main (lead) chat; clicking the group name opens it
+// directly in Portal's core chat view, while the chevron folds/unfolds its child worker threads.
+export const GroupBlock = memo(function GroupBlock({
+  group,
+  rows,
+  folded,
+  open,
+  fold,
+  go,
+  prefetch,
+  actions,
+  groupActions,
+  drag,
+  target,
+}: GroupProps) {
+  const { leadId, leadRow, childRows, targetId } = splitGroupRows(group, rows);
+  const isLeadOpen = Boolean(leadId && open === leadId);
   const holdsOpen = rows.some((r) => r.id === open);
-  // Folded, a status dot inside still shows on the name row, or else a new reply's.
-  const dot = folded ? rows.map((r) => r.status).find((s) => s && DOT[s]) : undefined;
-  const fresh = folded && !dot && rows.some((r) => r.finished && r.id !== open);
+
   return (
     <div
-      className={cn("rounded-md", target && "bg-accent")}
-      onDragOver={drag && ((e) => drag.over(e, group.id))}
-      onDrop={drag && ((e) => drag.drop(e, group.id))}
+      className={cn("rounded-md", target && "bg-accent/50 ring-1 ring-inset ring-ring")}
+      onDragOver={(e) => drag?.over(e, group.id)}
+      onDrop={(e) => drag?.drop(e, group.id)}
     >
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <button
-            aria-expanded={!folded}
+          <div
             className={cn(
-              "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent data-[state=open]:bg-accent",
-              folded && holdsOpen && "bg-accent",
+              "flex w-full select-none items-center rounded-md text-sm hover:bg-accent data-[state=open]:bg-accent",
+              (isLeadOpen || (folded && holdsOpen)) && "bg-accent",
             )}
-            onClick={() => fold(group.id)}
-            type="button"
           >
-            <GroupSwatch color={group.color} />
-            <span className="min-w-0 flex-1 truncate font-medium">{group.name}</span>
-            {dot && <span className={cn("size-2 shrink-0 rounded-full", DOT[dot])} title={dot} />}
-            {fresh && <span className={cn("size-2 shrink-0 rounded-full", NEW)} title="new reply" />}
-            <ChevronDownIcon
-              className={cn("size-4 shrink-0 text-muted-foreground transition-transform", folded && "-rotate-90")}
+            <GroupHeaderButton
+              childCount={leadId ? childRows.length : rows.length}
+              folded={folded}
+              go={go}
+              group={group}
+              isLeadOpen={isLeadOpen}
+              leadRow={leadRow}
+              open={open}
+              prefetch={prefetch}
+              rows={rows}
+              targetId={targetId}
             />
-          </button>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => groupActions.rename(group)}>
-            <PencilIcon className="size-4 text-muted-foreground" />
-            Rename group
-          </ContextMenuItem>
-          <div className="flex gap-1.5 px-2 py-1.5">
-            {GROUP_COLORS.map((color) => (
-              <ContextMenuItem
-                aria-label={color}
-                className={cn(
-                  "size-5 rounded-[5px] p-0",
-                  color === group.color && "outline-2 outline-foreground outline-offset-2",
-                )}
-                key={color}
-                onSelect={() => groupActions.recolor(group.id, color)}
-                style={{ background: GROUP_HEX[color] }}
-                title={color}
-              />
-            ))}
+            {childRows.length > 0 && (
+              <button
+                aria-expanded={!folded}
+                aria-label={folded ? `Expand ${group.name}` : `Collapse ${group.name}`}
+                className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground hover:text-foreground"
+                onClick={() => fold(group.id)}
+                title={folded ? "Expand threads" : "Collapse threads"}
+                type="button"
+              >
+                <ChevronDownIcon
+                  className={cn("size-4 shrink-0 transition-transform", folded && "-rotate-90")}
+                />
+              </button>
+            )}
           </div>
-          <ContextMenuItem onSelect={() => groupActions.ungroup(group.id)}>
-            <FolderMinusIcon className="size-4 text-muted-foreground" />
-            Ungroup
-          </ContextMenuItem>
-        </ContextMenuContent>
+        </ContextMenuTrigger>
+        <GroupRowMenu
+          firstRowId={rows[0]?.id ?? null}
+          go={go}
+          group={group}
+          groupActions={groupActions}
+          leadId={leadId}
+          targetId={targetId}
+        />
       </ContextMenu>
-      {!folded && (
+      {!folded && childRows.length > 0 && (
         <div className="relative pl-5">
           <span
             aria-hidden="true"
             className="pointer-events-none absolute inset-y-0 left-[13px] w-0.5 opacity-70"
             style={{ background: GROUP_HEX[group.color] }}
           />
-          {rows.map((row) => (
+          {childRows.map((row) => (
             <ChatRow
               actions={actions}
               drag={drag}
@@ -248,4 +405,3 @@ export function ChannelRow({
     </button>
   );
 }
-

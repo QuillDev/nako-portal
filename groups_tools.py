@@ -12,6 +12,7 @@ import urllib.parse
 
 TOOLSET = "groups"
 COLORS = ["blue", "green", "yellow", "orange", "red", "teal", "purple", "grey"]
+TASK_STATES = ["working", "needs_you", "waiting", "idle", "done"]
 # Set by the plugin: the loopback API call (method, path, body) -> parsed JSON, raising RuntimeError.
 def CALL(method, path, body=None):
     raise RuntimeError("the portal plugin hasn't loaded the group tools")
@@ -36,11 +37,39 @@ def group_list(args, current):
 
 
 def group_create(args, current):
-    return CALL("POST", "/groups", {"name": args.get("name"), "color": args.get("color")})
+    body = {"name": args.get("name"), "color": args.get("color")}
+    if "goal" in args:
+        body["goal"] = args.get("goal")
+    if "lead_session" in args:
+        body["lead_session"] = args.get("lead_session")
+    return CALL("POST", "/groups", body)
 
 
 def group_update(args, current):
-    return CALL("POST", f"/groups/{_q(args.get('group'))}", {"name": args.get("name"), "color": args.get("color")})
+    body = {"name": args.get("name"), "color": args.get("color")}
+    if "goal" in args:
+        body["goal"] = args.get("goal")
+    if "lead_session" in args:
+        body["lead_session"] = args.get("lead_session")
+    return CALL("POST", f"/groups/{_q(args.get('group'))}", body)
+
+
+def group_overview(args, current):
+    group = args.get("group")
+    if not group:
+        raise RuntimeError("say which group")
+    return CALL("GET", f"/groups/{_q(group)}")
+
+
+def group_thread_update(args, current):
+    session = args.get("session") or current
+    if not session:
+        raise RuntimeError("say which chat (session id)")
+    body = {}
+    for key in ("task_state", "summary", "links"):
+        if key in args:
+            body[key] = args.get(key)
+    return CALL("POST", f"/sessions/{_q(session)}/meta", body)
 
 
 def group_delete(args, current):
@@ -54,7 +83,12 @@ def group_add(args, current):
     if args.get("create"):
         known = CALL("GET", "/groups")
         if str(group).lower() not in {g["name"].lower() for g in known} | {g["id"] for g in known}:
-            CALL("POST", "/groups", {"name": group, "color": args.get("color")})
+            create_body = {"name": group, "color": args.get("color")}
+            if "goal" in args:
+                create_body["goal"] = args.get("goal")
+            if "lead_session" in args:
+                create_body["lead_session"] = args.get("lead_session")
+            CALL("POST", "/groups", create_body)
     return {"added": [CALL("POST", f"/sessions/{_q(s)}/group", {"group": group}) for s in _sessions(args, current)]}
 
 
@@ -64,6 +98,11 @@ def group_remove(args, current):
 
 GROUP = {"type": "string", "description": "The group's id or name (name is matched ignoring case)."}
 COLOR = {"type": "string", "enum": COLORS, "description": "Default for a new group: the least used color."}
+GOAL = {"type": "string", "description": "Optional short shared goal or brief for the group (empty string clears it)."}
+LEAD = {
+    "type": ["string", "null"],
+    "description": "Optional main (lead) chat session id for this group (null or empty clears it).",
+}
 SESSIONS = {
     "type": "array",
     "items": {"type": "string"},
@@ -74,25 +113,60 @@ TOOLS = [
     (
         "group_list",
         group_list,
-        ("List the chat groups in the user's portal sidebar, each with its id, name, color and chats "
+        ("List the chat groups in the user's portal sidebar, each with its id, name, color, lead_session, goal, counts and chats "
         "(session id and title). Also returns this chat's own session id. Check here before creating a group, "
         "so related work lands in the group that already exists."),
         {},
         [],
     ),
     (
+        "group_overview",
+        group_overview,
+        "Inspect a chat group's live progress: lead chat, child/worker thread states, summaries, and extracted artifacts.",
+        {"group": GROUP},
+        ["group"],
+    ),
+    (
         "group_create",
         group_create,
-        "Create a chat group in the portal sidebar. Names are unique ignoring case.",
-        {"name": {"type": "string"}, "color": COLOR},
+        "Create a chat group in the portal sidebar, optionally with a lead_session (main chat) and shared goal. Names are unique ignoring case.",
+        {"name": {"type": "string"}, "color": COLOR, "lead_session": LEAD, "goal": GOAL},
         ["name"],
     ),
     (
         "group_update",
         group_update,
-        "Rename a chat group or change its color.",
-        {"group": GROUP, "name": {"type": "string"}, "color": {**COLOR, "description": "The new color."}},
+        "Rename a chat group, change its color, set/clear its lead_session (main chat), or set/clear its shared goal.",
+        {"group": GROUP, "name": {"type": "string"}, "color": {**COLOR, "description": "The new color."}, "lead_session": LEAD, "goal": GOAL},
         ["group"],
+    ),
+    (
+        "group_thread_update",
+        group_thread_update,
+        "Update a portal thread's explicit task_state, short summary, or attached artifact links shown in its group overview.",
+        {
+            "session": {"type": "string", "description": "Portal chat session id. Leave out to mean this chat."},
+            "task_state": {
+                "type": ["string", "null"],
+                "enum": [*TASK_STATES, None],
+                "description": "Explicit task state, or null to let Portal infer it.",
+            },
+            "summary": {"type": ["string", "null"], "description": "Short one-line progress or deliverable summary."},
+            "links": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "url": {"type": "string"},
+                        "kind": {"type": "string", "enum": ["pr", "preview", "branch", "link"]},
+                    },
+                    "required": ["label", "url"],
+                },
+                "description": "Optional artifact links (PRs, previews, docs) to show inline on this thread.",
+            },
+        },
+        [],
     ),
     (
         "group_delete",
@@ -111,6 +185,8 @@ TOOLS = [
             "sessions": SESSIONS,
             "create": {"type": "boolean", "description": "Create the group first if no group has this name."},
             "color": {**COLOR, "description": "With create: the new group's color."},
+            "lead_session": {**LEAD, "description": "With create: the new group's main (lead) chat session id."},
+            "goal": {**GOAL, "description": "With create: the new group's shared goal."},
         },
         ["group"],
     ),

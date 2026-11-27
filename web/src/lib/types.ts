@@ -5,8 +5,17 @@ export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean
 // A named, colored set of chats the sidebar shows together (`/api/groups`); a chat is in one at most.
 export const GROUP_COLORS = ["blue", "green", "yellow", "orange", "red", "teal", "purple", "grey"] as const
 export type GroupColor = (typeof GROUP_COLORS)[number]
-export const ChatGroup = d.object({ id: d.string(), name: d.string(), color: d.enum(GROUP_COLORS) })
+export const ChatGroup = d.object({
+  id: d.string(),
+  name: d.string(),
+  color: d.enum(GROUP_COLORS),
+  goal: d.string().optional(),
+  lead_session: d.string().nullable().optional(),
+})
 export type ChatGroup = Infer<typeof ChatGroup>
+
+export const GROUP_THREAD_STATUSES = ["needs_you", "working", "waiting", "idle", "done"] as const
+export type GroupThreadStatus = (typeof GROUP_THREAD_STATUSES)[number]
 
 export type SessionRow = {
   id: string
@@ -20,6 +29,8 @@ export type SessionRow = {
   // A post landed in the Notifications or Reviews chat since it was last opened.
   unread?: boolean
   status?: Status | null
+  // Transcript-inferred or agent-set group task status for sidebar roll-ups.
+  group_status?: GroupThreadStatus | null
   // A turn ended here that you haven't opened the chat for since: the sidebar marks it.
   finished?: boolean
   // Another machine's chat, reached through this portal's mesh: that machine's name.

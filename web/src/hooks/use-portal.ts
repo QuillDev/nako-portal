@@ -527,7 +527,7 @@ export function usePortal() {
   const createGroup = useCallback(async (name: string) => ChatGroup.parse(await api<unknown>("/api/groups", { method: "POST", body: { name } })), [])
 
   const updateGroup = useCallback(
-    (group: string, change: { name?: string; color?: GroupColor }) =>
+    (group: string, change: { name?: string; color?: GroupColor; goal?: string; lead_session?: string | null }) =>
       act(async () => {
         await api(`/api/groups/${encodeURIComponent(group)}`, { method: "POST", body: change })
         await loadSessions()
