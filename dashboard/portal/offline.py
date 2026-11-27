@@ -228,11 +228,16 @@ class Offline:
     """The hub backend's read calls, answered from the session store while no gateway is there."""
 
     def __init__(self, home, *, agent="hermes", python=None, projection=True):
-        self.home = Path(home)
+        self._home_source = home
         self.agent = agent or "hermes"
         self.python = python or sys.executable
         # Off in tests that have no Hermes to import: the table projection alone.
         self.projection = projection
+
+    @property
+    def home(self) -> Path:
+        raw = self._home_source() if callable(self._home_source) else self._home_source
+        return Path(str(raw))
 
     def _home_of(self, session):
         for home in _homes(self.home):

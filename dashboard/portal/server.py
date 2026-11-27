@@ -157,9 +157,16 @@ class Portal(AuthRoutes, LocalAPI):
         body = await request.json() if request.method == 'POST' else None
         return web.json_response(await self.restart_panel.request(body))
 
+    def _reset_backend_readers(self):
+        if self.inspector is not None and hasattr(self.inspector, "reset"):
+            self.inspector.reset()
+        if self.prs is not None and hasattr(self.prs, "invalidate_home"):
+            self.prs.invalidate_home()
+
     async def gateway_changed(self, connected):
         """A gateway connected (show the saved profile, then say so) or went away. Turns and
         questions die with the gateway, so the chats stop showing them as running."""
+        self._reset_backend_readers()
         if self.ops is not None:
             self.ops.gateway_changed(connected)
         if connected:
@@ -609,6 +616,7 @@ class Portal(AuthRoutes, LocalAPI):
         body = await request.json()
         state = await self._backends().set_active_backend(str(body.get("backend") or ""))
         self.shown.clear()
+        self._reset_backend_readers()
         return web.json_response(state)
 
     async def model(self, request):

@@ -17,6 +17,7 @@ import base64
 import json
 import logging
 import secrets
+from pathlib import Path
 
 from aiohttp import ClientError, WSMsgType, web
 
@@ -208,13 +209,15 @@ class GatewayLink:
     running. Other backends don't share the plugin's code and never restart the server.
     `on_change(connected)` runs each time the hub's backend connects, moves or goes away."""
 
-    def __init__(self, code, *, store=None, on_change=None, on_stale=None):
+    def __init__(self, code, *, store=None, default_home=None, on_change=None, on_stale=None):
         self.code = code
         self.store = store
+        self.default_home = Path(default_home) if default_home is not None else None
         self.on_change = on_change
         self.on_stale = on_stale
         self.peers = {}
         self.builds = {}
+        self.homes = {}
         self.active = (store.meta("backend", DEFAULT_BACKEND) if store is not None else DEFAULT_BACKEND)
         if self.active not in BACKENDS:
             self.active = DEFAULT_BACKEND
@@ -222,6 +225,12 @@ class GatewayLink:
         self.loop = None
         # `offline.Offline` (or anything with its read calls): chats read with no gateway here.
         self.offline = None
+
+    @property
+    def active_home(self):
+        """The active backend's home directory (for direct read-only state.db readers), or the default home."""
+        name = self.routed or self.active
+        return self.homes.get(name) or self.default_home
 
     def serve(self, hub):
         self.hub = hub
@@ -307,6 +316,9 @@ class GatewayLink:
         self.peers[name] = peer
         version, build = request.query.get("hermes_version"), request.query.get("hermes_build")
         self.builds[name] = {"version": version, "build": build} if version and build else None
+        raw_home = (request.query.get("home") or "").strip()
+        if raw_home:
+            self.homes[name] = Path(raw_home)
         if old is not None:
             await old.ws.close()
         log.info("portal: %s backend connected", name)

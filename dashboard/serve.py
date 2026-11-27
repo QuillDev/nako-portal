@@ -84,14 +84,16 @@ async def main(config_path):
             bg_tasks.add(task)
             task.add_done_callback(_bg_done)
 
-        link = GatewayLink(config["code"], store=store, on_stale=done.set)
-        hub = Hub(link, alert=alert)
-        link.serve(hub)
         # Hermes's home: chats are read from its session store while no gateway is connected.
         home = Path(config.get("home") or data.parent)
+        link = GatewayLink(config["code"], store=store, default_home=home, on_stale=done.set)
+        hub = Hub(link, alert=alert)
+        link.serve(hub)
+        def active_home():
+            return link.active_home or home
         # What the agent calls itself: it names its home variable, update marker and service after that.
         agent = config.get("agent")
-        link.offline = Offline(home, agent=agent)
+        link.offline = Offline(active_home, agent=agent)
         mesh = config.get("mesh") or {}
         # This machine's Hermes, looked after from here: its version, gateway restarts, updates.
         # A machine in someone's mesh also brings its gateway back when it goes away and stays away.
@@ -110,11 +112,11 @@ async def main(config_path):
             else None,
             machine_load=load if (load := MachineLoad()).available else None,
             inspector=GroupInspector(
-                home,
+                active_home,
                 preview_hosts=preview_hosts_for(config["origin"]),
                 own_hosts=(urlparse(config["origin"]).hostname,),
             ),
-            prs=PRService(store, home=home, viewer=config.get("github_user") or None) if shutil.which("gh") else None,
+            prs=PRService(store, home=active_home, viewer=config.get("github_user") or None) if shutil.which("gh") else None,
         )
         link.on_change = portal.gateway_changed
         portal.ops = ops
