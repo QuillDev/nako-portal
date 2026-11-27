@@ -8,17 +8,21 @@ REST fields without explicit GET, or GraphQL mutations).
 from __future__ import annotations
 
 import asyncio
+import gzip
 import json
 import logging
+import os
 import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import time
 import zlib
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 log = logging.getLogger("hermes.portal.prs")
@@ -32,27 +36,56 @@ INTERACTIVE_SOURCES = {"portal", "desktop", "slack", "discord", "tui", "cli"}
 META_CHECKS = ("pullfrog", "protect-branch", "vercel", "vercel preview comments")
 
 PR_FIELDS = """
- number title url isDraft createdAt updatedAt body
+ id number title url isDraft updatedAt body
  baseRefName headRefName baseRefOid headRefOid baseRef{target{oid}}
- mergeable mergeStateStatus reviewDecision additions deletions changedFiles
+ mergeable mergeStateStatus reviewDecision
  author{login}
  repository{nameWithOwner defaultBranchRef{name}}
- reviewRequests(first:20){nodes{requestedReviewer{... on User{login} ... on Team{slug}}}}
- commits(last:1){nodes{commit{oid committedDate statusCheckRollup{state contexts(first:100){nodes{
+ reviewRequests(first:6){nodes{requestedReviewer{... on User{login} ... on Team{slug}}}}
+ commits(last:1){nodes{commit{oid statusCheckRollup{state contexts(first:40){nodes{
    __typename
    ... on CheckRun{name conclusion status detailsUrl completedAt}
    ... on StatusContext{context state targetUrl}
  }}}}}}
- reviews(last:40){nodes{author{login} state submittedAt commit{oid} body url}}
- reviewThreads(first:100){nodes{isResolved isOutdated path line
-   comments(first:1){nodes{author{login} body url createdAt}}}}
- timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT], last:5){nodes{
+ reviews(last:12){nodes{author{login} state submittedAt commit{oid} body}}
+ reviewThreads(first:25){nodes{isResolved isOutdated
+   comments(first:1){nodes{author{login}}}}}
+ timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT], last:2){nodes{
    ... on BaseRefChangedEvent{previousRefName currentRefName createdAt}}}
 """
 
+INDEX_FIELDS = """
+ id number updatedAt isDraft headRefOid baseRefName
+ baseRef{target{oid}}
+ repository{nameWithOwner}
+ commits(last:1){nodes{commit{oid statusCheckRollup{state}}}}
+"""
+
+COMBINED_INDEX_QUERY = (
+    "query($qm:String!, $qr:String!){\n"
+    "  rateLimit { cost remaining limit resetAt }\n"
+    "  mine: search(query:$qm, type:ISSUE, first:100){\n"
+    "    pageInfo{hasNextPage endCursor}\n"
+    f"    nodes{{ ... on PullRequest {{ {INDEX_FIELDS} }} }}\n"
+    "  }\n"
+    "  rev: search(query:$qr, type:ISSUE, first:100){\n"
+    "    pageInfo{hasNextPage endCursor}\n"
+    f"    nodes{{ ... on PullRequest {{ {INDEX_FIELDS} }} }}\n"
+    "  }\n"
+    "}"
+)
+
+NODES_QUERY = (
+    "query($ids:[ID!]!){\n"
+    "  rateLimit { cost remaining limit resetAt }\n"
+    f"  nodes(ids:$ids){{ ... on PullRequest {{ {PR_FIELDS} }} }}\n"
+    "}"
+)
+
 SEARCH_QUERY = (
     "query($q:String!, $after:String){\n"
-    "  search(query:$q, type:ISSUE, first:10, after:$after){\n"
+    "  rateLimit { cost remaining limit resetAt }\n"
+    "  search(query:$q, type:ISSUE, first:20, after:$after){\n"
     "    pageInfo{hasNextPage endCursor}\n"
     f"    nodes{{ ... on PullRequest {{ {PR_FIELDS} }} }}\n"
     "  }\n"
@@ -61,6 +94,7 @@ SEARCH_QUERY = (
 
 MERGED_QUERY = """
 query($owner:String!, $name:String!){
+  rateLimit { cost remaining limit resetAt }
   repository(owner:$owner, name:$name){
     pullRequests(states:MERGED, last:30, orderBy:{field:UPDATED_AT, direction:ASC}){
       nodes{ number title url headRefName headRefOid baseRefName mergedAt
@@ -70,6 +104,14 @@ query($owner:String!, $name:String!){
 }"""
 
 VIEWER_QUERY = "query{ viewer{ login } }"
+
+RECENT_CONFLICT_WINDOW_S = 14 * 86_400
+DEFAULT_WINDOW_DAYS = 30
+MERGED_CACHE_TTL_S = 900.0
+CONDITIONAL_MAX_AGE_S = 900.0
+LOW_RATE_LIMIT_THRESHOLD = 500
+ACTIVE_CI_TTL_S = 90.0
+DEFAULT_PR_TTL_S = 300.0
 
 
 class ReadOnlyViolation(RuntimeError):
@@ -153,12 +195,41 @@ def gh_json(*args: str, timeout: int = 90):
     return json.loads(out.stdout or "null")
 
 
+def gh_rest_conditional(endpoint: str, etag: str | None = None, *, timeout: int = 20) -> tuple[int, str | None]:
+    """Read-only REST conditional GET returning (http_status, etag); 304 costs 0 GitHub rate-limit points."""
+    args = ["api", "-X", "GET", "-i", endpoint]
+    if etag:
+        args += ["-H", f"If-None-Match: {etag}"]
+    check_read_only(args)
+    out = subprocess.run([GH, *args], capture_output=True, text=True, timeout=timeout, check=False)
+    raw_out = out.stdout or ""
+    head = raw_out.split("\r\n\r\n", 1)[0] if "\r\n\r\n" in raw_out else raw_out.split("\n\n", 1)[0]
+    lines = head.splitlines()
+    status = 0
+    if lines:
+        parts = lines[0].split()
+        if len(parts) >= 2 and parts[1].isdigit():
+            status = int(parts[1])
+    new_etag = etag
+    for ln in lines[1:]:
+        if ":" in ln:
+            k, v = ln.split(":", 1)
+            if k.strip().lower() == "etag":
+                new_etag = v.strip()
+                break
+    return status, new_etag
+
+
 def graphql(query: str, **variables):
     args = ["api", "graphql", "-f", f"query={query}"]
     for key, value in variables.items():
         if value is None:
             continue
-        args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
+        if isinstance(value, (list, tuple)):
+            for item in value:
+                args += ["-F" if isinstance(item, int) else "-f", f"{key}[]={item}"]
+        else:
+            args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
     body = gh_json(*args)
     if body.get("errors"):
         raise PRError(f"graphql: {body['errors'][0].get('message')}")
@@ -242,6 +313,7 @@ def normalize_pr(node: dict, source: str) -> dict:
     repo = node["repository"]["nameWithOwner"]
     trunk = ((node["repository"].get("defaultBranchRef") or {}).get("name")) or "main"
     return {
+        "node_id": node.get("id") or "",
         "key": f"{repo}#{node['number']}",
         "repo": repo,
         "number": node["number"],
@@ -257,6 +329,7 @@ def normalize_pr(node: dict, source: str) -> dict:
         "head": node.get("headRefName") or "",
         "base_oid": ((node.get("baseRef") or {}).get("target") or {}).get("oid") or node.get("baseRefOid") or "",
         "head_oid": node.get("headRefOid") or commit.get("oid") or "",
+        "rollup_state": rollup.get("state") or "",
         "last_commit_at": commit.get("committedDate") or "",
         "mergeable": node.get("mergeable") or "UNKNOWN",
         "merge_state": node.get("mergeStateStatus") or "UNKNOWN",
@@ -275,6 +348,93 @@ def normalize_pr(node: dict, source: str) -> dict:
     }
 
 
+def _parse_iso_ts(iso: str | None) -> float:
+    if not iso:
+        return 0.0
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _is_rate_limit_error(message: str | None) -> bool:
+    text = (message or "").lower()
+    return any(
+        needle in text
+        for needle in (
+            "rate limit",
+            "secondary rate",
+            "abuse detection",
+            "http 429",
+            "http 403",
+            "api rate limit exceeded",
+        )
+    )
+
+
+def _merge_rate_limit(cur: dict | None, sample: dict | None) -> dict | None:
+    if not isinstance(sample, dict):
+        return cur
+    points = (cur.get("points_used", 0) if cur else 0) + int(sample.get("points_used") or sample.get("cost") or 0)
+    return {
+        "remaining": sample.get("remaining"),
+        "limit": sample.get("limit"),
+        "resetAt": sample.get("resetAt"),
+        "points_used": points,
+    }
+
+
+def _index_entry(node: dict, source: str) -> dict | None:
+    if not node or not node.get("number") or not node.get("repository"):
+        return None
+    repo = node["repository"]["nameWithOwner"]
+    commit = (node.get("commits", {}).get("nodes") or [{}])[0].get("commit") or {}
+    rollup = commit.get("statusCheckRollup") or {}
+    return {
+        "node_id": node.get("id") or "",
+        "key": f"{repo}#{node['number']}",
+        "repo": repo,
+        "number": node["number"],
+        "updated_at": node.get("updatedAt") or "",
+        "draft": bool(node.get("isDraft")),
+        "head_oid": node.get("headRefOid") or commit.get("oid") or "",
+        "base": node.get("baseRefName") or "",
+        "base_oid": ((node.get("baseRef") or {}).get("target") or {}).get("oid") or "",
+        "rollup_state": rollup.get("state") or "",
+        "source": source,
+    }
+
+
+def _needs_rehydrate(prev: dict | None, entry: dict, *, now: float) -> bool:
+    if prev is None:
+        return True
+    if prev.get("updated_at") != entry["updated_at"]:
+        return True
+    if bool(prev.get("draft")) != entry["draft"]:
+        return True
+    if prev.get("head_oid") != entry["head_oid"]:
+        return True
+    if entry["base"] and prev.get("base") != entry["base"]:
+        return True
+    if prev.get("index_rollup_state", prev.get("rollup_state")) != entry["rollup_state"]:
+        return True
+    if prev.get("mergeable") in (None, "", "UNKNOWN"):
+        return True
+    if any(c.get("state") == "pending" for c in (prev.get("checks") or [])):
+        return True
+    # When the base branch advances on an active, non-conflicting PR, re-check mergeability.
+    if (
+        entry["source"] == "mine"
+        and prev.get("mergeable") != "CONFLICTING"
+        and entry["base_oid"]
+        and prev.get("base_oid") != entry["base_oid"]
+    ):
+        updated_ts = _parse_iso_ts(entry["updated_at"])
+        if updated_ts and (now - updated_ts) <= RECENT_CONFLICT_WINDOW_S:
+            return True
+    return False
+
+
 def _search_prs(query: str, source: str, limit: int = 80) -> list[dict]:
     out, cursor = [], None
     while len(out) < limit:
@@ -288,10 +448,41 @@ def _search_prs(query: str, source: str, limit: int = 80) -> list[dict]:
     return out
 
 
-def _merged_prs(repo: str) -> list[dict]:
+def _hydrate_nodes(entries: list[dict], *, batch_size: int = 20) -> tuple[list[dict], list[str], dict | None]:
+    if not entries:
+        return [], [], None
+    source_by_id = {e["node_id"]: e["source"] for e in entries if e.get("node_id")}
+    batches = [
+        [e["node_id"] for e in entries[i : i + batch_size] if e.get("node_id")]
+        for i in range(0, len(entries), batch_size)
+    ]
+    batches = [b for b in batches if b]
+    out: list[dict] = []
+    errors: list[str] = []
+    rate_limit: dict | None = None
+
+    def fetch_batch(ids: list[str]):
+        return graphql(NODES_QUERY, ids=ids)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda b: _try(fetch_batch, b), batches))
+    for value, error in results:
+        if error:
+            errors.append(f"hydrate: {error}")
+            continue
+        rate_limit = _merge_rate_limit(rate_limit, (value or {}).get("rateLimit"))
+        for node in (value or {}).get("nodes") or []:
+            if node and node.get("number") and node.get("repository"):
+                source = source_by_id.get(node.get("id") or "", "mine")
+                out.append(normalize_pr(node, source))
+    return out, errors, rate_limit
+
+
+def _merged_prs(repo: str) -> tuple[list[dict], dict | None]:
     owner, name = repo.split("/", 1)
-    nodes = graphql(MERGED_QUERY, owner=owner, name=name)["repository"]["pullRequests"]["nodes"]
-    return [{
+    data = graphql(MERGED_QUERY, owner=owner, name=name)
+    nodes = data["repository"]["pullRequests"]["nodes"]
+    items = [{
         "key": f"{repo}#{n['number']}",
         "repo": repo,
         "number": n["number"],
@@ -304,42 +495,191 @@ def _merged_prs(repo: str) -> list[dict]:
         "merge_oid": (n.get("mergeCommit") or {}).get("oid"),
         "squash": ((n.get("mergeCommit") or {}).get("parents") or {}).get("totalCount") == 1,
     } for n in nodes]
+    return items, data.get("rateLimit")
 
 
-def collect_live(viewer: str | None = None) -> dict:
-    """Collect a fresh read-only GitHub snapshot for `viewer` (defaults to `gh` viewer)."""
+def _check_activity_etags(viewer: str, prev_etags: dict | None = None) -> tuple[bool, dict[str, str]]:
+    """Probe GitHub notifications + user events with If-None-Match; returns (both_304, updated_etags)."""
+    endpoints = (
+        ("notifications", "notifications?per_page=1"),
+        ("events", f"users/{viewer}/events?per_page=1"),
+    )
+    prev = prev_etags if isinstance(prev_etags, dict) else {}
+    had_all = all(bool(prev.get(k)) for k, _ in endpoints)
+    updated: dict[str, str] = {}
+    statuses: dict[str, int] = {}
+
+    def probe(item: tuple[str, str]):
+        key, ep = item
+        return key, _try(gh_rest_conditional, ep, prev.get(key))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(probe, endpoints))
+    for key, (value, error) in results:
+        if error or value is None:
+            if prev.get(key):
+                updated[key] = prev[key]
+            statuses[key] = 0
+            continue
+        status, new_etag = value
+        statuses[key] = status
+        if new_etag:
+            updated[key] = new_etag
+    unchanged = had_all and all(statuses.get(k) == 304 for k, _ in endpoints)
+    return unchanged, updated
+
+
+def collect_live(
+    viewer: str | None = None,
+    *,
+    previous: dict | None = None,
+    include_older: bool = False,
+    allow_conditional: bool = False,
+) -> dict:
+    """Collect a fresh read-only GitHub snapshot via 304 gate + 30-day delta index + nodes(ids) hydration."""
     started = time.time()
     me = viewer or graphql(VIEWER_QUERY)["viewer"]["login"]
-    searches = (
-        ("mine", f"is:pr is:open author:{me} archived:false"),
-        ("review_requested", f"is:pr is:open review-requested:{me} archived:false"),
-    )
-    prs, errors = {}, []
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        results = list(pool.map(lambda s: (s, _try(_search_prs, s[1], s[0])), searches))
-    for (source, _), (value, error) in results:
-        if error:
-            errors.append(f"search {source}: {error}")
-            continue
-        for pr in value or []:
-            prs.setdefault(pr["key"], pr)
+    window_days = 0 if include_older else DEFAULT_WINDOW_DAYS
 
-    repos = sorted({p["repo"] for p in prs.values()})
-    merged = []
-    if repos:
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            merged_lists = list(pool.map(lambda r: (r, _try(_merged_prs, r)), repos))
+    # 0. Free 304 Not Modified gate on background refreshes when no CI is pending and cache is recent.
+    prev_etags = (previous or {}).get("etags") if isinstance(previous, dict) else None
+    etags: dict[str, str] = dict(prev_etags) if isinstance(prev_etags, dict) else {}
+    etags_probed = False
+    has_pending_ci = any(
+        c.get("state") == "pending"
+        for pr in ((previous or {}).get("prs") or [])
+        for c in (pr.get("checks") or [])
+    )
+    prev_indexed_at = float((previous or {}).get("indexed_at") or (previous or {}).get("taken_at") or 0.0)
+    prev_window_days = int((previous or {}).get("window_days") or 0) if previous else -1
+    if (
+        allow_conditional
+        and previous is not None
+        and prev_window_days == window_days
+        and not has_pending_ci
+        and (started - prev_indexed_at) < CONDITIONAL_MAX_AGE_S
+        and etags.get("notifications")
+        and etags.get("events")
+    ):
+        unchanged, etags = _check_activity_etags(me, etags)
+        etags_probed = True
+        if unchanged:
+            out = dict(previous)
+            out["taken_at"] = time.time()
+            out["took_s"] = round(time.time() - started, 2)
+            out["etags"] = etags
+            out["skipped_304"] = True
+            out["hydrated"] = 0
+            out["reused"] = len(out.get("prs") or [])
+            prev_rl = out.get("rate_limit")
+            if isinstance(prev_rl, dict):
+                out["rate_limit"] = {**prev_rl, "points_used": 0}
+            return out
+
+    date_clause = ""
+    if window_days > 0:
+        cutoff = (datetime.now(UTC) - timedelta(days=window_days)).strftime("%Y-%m-%d")
+        date_clause = f" updated:>={cutoff}"
+    q_mine = f"is:pr is:open author:{me} archived:false{date_clause} sort:updated-desc"
+    q_rev = f"is:pr is:open review-requested:{me} archived:false{date_clause} sort:updated-desc"
+
+    errors: list[str] = []
+    rate_limit: dict | None = None
+
+    # 1. Single lightweight index call (2 GraphQL points for up to 100 mine + 100 reviewing).
+    idx_data = graphql(COMBINED_INDEX_QUERY, qm=q_mine, qr=q_rev)
+    rate_limit = _merge_rate_limit(rate_limit, idx_data.get("rateLimit"))
+
+    indexed: dict[str, dict] = {}
+    for bucket_key, source in (("mine", "mine"), ("rev", "review_requested")):
+        for node in (idx_data.get(bucket_key) or {}).get("nodes") or []:
+            entry = _index_entry(node, source)
+            if entry:
+                indexed.setdefault(entry["key"], entry)
+
+    prev_by_key = {p["key"]: p for p in (previous or {}).get("prs") or []}
+    prs: dict[str, dict] = {}
+    to_hydrate: list[dict] = []
+    for key, entry in indexed.items():
+        prev = prev_by_key.get(key)
+        if prev is not None and not _needs_rehydrate(prev, entry, now=started):
+            reused = dict(prev)
+            reused["source"] = entry["source"]
+            if entry["base_oid"]:
+                reused["base_oid"] = entry["base_oid"]
+            prs[key] = reused
+        else:
+            to_hydrate.append(entry)
+
+    reused_count = len(prs)
+    hydrated_list, hydrate_errors, hydrate_rl = _hydrate_nodes(to_hydrate)
+    errors.extend(hydrate_errors)
+    rate_limit = _merge_rate_limit(rate_limit, hydrate_rl)
+    for pr in hydrated_list:
+        entry = indexed.get(pr["key"])
+        if entry:
+            pr["index_rollup_state"] = entry["rollup_state"]
+        prs[pr["key"]] = pr
+    # If hydration partially failed for a PR we already had cached, keep the previous copy.
+    for entry in to_hydrate:
+        if entry["key"] not in prs and entry["key"] in prev_by_key:
+            prs[entry["key"]] = prev_by_key[entry["key"]]
+
+    hydrated_repos = {p["repo"] for p in hydrated_list}
+    stack_repos = sorted({
+        p["repo"]
+        for p in prs.values()
+        if (p.get("base") and p.get("trunk") and p["base"] != p["trunk"])
+        or any(c.get("from") and c["from"] != p.get("trunk") for c in (p.get("base_changes") or []))
+    })
+
+    prev_merged = (previous or {}).get("merged") or []
+    prev_merged_at = float((previous or {}).get("merged_at") or (previous or {}).get("taken_at") or 0.0)
+    prev_merged_repos = set((previous or {}).get("merged_repos") or [])
+    merged_fresh = bool(previous) and (started - prev_merged_at) < MERGED_CACHE_TTL_S
+
+    repos_to_fetch = [
+        r for r in stack_repos if not merged_fresh or r not in prev_merged_repos or r in hydrated_repos
+    ]
+    merged_by_repo: dict[str, list[dict]] = {}
+    if merged_fresh:
+        for item in prev_merged:
+            if item.get("repo") in stack_repos and item.get("repo") not in repos_to_fetch:
+                merged_by_repo.setdefault(item["repo"], []).append(item)
+
+    if repos_to_fetch:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            merged_lists = list(pool.map(lambda r: (r, _try(_merged_prs, r)), repos_to_fetch))
         for repo, (value, error) in merged_lists:
             if error:
                 errors.append(f"merged {repo}: {error}")
-            merged += value or []
+                merged_by_repo[repo] = [m for m in prev_merged if m.get("repo") == repo]
+            elif value is not None:
+                items, m_rl = value
+                merged_by_repo[repo] = items
+                rate_limit = _merge_rate_limit(rate_limit, m_rl)
 
+    # Seed ETags after a full index so the next background refresh can exit early on 304 (0 points).
+    if not etags_probed and (not etags.get("notifications") or not etags.get("events") or hydrated_list):
+        _, etags = _check_activity_etags(me, etags)
+
+    merged = [item for repo in stack_repos for item in merged_by_repo.get(repo, [])]
+    now_ts = time.time()
     return {
         "viewer": me,
-        "taken_at": time.time(),
-        "took_s": round(time.time() - started, 1),
+        "taken_at": now_ts,
+        "indexed_at": now_ts,
+        "took_s": round(now_ts - started, 2),
+        "window_days": window_days,
         "prs": sorted(prs.values(), key=lambda p: (p["repo"], p["number"])),
         "merged": merged,
+        "merged_at": now_ts if repos_to_fetch else prev_merged_at,
+        "merged_repos": stack_repos,
+        "etags": etags,
+        "skipped_304": False,
+        "hydrated": len(hydrated_list),
+        "reused": reused_count,
+        "rate_limit": rate_limit,
         "errors": errors,
     }
 
@@ -675,81 +1015,142 @@ def _created_by_call(con: sqlite3.Connection, sid: str, tool_call_id: str) -> bo
     return False
 
 
+def _rank_inferred_owner(
+    chats: dict[str, dict],
+    latest_by_chat: dict[str, tuple[str, str, bool]],
+    session_by_id: dict[str, tuple[str, str, bool, float]],
+) -> dict | None:
+    if not chats:
+        return None
+    for entry in chats.values():
+        latest = latest_by_chat.get(entry["chat"]) if entry["source"] == "portal" else None
+        if latest is None:
+            best = max(
+                (session_by_id[s] for s in entry["sessions"] if s in session_by_id),
+                key=lambda item: item[3],
+                default=None,
+            )
+            latest = best[:3] if best else (next(iter(entry["sessions"])), "", False)
+        entry["session"], entry["title"], entry["archived"] = latest
+    ranked = sorted(
+        chats.values(),
+        key=lambda c: (
+            c["created"],
+            not c["archived"],
+            c["source"] in ("portal", "desktop"),
+            c["mentions"],
+            c["last_at"],
+        ),
+        reverse=True,
+    )
+    winner = ranked[0]
+    return {
+        "session": winner["session"],
+        "title": winner["title"],
+        "source": winner["source"],
+        "archived": winner["archived"],
+        "explicit": False,
+    }
+
+
 def infer_pr_owners(prs: list[dict], state_db: Path) -> dict[str, dict | None]:
-    """Infer owning Portal/interactive chat for each PR from state.db (?mode=ro) via messages_fts."""
+    """Infer owning Portal/interactive chat for each PR from state.db (?mode=ro) via batched messages_fts."""
     if not state_db.is_file() or not prs:
         return {}
-    out: dict[str, dict | None] = {}
+    out: dict[str, dict | None] = {pr["key"]: None for pr in prs}
+    source_placeholders = ",".join("?" for _ in INTERACTIVE_SOURCES)
+    source_params = tuple(sorted(INTERACTIVE_SOURCES))
+    fts_sql = (
+        "SELECT m.role, m.content, m.tool_calls, m.tool_call_id, m.timestamp, "
+        "s.id AS sid, s.source, s.chat_id "
+        "FROM messages_fts f JOIN messages m ON m.id = f.rowid "
+        f"JOIN sessions s ON s.id = m.session_id WHERE messages_fts MATCH ? AND s.source IN ({source_placeholders})"
+    )
     with closing(_connect_ro(state_db)) as con:
+        # Preload session metadata once so we don't fire per-PR session lookup queries in a loop.
+        latest_by_chat: dict[str, tuple[str, str, bool]] = {}
+        session_by_id: dict[str, tuple[str, str, bool, float]] = {}
+        try:
+            for srow in con.execute(
+                "SELECT id, chat_id, title, archived, COALESCE(last_activity_at, started_at, 0) AS ts "
+                "FROM sessions ORDER BY ts DESC"
+            ):
+                sid = srow["id"]
+                info = (sid, srow["title"] or "", bool(srow["archived"]))
+                session_by_id[sid] = (*info, float(srow["ts"] or 0))
+                cid = srow["chat_id"]
+                if cid and cid not in latest_by_chat:
+                    latest_by_chat[cid] = info
+        except sqlite3.Error:
+            pass
+
+        matchers: list[tuple[str, str, re.Pattern[str]]] = []
         for pr in prs:
             url = pr.get("url") or f"https://github.com/{pr['repo']}/pull/{pr['number']}"
             phrase = url.removeprefix("https://")
-            exact = re.compile(re.escape(phrase) + r"(?!\d)")
-            try:
-                rows = con.execute(
-                    "SELECT m.role, m.content, m.tool_calls, m.tool_call_id, m.timestamp, "
-                    "s.id AS sid, s.source, s.chat_id, s.title, s.archived "
-                    "FROM messages_fts f JOIN messages m ON m.id = f.rowid "
-                    "JOIN sessions s ON s.id = m.session_id WHERE messages_fts MATCH ?",
-                    (f'"{phrase}"',),
-                ).fetchall()
-            except sqlite3.Error:
-                out[pr["key"]] = None
-                continue
-            chats = {}
+            matchers.append((pr["key"], phrase, re.compile(re.escape(phrase) + r"(?!\d)")))
+
+        chats_by_pr: dict[str, dict[str, dict]] = {}
+        created_cache: dict[tuple[str, str], bool] = {}
+
+        def _process_rows(rows, chunk: list[tuple[str, str, re.Pattern[str]]]) -> None:
             for row in rows:
-                if row["source"] not in INTERACTIVE_SOURCES:
+                content = row["content"] or ""
+                tool_calls = row["tool_calls"] or ""
+                combined = content + tool_calls
+                matched_keys = [
+                    key for key, phrase, exact in chunk if phrase in combined and exact.search(combined)
+                ]
+                if not matched_keys:
                     continue
-                if not exact.search((row["content"] or "") + (row["tool_calls"] or "")):
-                    continue
+                is_created = False
+                if row["role"] == "tool" and row["tool_call_id"]:
+                    ckey = (row["sid"], row["tool_call_id"])
+                    if ckey not in created_cache:
+                        created_cache[ckey] = _created_by_call(con, row["sid"], row["tool_call_id"])
+                    is_created = created_cache[ckey]
+                # Ignore bulk PR dumps (e.g. `gh pr list`, triage digests, Slack channel scrapes)
+                # so unrelated chats that merely listed many PRs don't claim ownership.
+                if not is_created:
+                    distinct_prs = set(PR_URL_RE.findall(content))
+                    if row["role"] == "tool" and len(distinct_prs) > 2:
+                        continue
+                    if row["role"] != "tool" and len(distinct_prs) > 4:
+                        continue
                 chat_key = row["chat_id"] if row["source"] == "portal" and row["chat_id"] else row["sid"]
-                entry = chats.setdefault(chat_key, {
-                    "chat": chat_key,
-                    "source": row["source"],
-                    "sessions": set(),
-                    "mentions": 0,
-                    "created": False,
-                    "last_at": row["timestamp"] or 0,
-                })
-                entry["sessions"].add(row["sid"])
-                entry["mentions"] += 1
-                entry["last_at"] = max(entry["last_at"], row["timestamp"] or 0)
-                if row["role"] == "tool" and row["tool_call_id"] and _created_by_call(con, row["sid"], row["tool_call_id"]):
-                    entry["created"] = True
-            if not chats:
-                out[pr["key"]] = None
+                for pr_key in matched_keys:
+                    pr_chats = chats_by_pr.setdefault(pr_key, {})
+                    entry = pr_chats.setdefault(chat_key, {
+                        "chat": chat_key,
+                        "source": row["source"],
+                        "sessions": set(),
+                        "mentions": 0,
+                        "created": False,
+                        "last_at": row["timestamp"] or 0,
+                    })
+                    entry["sessions"].add(row["sid"])
+                    entry["mentions"] += 1
+                    entry["last_at"] = max(entry["last_at"], row["timestamp"] or 0)
+                    if is_created:
+                        entry["created"] = True
+
+        for i in range(0, len(matchers), 40):
+            chunk = matchers[i : i + 40]
+            query = " OR ".join(f'"{phrase}"' for _, phrase, _ in chunk)
+            try:
+                rows = con.execute(fts_sql, (query, *source_params)).fetchall()
+            except sqlite3.Error:
+                for item in chunk:
+                    try:
+                        rows = con.execute(fts_sql, (f'"{item[1]}"', *source_params)).fetchall()
+                    except sqlite3.Error:
+                        continue
+                    _process_rows(rows, [item])
                 continue
-            for entry in chats.values():
-                latest = None
-                if entry["source"] == "portal":
-                    latest = con.execute(
-                        "SELECT id, title, archived FROM sessions WHERE chat_id = ? "
-                        "ORDER BY COALESCE(last_activity_at, started_at) DESC LIMIT 1",
-                        (entry["chat"],),
-                    ).fetchone()
-                if latest is None:
-                    placeholders = ",".join("?" * len(entry["sessions"]))
-                    latest = con.execute(
-                        f"SELECT id, title, archived FROM sessions WHERE id IN ({placeholders}) "
-                        "ORDER BY COALESCE(last_activity_at, started_at) DESC LIMIT 1",
-                        tuple(entry["sessions"]),
-                    ).fetchone()
-                entry["session"] = latest["id"] if latest else next(iter(entry["sessions"]))
-                entry["title"] = (latest["title"] if latest else "") or ""
-                entry["archived"] = bool(latest["archived"]) if latest else False
-            ranked = sorted(
-                chats.values(),
-                key=lambda c: (c["created"], c["source"] in ("portal", "desktop"), c["mentions"], c["last_at"]),
-                reverse=True,
-            )
-            winner = ranked[0]
-            out[pr["key"]] = {
-                "session": winner["session"],
-                "title": winner["title"],
-                "source": winner["source"],
-                "archived": winner["archived"],
-                "explicit": False,
-            }
+            _process_rows(rows, chunk)
+
+        for pr_key, pr_chats in chats_by_pr.items():
+            out[pr_key] = _rank_inferred_owner(pr_chats, latest_by_chat, session_by_id)
     return out
 
 
@@ -769,19 +1170,88 @@ def _load_seed_snapshot(seed_db: Path) -> dict | None:
         return None
 
 
-def _session_titles(state_db: Path | None) -> dict[str, tuple[str, bool]]:
-    """Map session id -> (title, archived) from state.db (?mode=ro) for enriching explicit links."""
+def _session_meta(state_db: Path | None) -> dict[str, tuple[str, bool, str]]:
+    """Map session id -> (title, archived, chat_id) from state.db (?mode=ro) for links and group lookup."""
     if not state_db or not state_db.is_file():
         return {}
     try:
         with closing(_connect_ro(state_db)) as con:
             rows = con.execute(
-                "SELECT id, title, archived FROM sessions WHERE source = 'portal' "
-                "ORDER BY COALESCE(last_activity_at, started_at) DESC LIMIT 2000"
+                "SELECT id, title, archived, chat_id FROM sessions WHERE source = 'portal' "
+                "ORDER BY COALESCE(last_activity_at, started_at) DESC LIMIT 4000"
             ).fetchall()
-        return {r["id"]: (r["title"] or "", bool(r["archived"])) for r in rows}
+        return {r["id"]: (r["title"] or "", bool(r["archived"]), r["chat_id"] or "") for r in rows}
     except sqlite3.Error:
         return {}
+
+
+def _load_disk_cache(cache_path: Path | None) -> tuple[dict, dict[str, dict | None] | None, str | None] | None:
+    """Read a persisted gzipped PR snapshot cache from disk."""
+    if not cache_path or not cache_path.is_file():
+        return None
+    try:
+        with gzip.open(cache_path, "rt", encoding="utf-8") as fh:
+            payload = json.load(fh)
+        raw = payload.get("raw") if isinstance(payload, dict) else None
+        if not isinstance(raw, dict) or not isinstance(raw.get("prs"), list):
+            return None
+        inferred = payload.get("inferred")
+        state_db = payload.get("state_db")
+        return raw, inferred if isinstance(inferred, dict) else None, state_db if isinstance(state_db, str) else None
+    except Exception as error:  # noqa: BLE001
+        log.warning("prs: could not read disk cache %s: %s", cache_path, error)
+        return None
+
+
+def _save_disk_cache(
+    cache_path: Path,
+    raw: dict,
+    inferred: dict[str, dict | None] | None,
+    state_db: Path | None = None,
+) -> None:
+    """Atomically write the latest PR snapshot + inferred owners to a gzipped cache file."""
+    try:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix=".prs-cache-", suffix=".tmp", dir=str(cache_path.parent))
+        tmp_path = Path(tmp_name)
+        try:
+            os.fchmod(fd, 0o600)
+            payload = {"raw": raw, "inferred": inferred, "state_db": str(state_db) if state_db else None}
+            with os.fdopen(fd, "wb") as raw_fh, gzip.GzipFile(fileobj=raw_fh, mode="wb", compresslevel=5) as gz:
+                gz.write(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+            os.replace(tmp_path, cache_path)
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+    except Exception as error:  # noqa: BLE001
+        log.warning("prs: could not write disk cache %s: %s", cache_path, error)
+
+
+def _attach_group_lead(
+    owner: dict | None,
+    meta: dict[str, tuple[str, bool, str]],
+    chat_groups: dict[str, dict] | None,
+) -> dict | None:
+    """Attach the owning chat's group primary (lead) session when one is configured."""
+    if not owner or owner.get("source") != "portal" or not chat_groups:
+        return owner
+    sid = owner.get("session")
+    if not sid:
+        return owner
+    entry = meta.get(sid)
+    chat_id = entry[2] if entry else ""
+    group = (chat_groups.get(chat_id) if chat_id else None) or chat_groups.get(sid)
+    lead = group.get("lead_session") if group else None
+    if not lead:
+        return owner
+    lead_entry = meta.get(lead)
+    return {
+        **owner,
+        "group_name": group.get("name") or "",
+        "lead_session": lead,
+        "lead_title": lead_entry[0] if lead_entry else "",
+        "lead_archived": lead_entry[1] if lead_entry else False,
+    }
 
 
 def assemble_view(
@@ -789,17 +1259,22 @@ def assemble_view(
     *,
     explicit_links: Sequence[dict] = (),
     inferred_owners: dict[str, dict | None] | None = None,
-    session_titles: dict[str, tuple[str, bool]] | None = None,
+    session_titles: dict[str, tuple] | None = None,
+    chat_groups: dict[str, dict] | None = None,
     viewer: str | None = None,
     readonly: bool = False,
     stale: bool = False,
+    refreshing: bool = False,
     error: str | None = None,
 ) -> dict:
     """Normalize a snapshot + explicit session links into the Portal PR API payload."""
     me = viewer or raw.get("viewer") or ""
     raw_prs = list(raw.get("prs") or [])
     merged = list(raw.get("merged") or [])
-    titles = session_titles or {}
+    meta: dict[str, tuple[str, bool, str]] = {
+        sid: (entry[0], bool(entry[1]), entry[2] if len(entry) > 2 else "")
+        for sid, entry in (session_titles or {}).items()
+    }
 
     # Explicit links by PR key (newest link wins as primary owner, while keeping every linked session).
     explicit_by_pr: dict[str, list[dict]] = {}
@@ -829,7 +1304,7 @@ def assemble_view(
         exp = explicit_by_pr.get(key)
         if exp:
             sid = exp[0]["session"]
-            title, archived = titles.get(sid, ("", False))
+            title, archived, _ = meta.get(sid, ("", False, ""))
             owner = {"session": sid, "title": title, "source": "portal", "archived": archived, "explicit": True}
         elif inferred_owners is not None and key in inferred_owners:
             owner = inferred_owners[key]
@@ -837,7 +1312,7 @@ def assemble_view(
             pre = (pr.get("link") or {}).get("owner")
             if pre and pre.get("session"):
                 sid = pre["session"]
-                title, archived = titles.get(sid, (pre.get("title") or "", bool(pre.get("archived"))))
+                title, archived, _ = meta.get(sid, (pre.get("title") or "", bool(pre.get("archived")), ""))
                 owner = {
                     "session": sid,
                     "title": title,
@@ -845,6 +1320,7 @@ def assemble_view(
                     "archived": archived,
                     "explicit": False,
                 }
+        owner = _attach_group_lead(owner, meta, chat_groups)
 
         items[key] = {
             "key": key,
@@ -884,7 +1360,12 @@ def assemble_view(
         tone = "merged" if state == "merged" else "pending"
         label = "merged" if state == "merged" else state
         sid = link["session"]
-        title, archived = titles.get(sid, ("", False))
+        title, archived, _ = meta.get(sid, ("", False, ""))
+        merged_owner = _attach_group_lead(
+            {"session": sid, "title": title, "source": "portal", "archived": archived, "explicit": True},
+            meta,
+            chat_groups,
+        )
         items[key] = {
             "key": key,
             "repo": link["repo"],
@@ -913,7 +1394,7 @@ def assemble_view(
                 "changes_requested_by": [],
                 "unresolved_threads": 0,
             },
-            "owner": {"session": sid, "title": title, "source": "portal", "archived": archived, "explicit": True},
+            "owner": merged_owner,
             "stack_id": key,
             "depth": 0,
             "parent_key": None,
@@ -925,6 +1406,7 @@ def assemble_view(
     # Attach compact stack-node summaries so any popover can jump across parent -> self -> children.
     def node_ref(k: str) -> dict:
         p = items[k]
+        owner = p["owner"]
         return {
             "key": p["key"],
             "number": p["number"],
@@ -935,8 +1417,11 @@ def assemble_view(
             "status_label": p["status_label"],
             "tone": p["tone"],
             "depth": p["depth"],
-            "session": p["owner"]["session"] if p["owner"] and p["owner"]["source"] == "portal" else None,
-            "session_title": p["owner"]["title"] if p["owner"] else "",
+            "session": owner["session"] if owner and owner["source"] == "portal" else None,
+            "session_title": owner["title"] if owner else "",
+            "lead_session": owner.get("lead_session") if owner and owner["source"] == "portal" else None,
+            "lead_title": owner.get("lead_title") or "" if owner else "",
+            "group_name": owner.get("group_name") or "" if owner else "",
         }
 
     group_members = {g["id"]: [m["key"] for m in g["members"]] for g in groups}
@@ -970,7 +1455,9 @@ def assemble_view(
         "viewer": me,
         "taken_at": raw.get("taken_at") or time.time(),
         "stale": stale,
+        "refreshing": refreshing,
         "readonly": readonly,
+        "window_days": int(raw.get("window_days") or 0),
         "error": error or (raw.get("errors") or [None])[0],
         "prs": ordered_prs,
         "stacks": stacks_out,
@@ -993,34 +1480,43 @@ def review_chat_prompt(pr: dict) -> tuple[str, str]:
 
 
 class PRService:
-    """Caches read-only GitHub PR snapshots and combines them with Portal's explicit session PR links."""
+    """Caches read-only GitHub PR snapshots with disk persistence, delta refresh, and rate-limit backoff."""
 
     def __init__(
         self,
         store,
         *,
-        home: Path | None = None,
+        home=None,
         viewer: str | None = None,
         seed_db: Path | None = None,
-        ttl: float = 120.0,
+        cache_path: Path | None = None,
+        ttl: float = DEFAULT_PR_TTL_S,
         readonly: bool = False,
         collector=None,
+        on_update=None,
         clock=time.monotonic,
     ):
         self.store = store
         self._home_source = home
         self.viewer = viewer
         self.seed_db = Path(seed_db) if seed_db else None
+        self.cache_path = Path(cache_path) if cache_path else None
         self.ttl = ttl
         self.readonly = readonly
         self.collector = collector or collect_live
+        self.on_update = on_update
         self.clock = clock
         self._raw: dict | None = None
         self._inferred: dict[str, dict | None] | None = None
         self._inferred_db: Path | None = None
+        self._inferred_mtime: float | None = None
         self._at = 0.0
         self._running: asyncio.Future | None = None
         self._last_error: str | None = None
+        self._disk_loaded = False
+        self._include_older = False
+        self._rate_limit_strikes = 0
+        self._backoff_until = 0.0
 
     @property
     def home(self) -> Path | None:
@@ -1034,9 +1530,98 @@ class PRService:
     def invalidate_home(self) -> None:
         self._inferred = None
         self._inferred_db = None
+        self._inferred_mtime = None
 
-    async def snapshot(self, *, refresh: bool = False) -> dict:
-        raw, stale, error = await self._load_raw(refresh=refresh)
+    def _effective_ttl(self, now: float) -> float:
+        ttl = self.ttl
+        if self._backoff_until > now:
+            return max(ttl, self._backoff_until - self._at)
+        rl = (self._raw or {}).get("rate_limit")
+        remaining = rl.get("remaining") if isinstance(rl, dict) else None
+        if isinstance(remaining, int) and remaining < LOW_RATE_LIMIT_THRESHOLD:
+            reset_ts = _parse_iso_ts(rl.get("resetAt")) if isinstance(rl, dict) else 0.0
+            until_reset = max(0.0, reset_ts - time.time()) if reset_ts else 900.0
+            return max(ttl, min(until_reset + 15.0, 3600.0))
+        has_pending_ci = any(
+            c.get("state") == "pending"
+            for pr in ((self._raw or {}).get("prs") or [])
+            for c in (pr.get("checks") or [])
+        )
+        if has_pending_ci and (remaining is None or remaining >= 1000):
+            return min(ttl, ACTIVE_CI_TTL_S)
+        return ttl
+
+    def _note_rate_limit_error(self, error_text: str | None) -> None:
+        if _is_rate_limit_error(error_text):
+            self._rate_limit_strikes = min(self._rate_limit_strikes + 1, 4)
+            wait_s = min(300.0 * (2 ** (self._rate_limit_strikes - 1)), 1800.0)
+            self._backoff_until = self.clock() + wait_s
+            log.warning("prs: GitHub rate limit hit; backing off background refresh for %.0fs", wait_s)
+
+    def _is_refreshing(self) -> bool:
+        return self._running is not None and not self._running.done()
+
+    def _start_collect(self, *, manual: bool = False) -> asyncio.Future:
+        run = self._running
+        if run is None or run.done():
+            run = self._running = asyncio.ensure_future(self._collect(manual=manual))
+            run.add_done_callback(self._on_collect_done)
+        return run
+
+    def _on_collect_done(self, task: asyncio.Future) -> None:
+        if self._running is task:
+            self._running = None
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            self._last_error = str(error)
+            self._note_rate_limit_error(self._last_error)
+            log.warning("prs: background refresh failed: %s", error)
+
+    async def _hydrate_from_disk(self) -> bool:
+        if self._disk_loaded or self._raw is not None:
+            return self._raw is not None
+        self._disk_loaded = True
+        if self.cache_path is not None:
+            cached = await asyncio.to_thread(_load_disk_cache, self.cache_path)
+            if cached is not None:
+                raw, inferred, cached_db = cached
+                self._raw = raw
+                state_db = self._state_db()
+                if inferred is not None and (cached_db is None or (state_db and cached_db == str(state_db))):
+                    self._inferred = inferred
+                    self._inferred_db = state_db
+                else:
+                    self._inferred = None
+                    self._inferred_db = None
+                age = max(0.0, time.time() - float(raw.get("taken_at") or 0))
+                self._at = self.clock() - age
+                self._last_error = None
+                return True
+        if self.seed_db is not None:
+            seed = await asyncio.to_thread(_load_seed_snapshot, self.seed_db)
+            if seed is not None:
+                self._raw = seed
+                self._inferred = None
+                self._inferred_db = None
+                self._at = self.clock()
+                self._last_error = None
+                return True
+        return False
+
+    async def warm(self) -> None:
+        """Preload disk cache on startup; only hit GitHub if no cached snapshot exists yet."""
+        await self._hydrate_from_disk()
+        if self._raw is None:
+            self._start_collect(manual=False)
+
+    async def snapshot(self, *, refresh: bool = False, passive: bool = False, include_older: bool = False) -> dict:
+        if include_older:
+            self._include_older = True
+            if self._raw is not None and int(self._raw.get("window_days") or 0) > 0:
+                refresh = True
+        raw, stale, refreshing, error = await self._load_raw(refresh=refresh, passive=passive)
         state_db = self._state_db()
         if state_db != self._inferred_db:
             self._inferred = (
@@ -1046,60 +1631,108 @@ class PRService:
             )
             self._inferred_db = state_db
         explicit = await asyncio.to_thread(self.store.session_prs)
-        titles = await asyncio.to_thread(_session_titles, state_db)
+        chat_groups = await asyncio.to_thread(self.store.chat_groups)
+        meta = await asyncio.to_thread(_session_meta, state_db)
         return assemble_view(
             raw,
             explicit_links=explicit,
             inferred_owners=self._inferred,
-            session_titles=titles,
+            session_titles=meta,
+            chat_groups=chat_groups,
             viewer=self.viewer or raw.get("viewer"),
             readonly=self.readonly,
             stale=stale,
+            refreshing=refreshing,
             error=error,
         )
 
-    async def for_session(self, session: str, *, refresh: bool = False) -> list[dict]:
-        view = await self.snapshot(refresh=refresh)
+    async def for_session(self, session: str, *, refresh: bool = False, passive: bool = False) -> list[dict]:
+        view = await self.snapshot(refresh=refresh, passive=passive)
         keys = view["by_session"].get(session) or []
         by_key = {p["key"]: p for p in view["prs"]}
         return [by_key[k] for k in keys if k in by_key]
 
-    async def _load_raw(self, *, refresh: bool = False) -> tuple[dict, bool, str | None]:
+    async def _load_raw(self, *, refresh: bool = False, passive: bool = False) -> tuple[dict, bool, bool, str | None]:
+        if not refresh and self._raw is None:
+            await self._hydrate_from_disk()
+
+        if passive and not refresh:
+            if self._raw is not None:
+                return self._raw, False, self._is_refreshing(), self._last_error
+            return (
+                {"viewer": self.viewer or "", "taken_at": time.time(), "prs": [], "merged": []},
+                True,
+                self._is_refreshing(),
+                self._last_error,
+            )
+
         now = self.clock()
-        if not refresh and self._raw is not None and (now - self._at) < self.ttl:
-            return self._raw, False, self._last_error
+        if not refresh and self._raw is not None:
+            if (now - self._at) < self._effective_ttl(now):
+                return self._raw, False, self._is_refreshing(), self._last_error
+            # Stale-while-revalidate: return cached snapshot immediately and refresh in background.
+            self._start_collect(manual=False)
+            return self._raw, True, True, self._last_error
 
-        # Fast-path initial hydration from a read-only seed DB (e.g. shepherd.db) before hitting GitHub.
-        if not refresh and self._raw is None and self.seed_db is not None:
-            seed = await asyncio.to_thread(_load_seed_snapshot, self.seed_db)
-            if seed is not None:
-                self._raw = seed
-                self._inferred = None
-                self._at = now
-                self._last_error = None
-                return seed, False, None
-
-        run = self._running
-        if run is None or run.done():
-            run = self._running = asyncio.ensure_future(self._collect())
+        run = self._start_collect(manual=refresh)
         try:
             await asyncio.shield(run)
         except Exception as error:  # noqa: BLE001
             self._last_error = str(error)
+            self._note_rate_limit_error(self._last_error)
             if self._raw is not None:
-                return self._raw, True, self._last_error
-            return {"viewer": self.viewer or "", "taken_at": time.time(), "prs": [], "merged": []}, True, self._last_error
-        finally:
-            if self._running is run and run.done():
-                self._running = None
-        return self._raw or {"viewer": self.viewer or "", "taken_at": time.time(), "prs": [], "merged": []}, False, self._last_error
+                return self._raw, True, False, self._last_error
+            return {"viewer": self.viewer or "", "taken_at": time.time(), "prs": [], "merged": []}, True, False, self._last_error
+        return (
+            self._raw or {"viewer": self.viewer or "", "taken_at": time.time(), "prs": [], "merged": []},
+            False,
+            False,
+            self._last_error,
+        )
 
-    async def _collect(self):
-        raw = await asyncio.to_thread(self.collector, self.viewer)
+    async def _collect(self, *, manual: bool = False):
+        viewer = self.viewer or (self._raw.get("viewer") if self._raw else None) or None
+        if self.collector is collect_live:
+            raw = await asyncio.to_thread(
+                collect_live,
+                viewer,
+                previous=self._raw,
+                include_older=self._include_older,
+                allow_conditional=not manual,
+            )
+        else:
+            raw = await asyncio.to_thread(self.collector, viewer)
         state_db = self._state_db()
-        inferred = await asyncio.to_thread(infer_pr_owners, raw.get("prs") or [], state_db) if state_db and state_db.is_file() else {}
+        db_mtime = state_db.stat().st_mtime if state_db and state_db.is_file() else None
+        pr_keys = {p["key"] for p in raw.get("prs") or []}
+        if (
+            self._inferred is not None
+            and state_db == self._inferred_db
+            and db_mtime == self._inferred_mtime
+            and pr_keys.issubset(self._inferred.keys())
+        ):
+            inferred = {k: self._inferred.get(k) for k in pr_keys}
+        elif state_db and state_db.is_file():
+            inferred = await asyncio.to_thread(infer_pr_owners, raw.get("prs") or [], state_db)
+        else:
+            inferred = {}
         self._raw = raw
         self._inferred = inferred
         self._inferred_db = state_db
+        self._inferred_mtime = db_mtime
         self._at = self.clock()
         self._last_error = (raw.get("errors") or [None])[0]
+        if self._last_error and _is_rate_limit_error(self._last_error):
+            self._note_rate_limit_error(self._last_error)
+        elif not self._last_error:
+            self._rate_limit_strikes = 0
+            self._backoff_until = 0.0
+        if self.cache_path is not None:
+            await asyncio.to_thread(_save_disk_cache, self.cache_path, raw, inferred, state_db)
+        if self.on_update is not None:
+            try:
+                res = self.on_update()
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception as error:  # noqa: BLE001
+                log.warning("prs: update callback failed: %s", error)

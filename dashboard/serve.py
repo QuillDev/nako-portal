@@ -116,7 +116,15 @@ async def main(config_path):
                 preview_hosts=preview_hosts_for(config["origin"]),
                 own_hosts=(urlparse(config["origin"]).hostname,),
             ),
-            prs=PRService(store, home=active_home, viewer=config.get("github_user") or None) if shutil.which("gh") else None,
+            prs=PRService(
+                store,
+                home=active_home,
+                viewer=config.get("github_user") or None,
+                cache_path=data / "prs-cache.json.gz",
+                on_update=lambda: hub.broadcast({"kind": "prs.changed"}),
+            )
+            if shutil.which("gh")
+            else None,
         )
         link.on_change = portal.gateway_changed
         portal.ops = ops
@@ -124,6 +132,8 @@ async def main(config_path):
         token = (data / "local-token").read_text().strip()
         sites = [(portal.app(), "127.0.0.1", port), (portal.local_app(token, link), "127.0.0.1", port + 1)]
         tasks = [loop.create_task(ops.refresh())]
+        if portal.prs is not None:
+            tasks.append(loop.create_task(portal.prs.warm()))
         if mesh.get("address"):
             # This portal is a hub: machines dial in on its own address (the public app serves
             # /mesh), and on `listen` too when one is set.
