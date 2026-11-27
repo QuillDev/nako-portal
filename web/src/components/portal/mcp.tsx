@@ -23,9 +23,7 @@ import {
   useMcp,
 } from "@/lib/mcp"
 import { cn } from "@/lib/utils"
-
-const PANEL =
-  "gap-3 rounded-[22px] bg-card p-4 sm:max-w-[440px] max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(1.75rem,env(safe-area-inset-bottom))] max-sm:data-[state=open]:zoom-in-100 max-sm:data-[state=closed]:zoom-out-100 max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:slide-out-to-bottom"
+import { confirmAction, PANEL } from "./panel"
 
 const FIELD = "h-10 w-full min-w-0 rounded-full border border-input bg-background px-3.5 text-sm outline-none placeholder:text-muted-foreground"
 
@@ -169,7 +167,7 @@ function ServerPanel({ server, onClose, onError }: { server: McpServer; onClose:
     }
   }
   const remove = async () => {
-    if (!confirm(`Remove ${server.name}? Nako loses its tools until you add it again.`)) return
+    if (!(await confirmAction({ title: `Remove ${server.name}?`, body: "Nako loses its tools until you add it again.", action: "Remove", destructive: true }))) return
     setBusy(true)
     try {
       await removeMcp(server.name)

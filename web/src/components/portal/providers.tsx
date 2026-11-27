@@ -24,13 +24,11 @@ import {
   type SignIn,
   useProviders,
 } from "@/lib/providers"
+import { confirmAction, PANEL } from "./panel"
 
 // Long enough for the check in the save button to draw, then for the "saved" line to be read.
 const CHECK_MS = 450
 const SAVED_MS = 1100
-
-const PANEL =
-  "gap-3 rounded-[22px] bg-card p-4 sm:max-w-[440px] max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none max-sm:pb-[max(1.75rem,env(safe-area-inset-bottom))] max-sm:data-[state=open]:zoom-in-100 max-sm:data-[state=closed]:zoom-out-100 max-sm:data-[state=open]:slide-in-from-bottom max-sm:data-[state=closed]:slide-out-to-bottom"
 
 const words = (text: string) => text.toLowerCase().replace(/[_\-./]+/g, " ").trim()
 
@@ -245,7 +243,7 @@ function KeyPanel({ provider, onClose, onError }: { provider: Provider; onClose:
     }
   }
   const remove = async () => {
-    if (!confirm(`Remove this key? ${provider.label} stops working until you add another.`)) return
+    if (!(await confirmAction({ title: "Remove this key?", body: `${provider.label} stops working until you add another.`, action: "Remove", destructive: true }))) return
     setBusy(true)
     try {
       await removeProviderKey(provider.slug)
@@ -340,7 +338,7 @@ function AccountsPanel({ provider, onError }: { provider: Provider; onError: (me
   const [removing, setRemoving] = useState<string | null>(null)
   const accounts = provider.accounts ?? []
   const remove = async (a: Account) => {
-    if (!confirm(`Remove ${accountTitle(a)}? ${provider.label} stops using it until you sign in to it again.`)) return
+    if (!(await confirmAction({ title: `Remove ${accountTitle(a)}?`, body: `${provider.label} stops using it until you sign in to it again.`, action: "Remove", destructive: true }))) return
     setRemoving(a.id)
     try {
       await removeAccount(provider.slug, a.id)

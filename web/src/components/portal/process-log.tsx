@@ -4,6 +4,8 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 import { api } from "@/lib/api"
 import type { BackgroundProcess } from "@/lib/types"
 import { since } from "./processes"
+import { PANEL } from "./panel"
+import { cn } from "@/lib/utils"
 
 // How often an open log re-reads a running process.
 const TAIL_MS = 2000
@@ -55,7 +57,7 @@ export function ProcessLog({ session, proc, onClose }: { session: string; proc: 
   return (
     <Dialog onOpenChange={open => !open && onClose()} open={Boolean(proc)}>
       {proc && (
-        <DialogContent className="flex h-[min(28rem,80dvh)] max-h-[85dvh] flex-col gap-3 sm:max-w-2xl" data-process-log onOpenAutoFocus={e => e.preventDefault()}>
+        <DialogContent className={cn(PANEL, "flex h-[min(28rem,80dvh)] max-h-[85dvh] flex-col gap-3 sm:max-w-2xl")} data-process-log onOpenAutoFocus={e => e.preventDefault()}>
           <div className="flex min-w-0 flex-col gap-1 pr-8">
             <DialogTitle className="truncate font-medium text-sm leading-6">{proc.label}</DialogTitle>
             <p className="text-muted-foreground text-xs">

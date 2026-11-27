@@ -9,6 +9,7 @@ import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/
 import { api, ApiError } from "@/lib/api"
 import { presetDetails, presetMatches, refreshModelPicks, toggleModelFavorite, useModelFavorites, useModelPresets } from "@/lib/model-presets"
 import { favoriteId, type ModelFavorite } from "@/lib/model-favorites"
+import { confirmAction } from "./panel"
 
 export const modelChoice = d.object({
   provider: d.string(), model: d.string(),
@@ -220,7 +221,7 @@ export function SessionModel({ session, running }: { session: string; running: b
     let raw = await api<unknown>(path, { method: "POST", body })
     const warning = d.object({ confirmation: d.string(), message: d.string() }).safeParse(raw)
     if (warning.success) {
-      if (!window.confirm(warning.data.message)) return
+      if (!(await confirmAction({ title: "Switch model?", body: warning.data.message, action: "Switch" }))) return
       raw = await api<unknown>(path, { method: "POST", body: { ...body, confirm: warning.data.confirmation } })
     }
     setValue(modelChoice.parse(raw))

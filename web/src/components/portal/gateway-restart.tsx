@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { Skullet } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api"
+import { confirmAction } from "./panel"
 
 type Thread = { title: string; turn?: string; tool?: string; status?: string }
 type View = { phase: string; online: boolean; work: Thread[]; threads: Record<string, Thread>; error?: string }
@@ -24,7 +25,7 @@ export function GatewayRestart() {
     return () => { active = false; clearTimeout(timer) }
   }, [])
   const act = async (action: string, turn?: string) => {
-    if (action === "pause-all" && !window.confirm("Pause all active portal threads and resume them after restart?")) return
+    if (action === "pause-all" && !(await confirmAction({ title: "Pause all threads?", body: "Active portal threads pause now and resume after the restart.", action: "Pause all" }))) return
     setBusy(true); setError("")
     try { setView(await api<View>(path, { method: "POST", body: { action, turn } })) }
     catch (e) { setError((e as Error).message) }

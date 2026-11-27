@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
-import { ChevronsRightIcon, XIcon } from "lucide-react"
-import { useDrawer } from "./drawer"
+import { XIcon } from "lucide-react"
+import { PANEL, SlideToConfirm, useSheet } from "./panel"
 import { Skullet } from "@/components/ui/skeleton"
 import { api } from "@/lib/api"
 import type { Provider } from "@/lib/providers"
@@ -111,52 +111,11 @@ function Limit({ window, label, length, now, showReset }: { window: Window; labe
   )
 }
 
-// A bottom sheet on phones, a centered panel on wider screens.
-const PANEL = "gap-4 rounded-[22px] bg-card p-4 sm:max-w-[400px]"
-const SHEET = "gap-4 top-auto bottom-0 max-w-full translate-y-0 rounded-[22px] rounded-b-none bg-card p-4 pb-[max(1.75rem,env(safe-area-inset-bottom))] data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100 data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom"
-
-// Drag the knob to the end of the track to confirm; letting go early springs it back.
-function SlideToConfirm({ label, disabled, onConfirm }: { label: string; disabled: boolean; onConfirm: () => void }) {
-  const [offset, setOffset] = useState(0)
-  const [drag, setDrag] = useState<{ start: number; max: number } | null>(null)
-  const done = (max: number, at: number) => {
-    setDrag(null)
-    if (at >= max * 0.9) {
-      setOffset(max)
-      onConfirm()
-    } else setOffset(0)
-  }
-  return (
-    <div className={cn("relative h-12 select-none rounded-full bg-muted touch-none", disabled && "opacity-50")} data-usage-reset-slide>
-      <span className="pointer-events-none absolute inset-0 flex items-center justify-center pl-10 text-muted-foreground text-sm" style={{ opacity: drag ? 1 - offset / drag.max : 1 }}>{label}</span>
-      <button
-        aria-label={label}
-        className={cn("absolute top-1 left-1 flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm", !drag && "transition-transform")}
-        disabled={disabled}
-        onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onConfirm() } }}
-        onPointerDown={e => {
-          const track = e.currentTarget.parentElement
-          if (!track) return
-          e.currentTarget.setPointerCapture(e.pointerId)
-          setDrag({ start: e.clientX - offset, max: track.clientWidth - e.currentTarget.offsetWidth - 8 })
-        }}
-        onPointerMove={e => drag && setOffset(Math.min(drag.max, Math.max(0, e.clientX - drag.start)))}
-        onPointerUp={() => drag && done(drag.max, offset)}
-        onPointerCancel={() => { setDrag(null); setOffset(0) }}
-        style={{ transform: `translateX(${offset}px)` }}
-        type="button"
-      >
-        <ChevronsRightIcon className="size-5" />
-      </button>
-    </div>
-  )
-}
-
 function ResetRow({ provider, targetLabel, resets, windows, maxUsed, onUpdate, onError }: {
   provider: string; targetLabel: string; resets: Resets; windows: Window[]; maxUsed: number;
   onUpdate: (next: Usage) => void; onError: (message: string) => void;
 }) {
-  const { phone } = useDrawer()
+  const sheet = useSheet()
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   // A model's own reset is judged by that model's limit; anything else by the account's.
@@ -204,7 +163,7 @@ function ResetRow({ provider, targetLabel, resets, windows, maxUsed, onUpdate, o
       )}
       <Dialog open={open} onOpenChange={next => !busy && setOpen(next)}>
         <DialogContent
-          className={phone ? SHEET : PANEL}
+          className={PANEL}
           data-usage-reset-dialog
           // Start on the picked reset, never on the close button.
           onOpenAutoFocus={e => {
@@ -241,7 +200,7 @@ function ResetRow({ provider, targetLabel, resets, windows, maxUsed, onUpdate, o
             ))}
           </div>
           {chosen?.note && <p className="text-muted-foreground text-xs">{chosen.note}</p>}
-          {phone
+          {sheet
             ? <SlideToConfirm key={`${open}-${chosen?.key}`} label={busy ? "Resetting…" : "Slide to use reset"} disabled={!chosen || busy} onConfirm={() => void redeem()} />
             : <div className="flex justify-end gap-2">
                 <DialogClose asChild><Button size="sm" variant="ghost" disabled={busy}>Cancel</Button></DialogClose>
