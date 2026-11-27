@@ -512,3 +512,102 @@ def test_profile_selection_is_captured_before_resolving_homes(tmp_path):
 
     backend = Backend(None, tmp_path)
     assert backend._home() == tmp_path / 'main'
+
+
+async def test_file_allowlist_serves_opened_and_concurrently_delivered_files(world, tmp_path):
+    initial = [tmp_path / f'init_{i}.png' for i in range(4)]
+    later = [tmp_path / f'later_{i}.png' for i in range(4)]
+    secret = tmp_path / 'unlisted.png'
+    for i, path in enumerate((*initial, *later, secret)):
+        path.write_bytes(f'img-{i}'.encode())
+
+    sid = world.hermes.add_session(
+        '20261024_060606_ababab',
+        'gallery',
+        messages=[('assistant', '\n'.join(f'MEDIA:{p}' for p in initial))],
+    )
+    await world.sign_up()
+
+    opened = await world.http.get(world.url(f'/api/sessions/{sid}'))
+    assert opened.status == 200
+
+    responses = await asyncio.gather(
+        *(world.http.get(world.url('/api/file'), params={'session': sid, 'path': str(p)}) for p in initial)
+    )
+    assert [r.status for r in responses] == [200] * len(initial)
+    assert [await r.read() for r in responses] == [p.read_bytes() for p in initial]
+
+    # Newly delivered files requested concurrently all resolve and serve their exact bytes.
+    world.hermes._row(sid, 'assistant', '\n'.join(f'MEDIA:{p}' for p in later))
+    responses = await asyncio.gather(
+        *(world.http.get(world.url('/api/file'), params={'session': sid, 'path': str(p)}) for p in later)
+    )
+    assert [r.status for r in responses] == [200] * len(later)
+    assert [await r.read() for r in responses] == [p.read_bytes() for p in later]
+
+    refused = await world.http.get(world.url('/api/file'), params={'session': sid, 'path': str(secret)})
+    assert refused.status == 404
+
+
+async def test_mid_turn_session_rotation_routes_approval_stream_and_completion_to_new_session(world, monkeypatch):
+    monkeypatch.setattr(hub_module, 'TURN_SESSION_TTL', 0.05)
+    parent = world.hermes.add_session('20261024_070707_cdcdcd', 'before compaction')
+    chat = world.hermes.sessions[parent]['chat']
+    await world.sign_up()
+    ws = await socket_ready(world.http, world)
+    await ws.send_json({'watch': parent})
+    await until(lambda: parent in world.hub.subscribers)
+
+    await world.hub.turn_started(chat)
+    await world.hub.outgoing(chat, 'm1', 'working before compaction')
+    while True:
+        frame = await asyncio.wait_for(ws.receive_json(), 2)
+        if frame.get('kind') == 'event' and frame.get('type') == 'gateway.message':
+            assert frame['session'] == parent
+            assert frame['payload']['text'] == 'working before compaction'
+            break
+
+    # Simulate context compaction rotating the chat to a child session mid-turn without any /command.
+    child = world.hermes.add_session('20261024_070708_efefef', 'after compaction', chat=chat)
+    world.hermes.sessions[parent]['chat'] = None
+    await ws.send_json({'watch': child})
+    await until(lambda: child in world.hub.subscribers)
+
+    # Once the short streaming TTL expires, live outgoing text follows the child session without any /command.
+    await asyncio.sleep(0.06)
+    await world.hub.outgoing(chat, 'm2', 'continuing in child')
+    while True:
+        frame = await asyncio.wait_for(ws.receive_json(), 2)
+        if frame.get('kind') == 'event' and frame.get('type') == 'gateway.message':
+            assert frame['session'] == child
+            assert frame['payload']['text'] == 'continuing in child'
+            break
+
+    # A second rotation is picked up immediately by ask() and turn_finished() without waiting for the TTL.
+    child2 = world.hermes.add_session('20261024_070709_010101', 'after second compaction', chat=chat)
+    world.hermes.sessions[child]['chat'] = None
+    await ws.send_json({'watch': child2})
+    await until(lambda: child2 in world.hub.subscribers)
+
+    await world.hub.ask(chat, {'id': 'req-1', 'method': 'approval', 'params': {'command': 'ls', 'choices': ['once']}})
+    while True:
+        frame = await asyncio.wait_for(ws.receive_json(), 2)
+        if frame.get('kind') == 'request':
+            assert frame['session'] == child2
+            assert frame['request']['id'] == 'req-1'
+            break
+    await world.hub.settle('req-1')
+
+    await world.hub.turn_finished(chat, 'success')
+    saw_status = saw_complete = False
+    while not (saw_status and saw_complete):
+        frame = await asyncio.wait_for(ws.receive_json(), 2)
+        if frame.get('kind') == 'status' and frame.get('session') == child2 and frame.get('status') == 'done':
+            saw_status = True
+        if frame.get('kind') == 'event' and frame.get('type') == 'message.complete' and frame.get('session') == child2:
+            saw_complete = True
+    assert parent not in world.hub.running
+    assert child not in world.hub.running
+    assert child2 not in world.hub.running
+    await ws.close()
+

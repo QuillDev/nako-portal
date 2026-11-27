@@ -43,8 +43,10 @@ keeps it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import time
 import uuid
 
 from .media import MEDIA
@@ -63,6 +65,7 @@ FAILED = "failed"
 MAX_FILE = 25 * 1024 * 1024
 SEND_TIMEOUT = 5
 SEND_CONCURRENCY = 32
+TURN_SESSION_TTL = 2.0
 PREVIEW_CHARS = 280
 # The thread cron posts and other deliveries to `portal` land in, like a bot's DM elsewhere.
 INBOX = "inbox"
@@ -145,6 +148,25 @@ class Hub:
         self._models_cache = {}
         self._models_locks = {}
         self._models_gen = 0
+        # Active turn's chat -> session mapping to avoid session_of RPCs on every streaming chunk.
+        self._turn_sessions = {}
+        # Chats whose next turn started from a /command (e.g. /new) and may rotate their session mid-turn.
+        self._command_turns = set()
+        # Strong references to fire-and-forget tasks so GC cannot drop them mid-flight.
+        self._tasks = set()
+
+    def _spawn(self, coro):
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+        return task
+
+    def _task_done(self, task):
+        self._tasks.discard(task)
+        if not task.cancelled():
+            error = task.exception()
+            if error is not None:
+                log.warning("portal: background task failed: %s", error, exc_info=error)
 
     def notify(self, session, title, text):
         """An alert for every surface: web push (via ``alert``) and every live socket, which is
@@ -154,7 +176,7 @@ class Hub:
             return
         self.alert(session, title, text)
         frame = {"kind": "alert", "title": title, "body": text, "session": session}
-        asyncio.get_running_loop().create_task(self.broadcast(frame))
+        self._spawn(self.broadcast(frame))
 
     # Clients (browser tabs)
 
@@ -197,14 +219,26 @@ class Hub:
         return any(self.viewing.get(client) == session for client in self.looking)
 
     async def _send(self, clients, message):
+        targets = list(clients)
+        if not targets:
+            return
+        raw = None
+        if any(hasattr(client, "send_text") for client in targets):
+            try:
+                raw = json.dumps(message)
+            except Exception:
+                log.warning("portal: couldn't serialize frame for broadcast", exc_info=True)
+                return
+
         async def send(client):
             async with self.send_slots:
                 try:
-                    await asyncio.wait_for(client.send(message), SEND_TIMEOUT)
+                    coro = client.send_text(raw) if raw is not None and hasattr(client, "send_text") else client.send(message)
+                    await asyncio.wait_for(coro, SEND_TIMEOUT)
                 except Exception:  # noqa: BLE001 - One broken browser must not block broadcasts to the others.
                     self.leave(client)
 
-        await asyncio.gather(*(send(client) for client in list(clients)))
+        await asyncio.gather(*(send(client) for client in targets))
 
     def _tap(self, frame):
         for tap in list(self.taps):
@@ -252,11 +286,15 @@ class Hub:
             return
         self.unread.discard(session)
         if session in self.status:
-            asyncio.get_running_loop().create_task(self.broadcast(self._status_frame(session)))
+            self._spawn(self.broadcast(self._status_frame(session)))
 
-    async def _set_status(self, session, status):
+    async def _set_status(self, session, status, *, archived=None):
         # An archived chat is out of sight on purpose, so a turn ending there isn't waiting on you.
-        unread = status in (DONE, FAILED) and not self.seen(session) and not await asyncio.to_thread(self.backend.is_archived, session)
+        if status in (DONE, FAILED) and not self.seen(session):
+            is_archived = await asyncio.to_thread(self.backend.is_archived, session) if archived is None else archived
+            unread = not is_archived
+        else:
+            unread = False
         if self.status.get(session) == status and (session in self.unread) == unread:
             return
         self.status[session] = status
@@ -418,6 +456,9 @@ class Hub:
                 raise ValueError("Files must be under 25 MiB")
         chat = await self._chat(session)
         # A `/command` stays a command: the gateway only runs one that starts the message.
+        if text.startswith("/"):
+            self._command_turns.add(chat)
+            self._turn_sessions.pop(chat, None)
         if sender is not None and not text.startswith("/"):
             if not SESSION_ID.match(str(sender)):
                 raise ValueError("The sending thread's id isn't a session id")
@@ -646,17 +687,50 @@ class Hub:
     async def _session(self, chat):
         return await asyncio.to_thread(self.backend.session_of, chat)
 
+    def _rotate_turn(self, chat, prev, session):
+        """Follow a mid-turn session rotation (e.g. context compaction) to the new child session."""
+        if prev is None or session is None or prev == session:
+            return
+        if prev in self.running:
+            self.running.discard(prev)
+            self.running.add(session)
+            self.progress[session] = self.progress.pop(prev, {"messages": {}, "tools": {}})
+        if chat not in self._command_turns and session in self.running:
+            self._turn_sessions[chat] = (session, time.monotonic() + TURN_SESSION_TTL)
+
+    async def _streaming_session(self, chat):
+        cached = self._turn_sessions.get(chat)
+        now = time.monotonic()
+        if cached is not None and cached[1] > now and cached[0] in self.running:
+            return cached[0]
+        session = await self._session(chat)
+        if cached is not None:
+            self._rotate_turn(chat, cached[0], session)
+        if session is not None and session in self.running and chat not in self._command_turns:
+            self._turn_sessions[chat] = (session, now + TURN_SESSION_TTL)
+        return session
+
     async def turn_started(self, chat):
         session = await self._session(chat)
         if session is None:
             return
+        if chat in self._command_turns:
+            self._command_turns.discard(chat)
+            self._turn_sessions.pop(chat, None)
+        else:
+            self._turn_sessions[chat] = (session, time.monotonic() + TURN_SESSION_TTL)
         self.running.add(session)
         self.progress[session] = {"messages": {}, "tools": {}}
         await self._set_status(session, WORKING)
         await self._event(session, "message.start")
 
     async def turn_finished(self, chat, outcome):
+        started = self._turn_sessions.pop(chat, None)
+        # Always resolve fresh: context compaction or /new can rotate chat -> child session mid-turn.
         session = await self._session(chat)
+        if started is not None and started[0] != session:
+            self.running.discard(started[0])
+            self.progress.pop(started[0], None)
         if session is None:
             return
         # An archived chat is out of sight on purpose; it doesn't ping when a turn ends.
@@ -665,7 +739,7 @@ class Hub:
         self.progress.pop(session, None)
         failed = outcome == "failure"
         if not any(r["session"] == session for r in self.requests.values()):
-            await self._set_status(session, FAILED if failed else DONE)
+            await self._set_status(session, FAILED if failed else DONE, archived=quiet)
         await self._event(session, "message.complete", {"status": "error" if failed else "complete"})
         title = self.titles.get(session) or "Nako"
         reply = self.last_text.pop(session, "")
@@ -675,7 +749,7 @@ class Hub:
             if not quiet:
                 self.notify(session, title, _preview(reply) or "done")
             if self.sign_off_on:
-                asyncio.get_running_loop().create_task(self._sign_off(session, reply))
+                self._spawn(self._sign_off(session, reply))
 
     async def _sign_off(self, session, sent):
         """Nako's one-liner about the turn that just ended, for the chat's sticker. Her own line
@@ -712,7 +786,7 @@ class Hub:
     async def outgoing(self, chat, message_id, text):
         """A message the gateway sent or edited. Inside a turn it shows live until the reply is saved;
         outside one (a cron post, a message from another platform) it's a notification."""
-        session = await self._session(chat)
+        session = await self._streaming_session(chat)
         if session is None:
             return
         self.last_text[session] = text
@@ -736,7 +810,11 @@ class Hub:
 
     async def ask(self, chat, request):
         """An approval or a question the gateway wants answered: {id, method, params, private}."""
+        # Always resolve fresh so approvals after mid-turn compaction land on the active child session.
+        cached = self._turn_sessions.get(chat)
         session = await self._session(chat)
+        if cached is not None:
+            self._rotate_turn(chat, cached[0], session)
         if session is None:
             return
         request = {**request, "session": session}
