@@ -199,16 +199,21 @@ function ComposerBody({ session, placeholder, running, inChat, attached, attache
   const [sending, setSending] = useState(false)
   const [model, setModel] = useState<ModelSelection>({})
   const box = useRef<HTMLDivElement>(null)
-  const slash = useSlashMenu(inChat && !attached ? commands : NO_COMMANDS)
+  const targeted = Boolean(attachedTarget)
+  const slash = useSlashMenu(inChat && !targeted ? commands : NO_COMMANDS)
   useTuneFit(box)
 
   const promptClass = attached
-    ? `[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-none [&>[data-slot=input-group]]:border-0 [&>[data-slot=input-group]]:bg-transparent [&>[data-slot=input-group]]:dark:bg-transparent [&>[data-slot=input-group]]:shadow-none ${TALL.group} [&>[data-slot=input-group]]:rounded-none`
+    ? `[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-none [&>[data-slot=input-group]]:border-0 [&>[data-slot=input-group]]:bg-transparent [&>[data-slot=input-group]]:dark:bg-transparent [&>[data-slot=input-group]]:shadow-none ${TALL.group}`
     : `[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${TALL.group}`
 
+  const slashMenu = (
+    <SlashMenu active={slash.active} onPicked={() => box.current?.querySelector("textarea")?.focus()} options={slash.options} pick={slash.pick} />
+  )
+
   return (
-    <div className={attached ? "w-full" : "mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"} ref={box}>
-      <SlashMenu active={slash.active} onPicked={() => box.current?.querySelector("textarea")?.focus()} options={slash.options} pick={slash.pick} />
+    <div className={attached ? "relative w-full" : "mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"} ref={box}>
+      {attached ? <div className="absolute inset-x-0 bottom-full z-30 mb-10">{slashMenu}</div> : slashMenu}
       <DropZone anchor={box} />
       <PromptInputAttachments className={attached ? "px-2.5 pt-2 pb-0" : "px-1 pt-0 pb-2"}>
         {file => <PromptInputAttachment data={file} />}
@@ -221,14 +226,14 @@ function ComposerBody({ session, placeholder, running, inChat, attached, attache
         onError={e => setError(e.message)}
         onSubmit={async message => {
           if (!message.text.trim() && !message.files.length) return
-          if (!attached && message.text.trim() === "!restart" && !message.files.length) {
+          if (!targeted && message.text.trim() === "!restart" && !message.files.length) {
             navigate("#/settings/gateway")
             return
           }
           if (saysThanks(message.text)) burstHearts(box.current?.querySelector("form"))
           setSending(true)
           try {
-            if (inChat && !attached && isCommand(message.text) && !message.files.length) {
+            if (inChat && !targeted && isCommand(message.text) && !message.files.length) {
               return await command(message.text)
             }
             await send(
@@ -250,14 +255,14 @@ function ComposerBody({ session, placeholder, running, inChat, attached, attache
           session={session}
         />
         <PromptInputTextarea
-          className={attached ? "col-span-3 row-start-1 min-h-11 px-2.5 pt-2.5 pb-1" : TALL.text}
+          className={TALL.text}
           enterKeyHint="send"
           onKeyDownCapture={slash.onKeyDownCapture}
           placeholder={composerPlaceholder(attachedTarget, running, placeholder)}
           rows={1}
         />
         <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${TALL.end}`}>
-          {running && !attached && (
+          {running && !targeted && (
             <PromptInputButton
               aria-label="Stop"
               className="rounded-full"

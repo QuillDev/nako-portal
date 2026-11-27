@@ -329,10 +329,10 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
   const draftKey = c ? `draft:${c.session}` : ""
   const rename = useRenameDialog(portal)
   const picker = useGroupPicker(portal)
-  const { pin, archive, updateGroup, prefetch, command, commands, stop, setError } = portal
+  const { pin, archive, updateGroup, prefetch, command, commands, send, stop, setError } = portal
   const composerControls = useMemo(
-    () => ({ command, commands, stop, setError }),
-    [command, commands, stop, setError],
+    () => ({ command, commands, send, stop, setError }),
+    [command, commands, send, stop, setError],
   )
   const setLead = useMemo(
     () => (groupId: string, lead_session: string | null) => updateGroup(groupId, { lead_session }),
@@ -431,25 +431,15 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
         <GroupComposerDock
           composer={composerControls}
           data={groupOverview.data}
+          draftKey={draftKey}
           group={group}
           key={`dock:${c.session}`}
           onReload={groupOverview.reload}
           onSetLead={setLead}
           prefetch={prefetch}
+          running={c.running}
           session={c.session}
-        >
-          <Composer
-            command={portal.command}
-            commands={portal.commands}
-            draftKey={draftKey}
-            session={c.session}
-            inChat
-            running={c.running}
-            send={portal.send}
-            setError={portal.setError}
-            stop={portal.stop}
-          />
-        </GroupComposerDock>
+        />
       ) : (
         <SecretDock answer={portal.answer} key={c.session} request={secret}>
           <Composer
