@@ -118,6 +118,20 @@ export function usePortal() {
   const cacheRef = useRef(new Map<string, Cached>())
   const inflightRef = useRef(new Map<string, Promise<OpenSession>>())
 
+  const applyBackend = useCallback((next: Backends) => {
+    const moved = backendRef.current !== null && backendRef.current.active !== next.active
+    backendRef.current = next
+    setBackend(next)
+    if (!moved) return
+    // Another agent's chats, models and tools: the server follows with sessions.changed.
+    if (currentRef.current) navigate("#/")
+    cacheRef.current.clear()
+    void reloadMcp()
+    void reloadProviders()
+    void reloadSecrets()
+    api<Command[]>("/api/commands").then(setCommands, () => {})
+  }, [])
+
   // One read of a chat's latest page at a time; a hover and the click after it share it.
   const read = useCallback((session: string) => {
     const pending = inflightRef.current.get(session)
@@ -237,17 +251,9 @@ export function usePortal() {
           loadSessions()
           void reloadMcp()
           return
-        case "backend.changed": {
-          const moved = backendRef.current?.active !== frame.active
-          setBackend({ active: frame.active, backends: frame.backends })
-          if (!moved) return
-          // Another agent's chats, models and tools: the server follows with sessions.changed.
-          cacheRef.current.clear()
-          void reloadMcp()
-          void reloadProviders()
-          void reloadSecrets()
+        case "backend.changed":
+          applyBackend({ active: frame.active, backends: frame.backends })
           return
-        }
       }
       const open = currentRef.current
       if (!open || frame.session !== open.session) return
@@ -304,7 +310,7 @@ export function usePortal() {
           break
       }
     },
-    [loadSessions, refresh, setLive],
+    [applyBackend, loadSessions, refresh, setLive],
   )
 
   const onFrameRef = useRef(onFrame)
@@ -511,13 +517,16 @@ export function usePortal() {
     setMe(m => (m ? { ...m, name: saved.name } : m))
   }, [])
 
-  const switchBackend = useCallback(async (id: string) => {
-    try {
-      setBackend(await api<Backends>("/api/backend", { method: "POST", body: { backend: id } }))
-    } catch (e) {
-      setError((e as Error).message)
-    }
-  }, [])
+  const switchBackend = useCallback(
+    async (id: string) => {
+      try {
+        applyBackend(await api<Backends>("/api/backend", { method: "POST", body: { backend: id } }))
+      } catch (e) {
+        setError((e as Error).message)
+      }
+    },
+    [applyBackend],
+  )
 
   const rename = useCallback(
     (session: string, title: string) =>

@@ -504,7 +504,9 @@ class Portal(AuthRoutes, LocalAPI):
         """Talk to another connected agent from now on; every app reloads its chats."""
         self._require(request)
         body = await request.json()
-        return web.json_response(await self._backends().set_active_backend(str(body.get("backend") or "")))
+        state = await self._backends().set_active_backend(str(body.get("backend") or ""))
+        self.shown.clear()
+        return web.json_response(state)
 
     async def model(self, request):
         """The model the shown profile's turns run on, and the ones it could."""
