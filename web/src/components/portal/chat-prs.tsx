@@ -91,14 +91,12 @@ function StackSection({ pr, session }: { pr: PrItem; session: string }) {
             isCurrent && "bg-accent/70 font-medium text-foreground",
             !isCurrent && "text-muted-foreground",
           )
-          const indent = { paddingLeft: `${Math.min(node.depth, 4) * 12 + 6}px` }
           if (jumpTo) {
             return (
               <DropdownMenuItem
                 className={cn(rowClass, "cursor-pointer")}
                 key={node.key}
                 onSelect={() => navigate(`#/c/${jumpTo}`)}
-                style={indent}
               >
                 <span className={cn("size-1.5 shrink-0 rounded-full", PR_DOT[node.tone])} />
                 <span className="shrink-0 tabular-nums">#{node.number}</span>
@@ -108,7 +106,7 @@ function StackSection({ pr, session }: { pr: PrItem; session: string }) {
             )
           }
           return (
-            <div className={rowClass} key={node.key} style={indent}>
+            <div className={rowClass} key={node.key}>
               <span className={cn("size-1.5 shrink-0 rounded-full", PR_DOT[node.tone])} />
               <span className="shrink-0 tabular-nums">#{node.number}</span>
               <span className="min-w-0 flex-1 truncate">{node.title}</span>
