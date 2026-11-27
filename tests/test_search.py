@@ -125,3 +125,107 @@ def test_offline_searches_profile_homes_and_missing_database(search_home):
                          "INSERT INTO sessions VALUES ('work', 'Work', 'portal', NULL);"
                          "INSERT INTO messages VALUES (1, 'work', 'user', 'apricot', 10);")
     assert [row["id"] for row in Offline(search_home).search_sessions("apricot")] == ["work", "normal", "archived"]
+
+
+def _install_trigram(db):
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS state_meta (key TEXT PRIMARY KEY, value TEXT);
+        CREATE VIEW messages_fts_trigram_src AS
+            SELECT m.id, m.role, m.content, m.tool_name
+            FROM messages AS m
+            JOIN sessions AS s ON s.id = m.session_id
+            WHERE m.role <> 'tool' AND json_extract(s.model_config, '$._delegate_from') IS NULL;
+        CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(
+            content, tool_name, content='messages_fts_trigram_src', content_rowid='id', tokenize='trigram'
+        );
+        CREATE TRIGGER messages_fts_trigram_insert AFTER INSERT ON messages
+        WHEN new.role <> 'tool' AND EXISTS (
+            SELECT 1 FROM sessions WHERE id = new.session_id AND json_extract(model_config, '$._delegate_from') IS NULL
+        )
+        BEGIN
+            INSERT INTO messages_fts_trigram(rowid, content, tool_name) VALUES (new.id, new.content, new.tool_name);
+        END;
+        INSERT INTO messages_fts_trigram(messages_fts_trigram) VALUES('rebuild');
+    """)
+
+
+def test_trigram_search_handles_substrings_cjk_short_queries_and_delegates(tmp_path):
+    with sqlite3.connect(tmp_path / "state.db") as db:
+        db.executescript("""
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, ended_at REAL,
+                                   archived INTEGER, model_config TEXT);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                                   timestamp REAL, display_kind TEXT, active INTEGER, tool_name TEXT);
+            INSERT INTO sessions VALUES
+                ('main', 'Main thread', 'portal', NULL, 0, NULL),
+                ('child', 'Child task', 'portal', NULL, 0, '{"_delegate_from": "main"}');
+            INSERT INTO messages VALUES
+                (1, 'main', 'assistant', 'Deploying apricot_build 50% 日本語テスト\nSECRET:APRICOT_SECRET', 10, NULL, 1, NULL),
+                (2, 'child', 'assistant', 'Delegate hit apricot_build later', 20, NULL, 1, NULL);
+        """)
+        _install_trigram(db)
+    # Substring, punctuation, CJK, and delegate-child exclusion all match in recency order.
+    assert [r["id"] for r in search_sessions(tmp_path, "cot_bui")] == ["child", "main"]
+    assert [r["id"] for r in search_sessions(tmp_path, "50%")] == ["main"]
+    assert [r["id"] for r in search_sessions(tmp_path, "本語テ")] == ["main"]
+    assert search_sessions(tmp_path, "APRICOT_SECRET") == []
+    # Two-character queries cannot use trigram and fall back cleanly.
+    assert [r["id"] for r in search_sessions(tmp_path, "50")] == ["main"]
+
+
+def test_trigram_search_handles_unicode_casefold_and_malformed_model_config(tmp_path):
+    with sqlite3.connect(tmp_path / "state.db") as db:
+        db.executescript("""
+            CREATE TABLE state_meta (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, ended_at REAL,
+                                   archived INTEGER, model_config TEXT);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                                   timestamp REAL, display_kind TEXT, active INTEGER, tool_name TEXT);
+            INSERT INTO sessions VALUES
+                ('german', 'Street note', 'portal', NULL, 0, NULL),
+                ('broken', 'Corrupt config', 'portal', NULL, 0, '{not valid json');
+            INSERT INTO messages VALUES
+                (1, 'german', 'assistant', 'Die Straße ist lang', 10, NULL, 1, NULL),
+                (2, 'broken', 'assistant', 'Still finds apricot_build safely', 20, NULL, 1, NULL);
+            CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(content, tokenize='trigram');
+            INSERT INTO messages_fts_trigram(rowid, content) VALUES (1, 'Die Straße ist lang');
+            CREATE TRIGGER messages_fts_trigram_insert AFTER INSERT ON messages BEGIN SELECT 1; END;
+        """)
+    assert [r["id"] for r in search_sessions(tmp_path, "straße")] == ["german"]
+    assert [r["id"] for r in search_sessions(tmp_path, "apricot_build")] == ["broken"]
+
+
+@pytest.mark.parametrize("meta_row", [("fts_stale", "1"), ("fts_rebuild_high_water", "100")])
+def test_incomplete_trigram_falls_back_to_table_scan(tmp_path, meta_row):
+    with sqlite3.connect(tmp_path / "state.db") as db:
+        db.executescript("""
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, ended_at REAL,
+                                   archived INTEGER, model_config TEXT);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                                   timestamp REAL, display_kind TEXT, active INTEGER, tool_name TEXT);
+            INSERT INTO sessions VALUES ('main', 'Main thread', 'portal', NULL, 0, NULL);
+        """)
+        _install_trigram(db)
+        # Drop trigger and insert an unindexed row, simulating a stale/rebuilding index.
+        db.execute("DROP TRIGGER messages_fts_trigram_insert")
+        db.execute("INSERT INTO messages VALUES (1, 'main', 'assistant', 'unindexed_apricot', 5, NULL, 1, NULL)")
+        db.execute(
+            "CREATE TRIGGER messages_fts_trigram_insert AFTER INSERT ON messages BEGIN SELECT 1; END"
+        )
+        db.execute("INSERT INTO state_meta VALUES (?, ?)", meta_row)
+    assert [r["id"] for r in search_sessions(tmp_path, "unindexed_apricot")] == ["main"]
+
+
+def test_case_sensitive_or_incompatible_trigram_falls_back(tmp_path):
+    with sqlite3.connect(tmp_path / "state.db") as db:
+        db.executescript("""
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, source TEXT, ended_at REAL, archived INTEGER);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+            INSERT INTO sessions VALUES ('main', 'Main', 'portal', NULL, 0);
+            INSERT INTO messages VALUES (1, 'main', 'assistant', 'MixedCase Apricot', 5);
+            CREATE VIRTUAL TABLE messages_fts_trigram USING fts5(content, tokenize='trigram case_sensitive 1');
+            INSERT INTO messages_fts_trigram(rowid, content) VALUES (1, 'MixedCase Apricot');
+            CREATE TRIGGER messages_fts_trigram_insert AFTER INSERT ON messages BEGIN SELECT 1; END;
+        """)
+    assert [r["id"] for r in search_sessions(tmp_path, "mixedcase")] == ["main"]
+
