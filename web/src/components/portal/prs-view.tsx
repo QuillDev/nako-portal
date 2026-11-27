@@ -165,21 +165,18 @@ function PrMetaLine({ pr }: { pr: PrItem }) {
 
 function PrRow({
   pr,
-  depth,
   quietReview,
   starting,
   onOpenChat,
   onStartReview,
 }: {
   pr: PrItem
-  depth: number
   quietReview: boolean
   starting: boolean
   onOpenChat: (session: string) => void
   onStartReview: (pr: PrItem) => void
 }) {
   const portalSession = pr.owner?.source === "portal" ? pr.owner.session : null
-  const indentPx = Math.min(depth, 4) * 18
   const badge = rowBadge(pr, quietReview)
   const dotTone = rowDotTone(pr, quietReview)
 
@@ -187,15 +184,7 @@ function PrRow({
     <div
       className="group relative flex flex-col gap-1 rounded-md px-2 py-2 hover:bg-accent/60"
       data-pr-row={pr.key}
-      style={indentPx > 0 ? { marginLeft: `${indentPx}px` } : undefined}
     >
-      {depth > 0 && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute top-0 bottom-0 -left-2.5 w-px bg-border/70"
-        />
-      )}
-
       <div className="flex min-w-0 items-center gap-2">
         <span
           aria-hidden="true"
@@ -301,9 +290,8 @@ function StackBlock({
         </div>
       )}
       <div className="divide-y divide-border/50">
-        {group.members.map(({ pr, depth }) => (
+        {group.members.map(pr => (
           <PrRow
-            depth={depth}
             key={pr.key}
             onOpenChat={onOpenChat}
             onStartReview={onStartReview}

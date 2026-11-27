@@ -225,7 +225,7 @@ export type PrGroupRow = {
   id: string
   kind: "stack" | "standalone"
   repos: string[]
-  members: { pr: PrItem; depth: number }[]
+  members: PrItem[]
   priority: number
 }
 
@@ -256,22 +256,20 @@ export function visiblePrGroups(data: PrsSnapshot | null, tab: PrTab, query: str
   const groups: PrGroupRow[] = []
 
   for (const stack of data.stacks) {
-    const members: { pr: PrItem; depth: number }[] = []
+    const members: PrItem[] = []
     for (const m of stack.members) {
       const pr = byKey.get(m.key)
       if (pr && matchesTab(pr, tab) && matchesFilter(pr, query)) {
-        members.push({ pr, depth: m.depth })
+        members.push(pr)
       }
     }
     if (members.length === 0) continue
-    const minDepth = Math.min(...members.map(m => m.depth))
-    const normalized = members.map(m => ({ pr: m.pr, depth: m.depth - minDepth }))
-    const priority = Math.min(...normalized.map(m => STATUS_PRIORITY[m.pr.status]))
+    const priority = Math.min(...members.map(pr => STATUS_PRIORITY[pr.status]))
     groups.push({
       id: stack.id,
-      kind: normalized.length > 1 || normalized.some(m => Boolean(m.pr.merged_parent)) ? "stack" : "standalone",
+      kind: members.length > 1 || members.some(pr => Boolean(pr.merged_parent)) ? "stack" : "standalone",
       repos: stack.repos,
-      members: normalized,
+      members,
       priority,
     })
   }
