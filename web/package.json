@@ -19,7 +19,7 @@
     "emoji-picker-element": "1.29.1",
     "emoji-picker-element-data": "1.8.0",
     "lucide-react": "^1.61.0",
-    "nakomponents": "github:QuillDev/nakomponents#c185a563f39a1a897b8faf057b0304fe1db3c4c0",
+    "nakomponents": "github:QuillDev/nakomponents#57ced4251d654ec1b45527f6fd51976b35846107",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
