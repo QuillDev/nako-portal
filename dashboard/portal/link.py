@@ -23,6 +23,9 @@ from aiohttp import ClientError, WSMsgType, web
 log = logging.getLogger("hermes.portal")
 
 GATEWAY_PATH = "/gateway"
+# The agents that can dial in, by their `?backend=` name; no name is the Python gateway.
+BACKENDS = ("python", "bun")
+DEFAULT_BACKEND = "python"
 # A message can carry 25 MiB of files, base64-encoded.
 MAX_FRAME = 80 * 1024 * 1024
 CALL_TIMEOUT = 180
@@ -194,16 +197,27 @@ class Peer:
 class GatewayLink:
     """The server's end of the link, and the hub's backend.
 
-    `code` names the server's own code and settings. A gateway running different code is told
-    to start a fresh server (409) and this one shuts down via `on_stale`, so a plugin update
-    reaches the server on the next gateway restart, while a plain restart leaves it running.
-    `on_change(connected)` runs each time a gateway connects or goes away."""
+    More than one agent can dial in at once, each naming itself with `?backend=` (no name is
+    the Python gateway). The hub's calls go to the active one, the owner's pick (kept in the
+    store) while it's connected, else whichever is. Every connected agent's hub calls arrive,
+    so a turn started on one still finishes after a switch.
 
-    def __init__(self, code, *, on_change=None, on_stale=None):
+    `code` names the server's own code and settings. A Python gateway running different code
+    is told to start a fresh server (409) and this one shuts down via `on_stale`, so a plugin
+    update reaches the server on the next gateway restart, while a plain restart leaves it
+    running. Other backends don't share the plugin's code and never restart the server.
+    `on_change(connected)` runs each time the hub's backend connects, moves or goes away."""
+
+    def __init__(self, code, *, store=None, on_change=None, on_stale=None):
         self.code = code
+        self.store = store
         self.on_change = on_change
         self.on_stale = on_stale
-        self.peer = None
+        self.peers = {}
+        self.builds = {}
+        self.active = (store.meta("backend", DEFAULT_BACKEND) if store is not None else DEFAULT_BACKEND)
+        if self.active not in BACKENDS:
+            self.active = DEFAULT_BACKEND
         self.hub = None
         self.loop = None
         # `offline.Offline` (or anything with its read calls): chats read with no gateway here.
@@ -226,12 +240,60 @@ class GatewayLink:
         return methods
 
     @property
+    def routed(self):
+        """The backend the hub's calls go to now, or None with nothing connected."""
+        if self.active in self.peers:
+            return self.active
+        return next((name for name in BACKENDS if name in self.peers), None)
+
+    @property
+    def peer(self):
+        routed = self.routed
+        return self.peers.get(routed) if routed else None
+
+    @property
     def connected(self):
         return self.peer is not None
 
+    def backend_state(self):
+        return {
+            "active": self.routed or self.active,
+            "backends": [{"id": name, "connected": name in self.peers, **(self.builds.get(name) or {})} for name in BACKENDS],
+        }
+
+    async def set_active_backend(self, name):
+        """Send the hub's calls to another connected backend, and tell every app to reload."""
+        if name not in BACKENDS:
+            raise ValueError(f"unknown backend: {name}")
+        if name not in self.peers:
+            raise ValueError(f"{name} isn't connected")
+        before = self.routed
+        self.active = name
+        if self.store is not None:
+            self.store.set_meta("backend", name)
+        await self._rerouted(before, alive=True)
+        return self.backend_state()
+
+    async def _rerouted(self, before, *, alive):
+        """Tell the hub when its backend moved; `alive` says the one it left still runs."""
+        now = self.routed
+        self.hub.hermes_build = self.builds.get(now) if now else None
+        if now != before:
+            if before is not None and not alive:
+                await self._changed(False)
+            if now is not None:
+                self.hub.inboxes = None
+                await self._changed(True)
+        await self.hub.broadcast({"kind": "backend.changed", **self.backend_state()})
+        if now != before and now is not None:
+            await self.hub.broadcast({"kind": "sessions.changed"})
+
     async def handle(self, request):
         """GET /gateway on the loopback app, behind its token check."""
-        if request.query.get("code") != self.code:
+        name = request.query.get("backend") or DEFAULT_BACKEND
+        if name not in BACKENDS:
+            return web.json_response({"error": f"unknown backend: {name}"}, status=400)
+        if name == DEFAULT_BACKEND and request.query.get("code") != self.code:
             log.info("portal: a gateway with other code connected; handing over to a fresh server")
             if self.on_stale is not None:
                 asyncio.get_running_loop().call_later(0.2, self.on_stale)
@@ -240,24 +302,28 @@ class GatewayLink:
         ws = web.WebSocketResponse(heartbeat=HEARTBEAT, max_msg_size=MAX_FRAME)
         await ws.prepare(request)
         peer = Peer(ws, self._methods())
-        old, self.peer = self.peer, peer
+        before = self.routed
+        old = self.peers.get(name)
+        self.peers[name] = peer
         version, build = request.query.get("hermes_version"), request.query.get("hermes_build")
-        self.hub.hermes_build = {"version": version, "build": build} if version and build else None
+        self.builds[name] = {"version": version, "build": build} if version and build else None
         if old is not None:
             await old.ws.close()
-        log.info("portal: gateway connected")
-        changed = self.loop.create_task(self._changed(True))
+        log.info("portal: %s backend connected", name)
+        # The same backend dialling again is a reconnect: the hub hears it connected again.
+        changed = self.loop.create_task(self._rerouted(None if old is not None and before == name else before, alive=True))
         try:
             await peer.run()
         finally:
             changed.cancel()
-            if self.peer is peer:
-                self.peer = None
-                self.hub.hermes_build = None
-                log.info("portal: gateway went away")
+            if self.peers.get(name) is peer:
+                before = self.routed
+                del self.peers[name]
+                self.builds.pop(name, None)
+                log.info("portal: %s backend went away", name)
                 # The HTTP handler may be cancelled as its socket closes. Finish notifying
                 # subscribers even when a concurrent broadcast has to yield to senders.
-                await asyncio.shield(self._changed(False))
+                await asyncio.shield(self._rerouted(before, alive=before != name))
         return ws
 
     async def _changed(self, connected):

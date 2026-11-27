@@ -82,7 +82,7 @@ async def main(config_path):
             bg_tasks.add(task)
             task.add_done_callback(_bg_done)
 
-        link = GatewayLink(config["code"], on_stale=done.set)
+        link = GatewayLink(config["code"], store=store, on_stale=done.set)
         hub = Hub(link, alert=alert)
         link.serve(hub)
         # Hermes's home: chats are read from its session store while no gateway is connected.

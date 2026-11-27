@@ -202,6 +202,8 @@ class Portal(AuthRoutes, LocalAPI):
         r.add_get("/api/signoff", self.sign_off)
         r.add_post("/api/signoff", self.set_sign_off)
         r.add_get("/api/profile", self.profile)
+        r.add_get("/api/backend", self.backend)
+        r.add_post("/api/backend", self.set_backend)
         r.add_post("/api/profile", self.set_profile)
         r.add_get("/api/model/options", self.model_options)
         r.add_get("/api/model", self.model)
@@ -487,6 +489,22 @@ class Portal(AuthRoutes, LocalAPI):
                 self._shown_locks.pop(key, None)
         await self.hub.broadcast({"kind": "profile.changed", "profile": shown["profile"]})
         return web.json_response(shown)
+
+    def _backends(self):
+        if not hasattr(self.hub.backend, "backend_state"):
+            raise web.HTTPNotFound(text=json.dumps({"error": "this portal has one backend"}), content_type="application/json")
+        return self.hub.backend
+
+    async def backend(self, request):
+        """The agent the portal talks to now, and every agent that could be connected."""
+        self._require(request)
+        return web.json_response(self._backends().backend_state())
+
+    async def set_backend(self, request):
+        """Talk to another connected agent from now on; every app reloads its chats."""
+        self._require(request)
+        body = await request.json()
+        return web.json_response(await self._backends().set_active_backend(str(body.get("backend") or "")))
 
     async def model(self, request):
         """The model the shown profile's turns run on, and the ones it could."""

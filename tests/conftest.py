@@ -764,7 +764,7 @@ async def world(tmp_path, monkeypatch):
     store = Store(tmp_path / "portal" / "portal.db")
     alerts = []
     # The portal server as it runs on its own, with the fake gateway dialled in over the link.
-    link = GatewayLink(SERVER_CODE)
+    link = GatewayLink(SERVER_CODE, store=store)
     hub = Hub(link, alert=lambda *a: alerts.append(a))
     link.serve(hub)
     portal = Portal(hub, store, origin=ORIGIN, web_root=ROOT / "dashboard" / "web")

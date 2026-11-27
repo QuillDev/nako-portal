@@ -6,8 +6,8 @@ import socket
 import sys
 
 import aiohttp
-from conftest import LOCAL_TOKEN, ORIGIN, ROOT, SERVER_CODE, Backend, FakeGateway, next_message, until
-from portal.link import GatewayClient
+from conftest import LOCAL_TOKEN, ORIGIN, ROOT, SERVER_CODE, Backend, FakeGateway, HubOverLink, next_message, until
+from portal.link import GatewayClient, GatewayLink
 
 
 async def test_the_site_stays_up_while_the_gateway_restarts(world):
@@ -63,6 +63,75 @@ async def test_a_gateway_on_other_code_is_told_to_start_a_fresh_server(world):
         assert refused.status == 409
     await until(lambda: stale)
     assert world.hub.connected
+
+
+async def bun_gateway(world, hermes):
+    """A second agent dialling in as `?backend=bun`, with no plugin code to match."""
+    client = GatewayClient(world.local.make_url("/gateway"), LOCAL_TOKEN, None, Backend(hermes))
+    client.params = {"backend": "bun"}
+    hermes.hub = HubOverLink(client)
+    task = asyncio.get_running_loop().create_task(client.run(world.gateway.http))
+    await until(lambda: client.peer is not None)
+    return task
+
+
+async def test_a_bun_agent_connects_beside_the_python_gateway_without_a_restart(world):
+    stale = []
+    world.link.on_stale = lambda: stale.append(True)
+    world.hermes.add_session("20261025_161616_cccccc", "python chat", messages=[("user", "hi")])
+    bun = FakeGateway()
+    bun.add_session("20261025_171717_dddddd", "bun chat", messages=[("user", "hey")])
+    await world.sign_up()
+
+    task = await bun_gateway(world, bun)
+    state = await (await world.http.get(world.url("/api/backend"))).json()
+    assert state == {"active": "python", "backends": [{"id": "python", "connected": True}, {"id": "bun", "connected": True}]}
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [row["title"] for row in listed] == ["python chat"]
+    await asyncio.sleep(0.3)
+    assert stale == [] and world.hub.connected
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_switching_backends_moves_every_call_and_tells_the_apps(world):
+    python_sid = world.hermes.add_session("20261025_161616_cccccc", "python chat", messages=[("user", "hi")])
+    bun = FakeGateway()
+    bun_sid = bun.add_session("20261025_171717_dddddd", "bun chat", messages=[("user", "hey")])
+    await world.sign_up()
+    task = await bun_gateway(world, bun)
+    ws = await world.http.ws_connect(world.url("/ws"), headers={"Origin": ORIGIN})
+    await next_message(ws, lambda m: m.get("kind") == "status.synced")
+
+    refused = await world.post("/api/backend", {"backend": "deno"})
+    assert refused.status == 400
+    switched = await world.post("/api/backend", {"backend": "bun"})
+    assert (await switched.json())["active"] == "bun"
+    changed = await next_message(ws, lambda m: m.get("kind") == "backend.changed")
+    assert changed["active"] == "bun"
+    await next_message(ws, lambda m: m.get("kind") == "sessions.changed")
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [row["id"] for row in listed] == [bun_sid]
+    await world.http.post(world.url(f"/api/sessions/{bun_sid}/messages"), data={"text": "to bun"}, headers={"Origin": ORIGIN})
+    assert bun.received[-1][:2] == (f"chat-{bun_sid}", "to bun")
+    assert world.hermes.received == []
+    # The pick outlives the server: a fresh one starts on bun.
+    assert GatewayLink(SERVER_CODE, store=world.store).backend_state()["active"] == "bun"
+
+    # Bun going away falls back to the Python gateway; it stays the pick for when bun returns.
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    await next_message(ws, lambda m: m.get("kind") == "backend.changed" and m["active"] == "python")
+    listed = await (await world.http.get(world.url("/api/sessions"))).json()
+    assert [row["id"] for row in listed] == [python_sid]
+    refused = await world.post("/api/backend", {"backend": "bun"})
+    assert refused.status == 400
+    task = await bun_gateway(world, bun)
+    await next_message(ws, lambda m: m.get("kind") == "backend.changed" and m["active"] == "bun")
+    assert [row["id"] for row in await (await world.http.get(world.url("/api/sessions"))).json()] == [bun_sid]
+    await ws.close()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 async def test_only_the_local_token_opens_the_gateway_link(world):

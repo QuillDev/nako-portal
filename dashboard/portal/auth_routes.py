@@ -72,6 +72,8 @@ class AuthRoutes:
             me["name"] = self.store.meta("name", "")
             me["environments"] = self.environments is not None
             me["machine_load"] = self.machine_load is not None
+            if hasattr(self.hub.backend, "backend_state"):
+                me["backend"] = self.hub.backend.backend_state()
         return web.json_response(me)
 
 
