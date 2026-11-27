@@ -78,6 +78,45 @@ async def test_a_push_reaches_the_browser_encrypted_and_dead_subscriptions_are_d
     assert push.Vapid(tmp_path / "vapid.pem", "mailto:x").public_key == vapid.public_key
 
 
+async def test_push_delivers_to_all_devices_concurrently_without_waiting_on_slow_endpoints(tmp_path, monkeypatch):
+    import aiohttp
+
+    receiver = ec.generate_private_key(ec.SECP256R1())
+    auth = b"0123456789abcdef"
+    fast_arrived = asyncio.Event()
+    slow_started = asyncio.Event()
+    release_slow = asyncio.Event()
+
+    async def service(request):
+        if request.match_info["id"] == "slow":
+            slow_started.set()
+            await release_slow.wait()
+            return web.Response(status=201)
+        fast_arrived.set()
+        return web.Response(status=201)
+
+    app = web.Application()
+    app.router.add_post("/push/{id}", service)
+    server = TestServer(app)
+    await server.start_server()
+    store = Store(tmp_path / "portal.db")
+    keys = {"p256dh": b64(receiver.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)), "auth": b64(auth)}
+    # Register the slow device FIRST so serial delivery would block the fast device behind it.
+    store.add_push(str(server.make_url("/push/slow")), keys)
+    store.add_push(str(server.make_url("/push/fast")), keys)
+    vapid = push.Vapid(tmp_path / "vapid.pem", "mailto:owner@example.test")
+
+    async with aiohttp.ClientSession() as http:
+        task = asyncio.create_task(push.Pusher(http, store, vapid).notify("build", "green", "s1"))
+        try:
+            await asyncio.wait_for(asyncio.gather(slow_started.wait(), fast_arrived.wait()), 2)
+        finally:
+            release_slow.set()
+        delivered = await asyncio.wait_for(task, 2)
+    await server.close()
+    assert delivered == 2
+
+
 async def test_cron_deliveries_to_the_portal_platform_land_in_its_inbox(tmp_path, monkeypatch):
     home = tmp_path / "home"
     fake_constants = type(sys)("hermes_constants")

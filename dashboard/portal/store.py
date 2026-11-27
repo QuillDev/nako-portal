@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 LOGIN_TTL = 30 * 24 * 3600
@@ -68,6 +69,8 @@ CREATE TABLE IF NOT EXISTS inbox (
     text TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_logins_credential ON logins(credential_id);
+CREATE INDEX IF NOT EXISTS idx_chat_group_members_group ON chat_group_members(group_id);
 """
 
 
@@ -111,14 +114,29 @@ class Store:
         os.chmod(self.path.parent, 0o700)
         self.clock = clock
         self.lock = threading.Lock()
-        self.db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
+        self.db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None, timeout=10)
         os.chmod(self.path, 0o600)
         self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
+        self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
 
     def _run(self, sql, args=()):
         with self.lock:
             return self.db.execute(sql, args).fetchall()
+
+    @contextmanager
+    def _tx(self):
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
+                raise
+            else:
+                self.db.execute("COMMIT")
 
     # Passkeys
 
@@ -148,18 +166,21 @@ class Store:
         )
 
     def remove_credential(self, credential_id: bytes) -> None:
-        self._run("DELETE FROM credentials WHERE id=?", (credential_id,))
-        self._run("DELETE FROM logins WHERE credential_id=?", (credential_id,))
+        with self._tx():
+            self.db.execute("DELETE FROM credentials WHERE id=?", (credential_id,))
+            self.db.execute("DELETE FROM logins WHERE credential_id=?", (credential_id,))
 
     # Sign-in sessions
 
     def start_login(self, credential_id: bytes) -> str:
         token = secrets.token_urlsafe(32)
         now = self.clock()
-        self._run(
-            "INSERT INTO logins (token_hash, credential_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (_hash(token), credential_id, now, now + LOGIN_TTL),
-        )
+        with self._tx():
+            self.db.execute("DELETE FROM logins WHERE expires_at<?", (now,))
+            self.db.execute(
+                "INSERT INTO logins (token_hash, credential_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                (_hash(token), credential_id, now, now + LOGIN_TTL),
+            )
         return token
 
     def login(self, token: str | None):
@@ -186,9 +207,12 @@ class Store:
 
     def new_setup_link(self) -> str:
         token = secrets.token_urlsafe(32)
-        self._run(
-            "INSERT INTO setup_links (token_hash, expires_at) VALUES (?, ?)", (_hash(token), self.clock() + SETUP_TTL)
-        )
+        now = self.clock()
+        with self._tx():
+            self.db.execute("DELETE FROM setup_links WHERE expires_at<?", (now,))
+            self.db.execute(
+                "INSERT INTO setup_links (token_hash, expires_at) VALUES (?, ?)", (_hash(token), now + SETUP_TTL)
+            )
         return token
 
     def setup_link_valid(self, token: str | None) -> bool:
@@ -267,15 +291,20 @@ class Store:
         rows = self._run("SELECT id, name, color FROM chat_groups ORDER BY created_at")
         return [{"id": r[0], "name": r[1], "color": r[2]} for r in rows]
 
+    def _group_locked(self, ref):
+        ref = str(ref or "").strip()
+        row = self.db.execute(
+            "SELECT id, name, color FROM chat_groups WHERE id=? OR name=? COLLATE NOCASE ORDER BY id=? DESC LIMIT 1",
+            (ref, ref, ref),
+        ).fetchone()
+        if not row:
+            raise ValueError(f"No group called {ref!r}")
+        return {"id": row[0], "name": row[1], "color": row[2]}
+
     def group(self, ref):
         """A group by id, or by name ignoring case."""
-        ref = str(ref or "").strip()
-        rows = self._run(
-            "SELECT id, name, color FROM chat_groups WHERE id=? OR name=? COLLATE NOCASE ORDER BY id=? DESC LIMIT 1", (ref, ref, ref)
-        )
-        if not rows:
-            raise ValueError(f"No group called {ref!r}")
-        return {"id": rows[0][0], "name": rows[0][1], "color": rows[0][2]}
+        with self.lock:
+            return self._group_locked(ref)
 
     @staticmethod
     def _group_name(name):
@@ -292,7 +321,7 @@ class Store:
 
     def create_group(self, name, color=None):
         name = self._group_name(name)
-        with self.lock:
+        with self._tx():
             if self.db.execute("SELECT 1 FROM chat_groups WHERE name=? COLLATE NOCASE", (name,)).fetchone():
                 raise ValueError(f"There's already a group called {name!r}")
             if color is None:
@@ -306,22 +335,25 @@ class Store:
         return group
 
     def update_group(self, ref, name=None, color=None):
-        group = self.group(ref)
         if name is not None:
             name = self._group_name(name)
-            clash = self._run("SELECT 1 FROM chat_groups WHERE name=? COLLATE NOCASE AND id<>?", (name, group["id"]))
-            if clash:
-                raise ValueError(f"There's already a group called {name!r}")
-            group["name"] = name
         if color is not None:
-            group["color"] = self._group_color(color)
-        self._run("UPDATE chat_groups SET name=?, color=? WHERE id=?", (group["name"], group["color"], group["id"]))
+            color = self._group_color(color)
+        with self._tx():
+            group = self._group_locked(ref)
+            if name is not None:
+                if self.db.execute("SELECT 1 FROM chat_groups WHERE name=? COLLATE NOCASE AND id<>?", (name, group["id"])).fetchone():
+                    raise ValueError(f"There's already a group called {name!r}")
+                group["name"] = name
+            if color is not None:
+                group["color"] = color
+            self.db.execute("UPDATE chat_groups SET name=?, color=? WHERE id=?", (group["name"], group["color"], group["id"]))
         return group
 
     def delete_group(self, ref):
         """Remove a group. Its chats stay; they're just no longer grouped."""
-        group = self.group(ref)
-        with self.lock:
+        with self._tx():
+            group = self._group_locked(ref)
             self.db.execute("DELETE FROM chat_group_members WHERE group_id=?", (group["id"],))
             self.db.execute("DELETE FROM chat_groups WHERE id=?", (group["id"],))
         return group
@@ -331,15 +363,17 @@ class Store:
         if ref is None:
             self._run("DELETE FROM chat_group_members WHERE chat=?", (chat,))
             return None
-        group = self.group(ref)
-        self._run("INSERT OR REPLACE INTO chat_group_members (chat, group_id) VALUES (?, ?)", (chat, group["id"]))
+        with self._tx():
+            group = self._group_locked(ref)
+            self.db.execute("INSERT OR REPLACE INTO chat_group_members (chat, group_id) VALUES (?, ?)", (chat, group["id"]))
         return group
 
     def chat_groups(self):
         """chat -> its group."""
-        groups = {g["id"]: g for g in self.groups()}
-        rows = self._run("SELECT chat, group_id FROM chat_group_members")
-        return {chat: groups[gid] for chat, gid in rows if gid in groups}
+        rows = self._run(
+            "SELECT m.chat, g.id, g.name, g.color FROM chat_group_members m JOIN chat_groups g ON g.id=m.group_id"
+        )
+        return {chat: {"id": gid, "name": name, "color": color} for chat, gid, name, color in rows}
 
     # Push subscriptions
 

@@ -35,6 +35,7 @@ export class FloatingNako {
     this.closedAt = 0
     this.dragTimer = null
     this.spot = null
+    this.onDisplay = null
   }
 
   get isShown() {
@@ -63,6 +64,10 @@ export class FloatingNako {
 
   destroy() {
     this.#stopDrag()
+    if (this.onDisplay) {
+      for (const event of ["display-removed", "display-metrics-changed"]) screen.off(event, this.onDisplay)
+      this.onDisplay = null
+    }
     this.panel?.destroy()
     this.sticker?.destroy()
     this.panel = null
@@ -167,7 +172,10 @@ export class FloatingNako {
     this.sticker.loadFile(this.options.page)
     this.sticker.webContents.on("did-finish-load", () => this.#send())
     // Every display change (a screen unplugged, a resolution change) keeps her on a screen.
-    for (const event of ["display-removed", "display-metrics-changed"]) screen.on(event, () => this.sticker?.isVisible() && this.#place())
+    if (!this.onDisplay) {
+      this.onDisplay = () => this.sticker?.isVisible() && this.#place()
+      for (const event of ["display-removed", "display-metrics-changed"]) screen.on(event, this.onDisplay)
+    }
   }
 
   #buildPanel() {

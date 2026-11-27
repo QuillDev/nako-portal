@@ -45,6 +45,7 @@ export async function begin(origin) {
       return result
     },
     cancel() {
+      server.close()
       finish(null)
     },
   }

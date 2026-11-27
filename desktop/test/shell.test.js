@@ -82,6 +82,13 @@ test("an abandoned sign-in gives up", async () => {
   assert.equal(await handoff.wait(100), null)
 })
 
+test("cancelling a sign-in closes its loopback listener even without wait()", async () => {
+  const handoff = await begin(ServerOrigin.parse("https://portal.example.com"))
+  const port = Number(new URLSearchParams(new URL(handoff.browserUrl).hash.replace("#/desktop?", "")).get("port"))
+  handoff.cancel()
+  await assert.rejects(() => get(port, "/callback"))
+})
+
 /** A minisign key pair in the format the release script's signer writes. */
 function minisign() {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519")
