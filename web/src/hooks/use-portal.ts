@@ -10,7 +10,7 @@ import { reloadProviders } from "@/lib/providers"
 import { reloadSecrets } from "@/lib/secrets"
 import { cachedLive, caughtUp, isCurrentRequest, reconcileSession, sentMessage } from "@/lib/portal-state"
 import { rememberTitles } from "@/lib/session-refs"
-import { ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type Live, type Me, type OpenSession, type Outside, type SessionRow } from "@/lib/types"
+import { type Backends, ChatGroup, type Command, type CommandNote, type Frame, type GroupColor, type Live, type Me, type OpenSession, type Outside, type SessionRow } from "@/lib/types"
 
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
@@ -95,6 +95,10 @@ export function usePortal() {
   const generation = useRef({ request: 0, turn: 0 })
   const [connected, setConnected] = useState(true)
   const [hermes, setHermes] = useState<import("@/lib/types").HermesBuild | null>(null)
+  // Which agent the portal talks to (Python, Bun) and which are connected.
+  const [backend, setBackend] = useState<Backends | null>(null)
+  const backendRef = useRef(backend)
+  backendRef.current = backend
   // Bumped when a machine in the mesh joins, leaves or starts work; Settings rereads the list.
   const [machinesSeen, setMachinesSeen] = useState(0)
   // Whether this page's socket to the portal is up; while it's down nothing live arrives.
@@ -233,6 +237,17 @@ export function usePortal() {
           loadSessions()
           void reloadMcp()
           return
+        case "backend.changed": {
+          const moved = backendRef.current?.active !== frame.active
+          setBackend({ active: frame.active, backends: frame.backends })
+          if (!moved) return
+          // Another agent's chats, models and tools: the server follows with sessions.changed.
+          cacheRef.current.clear()
+          void reloadMcp()
+          void reloadProviders()
+          void reloadSecrets()
+          return
+        }
       }
       const open = currentRef.current
       if (!open || frame.session !== open.session) return
@@ -337,6 +352,7 @@ export function usePortal() {
     try { if (who.signed_in) sessionStorage.setItem("portal-seen-session", "1"); else sessionStorage.removeItem("portal-seen-session") } catch { /* Storage can be unavailable. */ }
     setMe(who)
     if (!who.signed_in) return
+    if (who.backend) setBackend(who.backend)
     connect()
     await loadSessions()
     api<Command[]>("/api/commands").then(setCommands, () => {})
@@ -495,6 +511,14 @@ export function usePortal() {
     setMe(m => (m ? { ...m, name: saved.name } : m))
   }, [])
 
+  const switchBackend = useCallback(async (id: string) => {
+    try {
+      setBackend(await api<Backends>("/api/backend", { method: "POST", body: { backend: id } }))
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [])
+
   const rename = useCallback(
     (session: string, title: string) =>
       act(async () => {
@@ -604,7 +628,7 @@ export function usePortal() {
     }
   }, [current, live])
 
-  return { me, setName, boot, refresh, sessions, sessionsState, outside, route, current, live, connected, hermes, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
+  return { me, setName, boot, refresh, sessions, sessionsState, outside, route, current, live, connected, hermes, backend, switchBackend, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

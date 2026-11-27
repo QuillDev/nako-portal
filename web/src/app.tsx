@@ -128,6 +128,8 @@ function AppContent() {
             connected={portal.connected}
             linked={portal.linked}
             hermes={portal.hermes}
+            backend={portal.backend}
+            switchBackend={portal.switchBackend}
             me={portal.me}
             currentSession={portal.current?.session}
             currentTitle={portal.current?.title}

@@ -1,6 +1,9 @@
 import { d, type Infer } from "@/lib/decode"
 
-export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; origin?: string; name?: string; environments?: boolean; machine_load?: boolean }
+export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; origin?: string; name?: string; environments?: boolean; machine_load?: boolean; backend?: Backends }
+
+// The agents that can dial into the portal (`/api/backend`) and the one it talks to now.
+export type Backends = { active: string; backends: { id: string; connected: boolean; version?: string; build?: string }[] }
 
 // A named, colored set of chats the sidebar shows together (`/api/groups`); a chat is in one at most.
 export const GROUP_COLORS = ["blue", "green", "yellow", "orange", "red", "teal", "purple", "grey"] as const
@@ -154,6 +157,7 @@ export type Frame =
   | { kind: "request.closed"; session: string; id: string }
   | { kind: "alert"; session: string | null; title: string; body: string }
   | { kind: "profile.changed"; profile: string }
+  | ({ kind: "backend.changed" } & Backends)
   | ({ kind: "outside" } & Outside)
   | { kind: "machines.changed" }
   | { kind: "secrets.changed" }
