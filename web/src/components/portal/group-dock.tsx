@@ -342,7 +342,7 @@ function AddonListDrawer({
   return (
     <div
       className={cn(
-        "absolute inset-x-0 bottom-0 z-10 overflow-hidden rounded-t-[22px] border border-b-border/60 border-x-input border-t-input bg-card transition-[border-color,box-shadow] duration-150 group-focus-within/dock:border-x-foreground/40 group-focus-within/dock:border-t-foreground/40",
+        "absolute inset-x-0 bottom-0 z-10 overflow-hidden rounded-t-[22px] border border-b-border/60 border-x-input border-t-input bg-card transition-shadow duration-150",
         expanded && "shadow-[0_-10px_28px_rgb(0_0_0/0.09)] dark:shadow-[0_-12px_32px_rgb(0_0_0/0.48)]",
       )}
       data-group-dock-drawer={expanded ? "list" : "addon"}
@@ -489,7 +489,7 @@ function StageThreeFusedChat({
     >
       <div className="relative h-9">
         <div
-          className="absolute inset-x-0 bottom-0 z-10 overflow-hidden rounded-t-[22px] border border-b-border/60 border-x-foreground/25 border-t-foreground/25 bg-card shadow-[0_-10px_28px_rgb(0_0_0/0.11)] transition-[border-color,box-shadow] duration-150 group-focus-within/dock:border-x-foreground/40 group-focus-within/dock:border-t-foreground/40 dark:shadow-[0_-12px_32px_rgb(0_0_0/0.52)]"
+          className="absolute inset-x-0 bottom-0 z-10 overflow-hidden rounded-t-[22px] border border-b-border/60 border-x-foreground/25 border-t-foreground/25 bg-card shadow-[0_-10px_28px_rgb(0_0_0/0.11)] dark:shadow-[0_-12px_32px_rgb(0_0_0/0.52)]"
           data-group-mini-shell
         >
           <div className="flex h-[34px] items-center gap-1.5 border-b border-border/60 bg-muted/35 px-2.5">
@@ -560,7 +560,7 @@ function StageThreeFusedChat({
       </div>
 
       <div
-        className="rounded-b-[22px] border border-t-0 border-foreground/25 bg-card shadow-xs transition-colors duration-150 group-focus-within/dock:border-foreground/40"
+        className="rounded-b-[22px] border border-t-0 border-foreground/25 bg-card shadow-xs"
         data-group-dock-composer
       >
         <Composer
@@ -711,7 +711,7 @@ export const GroupComposerDock = memo(function GroupComposerDock({
       </div>
 
       <div
-        className="rounded-b-[22px] border border-t-0 border-input bg-card shadow-xs transition-colors duration-150 group-focus-within/dock:border-foreground/40"
+        className="rounded-b-[22px] border border-t-0 border-input bg-card shadow-xs"
         data-group-dock-composer
       >
         <Composer
