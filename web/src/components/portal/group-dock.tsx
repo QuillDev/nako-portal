@@ -8,7 +8,7 @@ import {
   GitPullRequestIcon,
   GlobeIcon,
 } from "lucide-react"
-import { memo, type ReactNode, useCallback, useEffect, useState } from "react"
+import { memo, useCallback, useEffect, useState } from "react"
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation"
 import { type Attachment, navigate, type Portal } from "@/hooks/use-portal"
 import {
@@ -63,58 +63,33 @@ export const GroupBackChip = memo(function GroupBackChip({
   )
 })
 
-function summarizeDockLabel(threads: GroupThread[], archivedCount: number) {
-  const total = threads.length
-  if (total === 0) return archivedCount > 0 ? `${archivedCount} archived` : "0 threads"
+function summarizeActiveHint(threads: GroupThread[], archivedCount: number) {
+  if (threads.length === 0) return archivedCount > 0 ? `${archivedCount} archived` : ""
   const needsYou = threads.filter(t => t.status === "needs_you").length
   const working = threads.filter(t => t.status === "working").length
   const waiting = threads.filter(t => t.status === "waiting").length
-  const idle = total - needsYou - working - waiting
   if (needsYou > 0 && working > 0) return `${needsYou} needs you · ${working} working`
-  if (needsYou > 0) return `${needsYou} needs you${total > needsYou ? ` · ${total - needsYou} idle` : ""}`
-  if (working > 0) return `${working} working${idle > 0 ? ` · ${idle} idle` : ""}`
-  if (waiting > 0) return `${waiting} waiting${idle > 0 ? ` · ${idle} idle` : ""}`
-  return `${total} ${total === 1 ? "thread" : "threads"}`
+  if (needsYou > 0) return `${needsYou} needs you`
+  if (working > 0) return `${working} working`
+  if (waiting > 0) return `${waiting} waiting`
+  return ""
 }
 
-function StageOneDotChip({
-  threads,
-  archivedCount,
-  onExpand,
-}: {
-  threads: GroupThread[]
-  archivedCount: number
-  onExpand: () => void
-}) {
+function StatusDots({ threads }: { threads: GroupThread[] }) {
   const visibleDots = threads.slice(0, 6)
   const overflow = Math.max(0, threads.length - visibleDots.length)
-  const label = summarizeDockLabel(threads, archivedCount)
+  if (visibleDots.length === 0) return null
   return (
-    <div className="mx-auto flex w-full max-w-3xl items-center px-3 pb-1.5">
-      <button
-        aria-expanded={false}
-        className="inline-flex h-7 max-w-full cursor-pointer items-center gap-2 rounded-full border border-border/75 bg-card/90 px-2.5 text-xs text-muted-foreground shadow-2xs transition-colors hover:border-border hover:bg-card hover:text-foreground"
-        data-group-dot-chip
-        onClick={onExpand}
-        title="Expand group threads"
-        type="button"
-      >
-        {visibleDots.length > 0 && (
-          <span className="inline-flex shrink-0 items-center gap-1">
-            {visibleDots.map(thread => (
-              <span
-                className={cn("size-1.5 rounded-full", GROUP_STATUS_DOT[thread.status])}
-                key={thread.id}
-                title={`${thread.title} · ${GROUP_STATUS_LABEL[thread.status]}`}
-              />
-            ))}
-            {overflow > 0 && <span className="text-[10px] text-muted-foreground tabular-nums">+{overflow}</span>}
-          </span>
-        )}
-        <span className="truncate font-medium tabular-nums">{label}</span>
-        <ChevronUpIcon className="size-3.5 shrink-0 opacity-65" />
-      </button>
-    </div>
+    <span className="inline-flex shrink-0 items-center gap-1">
+      {visibleDots.map(thread => (
+        <span
+          className={cn("size-1.5 rounded-full", GROUP_STATUS_DOT[thread.status])}
+          key={thread.id}
+          title={`${thread.title} · ${GROUP_STATUS_LABEL[thread.status]}`}
+        />
+      ))}
+      {overflow > 0 && <span className="text-[10px] text-muted-foreground tabular-nums">+{overflow}</span>}
+    </span>
   )
 }
 
@@ -214,16 +189,114 @@ function ThreadListRow({
   )
 }
 
-function StageTwoThreadList({
+function AddonDrawerHeader({
+  group,
+  session,
+  leadSession,
+  expanded,
+  activeThreads,
+  archivedCount,
+  archivableCount,
+  showArchived,
+  archiveBusy,
+  onToggle,
+  onSetLead,
+  onToggleArchived,
+  onPreviewArchive,
+}: {
+  group: ChatGroup
+  session: string
+  leadSession: string | null
+  expanded: boolean
+  activeThreads: GroupThread[]
+  archivedCount: number
+  archivableCount: number
+  showArchived: boolean
+  archiveBusy: boolean
+  onToggle: () => void
+  onSetLead: (groupId: string, session: string | null) => void
+  onToggleArchived: () => void
+  onPreviewArchive: () => void
+}) {
+  const hint = summarizeActiveHint(activeThreads, archivedCount)
+  return (
+    <div
+      className={cn(
+        "flex h-[34px] items-center justify-between gap-2 bg-muted/25 px-3.5 transition-colors",
+        !expanded && "hover:bg-muted/45",
+      )}
+    >
+      <button
+        aria-expanded={expanded}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+        data-group-addon-toggle
+        onClick={onToggle}
+        title={expanded ? "Collapse group threads (Esc)" : "Expand group threads"}
+        type="button"
+      >
+        <GroupSwatch color={group.color} />
+        <span className="truncate text-xs font-medium text-foreground">{group.name}</span>
+        <span className="shrink-0 text-xs text-muted-foreground tabular-nums">· {activeThreads.length}</span>
+        <StatusDots threads={activeThreads} />
+        {hint && <span className="hidden truncate text-[11px] text-muted-foreground sm:inline">· {hint}</span>}
+      </button>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {expanded && !leadSession && (
+          <button
+            className="cursor-pointer rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => onSetLead(group.id, session)}
+            type="button"
+          >
+            Set as main
+          </button>
+        )}
+        {expanded && archivedCount > 0 && (
+          <button
+            className="cursor-pointer rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={onToggleArchived}
+            type="button"
+          >
+            {showArchived ? "Hide archived" : `Archived (${archivedCount})`}
+          </button>
+        )}
+        {expanded && archivableCount > 0 && (
+          <button
+            className="inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            disabled={archiveBusy}
+            onClick={onPreviewArchive}
+            type="button"
+          >
+            <ArchiveIcon className="size-3" />
+            <span className="hidden sm:inline">Archive idle</span>
+          </button>
+        )}
+        <button
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse thread list" : "Expand thread list"}
+          className="grid size-6 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          onClick={onToggle}
+          title={expanded ? "Collapse (Esc)" : "Expand group threads"}
+          type="button"
+        >
+          <ChevronUpIcon className={cn("size-3.5 transition-transform duration-150", expanded && "rotate-180")} />
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function AddonListDrawer({
   group,
   session,
   leadSession,
   now,
+  expanded,
   activeThreads,
   archivedThreads,
   archivableCount,
+  onToggle,
   onOpenMini,
-  onCollapse,
   onReload,
   onSetLead,
   prefetch,
@@ -232,11 +305,12 @@ function StageTwoThreadList({
   session: string
   leadSession: string | null
   now: number
+  expanded: boolean
   activeThreads: GroupThread[]
   archivedThreads: GroupThread[]
   archivableCount: number
+  onToggle: () => void
   onOpenMini: (thread: GroupThread) => void
-  onCollapse: () => void
   onReload: () => void
   onSetLead: (groupId: string, session: string | null) => void
   prefetch: (session: string) => void
@@ -266,81 +340,65 @@ function StageTwoThreadList({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-3 pb-2" data-group-dock-list>
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <GroupSwatch color={group.color} />
-            <span className="truncate text-xs font-medium text-foreground">{group.name}</span>
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">· {activeThreads.length}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {!leadSession && (
-              <button
-                className="cursor-pointer rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={() => onSetLead(group.id, session)}
-                type="button"
-              >
-                Set as main
-              </button>
-            )}
-            {archivedThreads.length > 0 && (
-              <button
-                className="cursor-pointer rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                onClick={() => setShowArchived(s => !s)}
-                type="button"
-              >
-                {showArchived ? "Hide archived" : `Archived (${archivedThreads.length})`}
-              </button>
-            )}
-            {archivableCount > 0 && (
-              <button
-                className="inline-flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                disabled={archiveBusy}
-                onClick={() => void previewArchive()}
-                type="button"
-              >
-                <ArchiveIcon className="size-3" />
-                <span className="hidden sm:inline">Archive idle</span>
-              </button>
-            )}
-            <button
-              aria-label="Collapse thread list"
-              className="grid size-6 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              onClick={onCollapse}
-              title="Collapse (Esc)"
-              type="button"
-            >
-              <ChevronDownIcon className="size-3.5" />
-            </button>
-          </div>
-        </div>
+    <div
+      className={cn(
+        "absolute inset-x-0 bottom-0 z-10 overflow-hidden rounded-t-[22px] border border-b-border/60 border-x-input border-t-input bg-card transition-[border-color,box-shadow] duration-150 group-focus-within/dock:border-x-foreground/40 group-focus-within/dock:border-t-foreground/40",
+        expanded && "shadow-[0_-10px_28px_rgb(0_0_0/0.09)] dark:shadow-[0_-12px_32px_rgb(0_0_0/0.48)]",
+      )}
+      data-group-dock-drawer={expanded ? "list" : "addon"}
+    >
+      <AddonDrawerHeader
+        activeThreads={activeThreads}
+        archivableCount={archivableCount}
+        archiveBusy={archiveBusy}
+        archivedCount={archivedThreads.length}
+        expanded={expanded}
+        group={group}
+        leadSession={leadSession}
+        onPreviewArchive={() => void previewArchive()}
+        onSetLead={onSetLead}
+        onToggle={onToggle}
+        onToggleArchived={() => setShowArchived(s => !s)}
+        session={session}
+        showArchived={showArchived}
+      />
 
-        <div className="max-h-[min(240px,32dvh)] overflow-y-auto divide-y divide-border/50">
-          {activeThreads.map(thread => (
-            <ThreadListRow key={thread.id} now={now} onOpenMini={onOpenMini} prefetch={prefetch} thread={thread} />
-          ))}
-          {activeThreads.length === 0 && (
-            <p className="px-3 py-4 text-center text-xs text-muted-foreground">No active threads in this group</p>
-          )}
-          {showArchived && archivedThreads.length > 0 && (
-            <>
-              <div className="bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">Archived &amp; background</div>
-              {archivedThreads.map(thread => (
-                <ThreadListRow key={thread.id} now={now} onOpenMini={onOpenMini} prefetch={prefetch} thread={thread} />
-              ))}
-            </>
-          )}
-        </div>
-
-        {archivePreview && (
-          <ArchivePreviewStrip
-            busy={archiveBusy}
-            onClose={() => setArchivePreview(null)}
-            onConfirm={() => void confirmArchive()}
-            result={archivePreview}
-          />
+      <div
+        aria-hidden={!expanded}
+        className={cn(
+          "grid transition-[grid-template-rows] duration-150 ease-out",
+          expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
         )}
+        data-group-dock-list={expanded ? "open" : "closed"}
+        inert={!expanded}
+      >
+        <div className={cn("overflow-hidden", expanded && "border-t border-border/60")}>
+          <div className="max-h-[min(240px,32dvh)] overflow-y-auto divide-y divide-border/50">
+            {activeThreads.map(thread => (
+              <ThreadListRow key={thread.id} now={now} onOpenMini={onOpenMini} prefetch={prefetch} thread={thread} />
+            ))}
+            {activeThreads.length === 0 && (
+              <p className="px-3 py-4 text-center text-xs text-muted-foreground">No active threads in this group</p>
+            )}
+            {showArchived && archivedThreads.length > 0 && (
+              <>
+                <div className="bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">Archived &amp; background</div>
+                {archivedThreads.map(thread => (
+                  <ThreadListRow key={thread.id} now={now} onOpenMini={onOpenMini} prefetch={prefetch} thread={thread} />
+                ))}
+              </>
+            )}
+          </div>
+
+          {archivePreview && (
+            <ArchivePreviewStrip
+              busy={archiveBusy}
+              onClose={() => setArchivePreview(null)}
+              onConfirm={() => void confirmArchive()}
+              result={archivePreview}
+            />
+          )}
+        </div>
       </div>
     </div>
   )
@@ -378,8 +436,8 @@ function MiniThreadBadge({ thread }: { thread: GroupThread }) {
   return null
 }
 
-// Stage 3: unified single container fusing the selected thread's real Transcript (compact mode)
-// directly onto Portal's real bottom composer (zero duplicate inputs, zero duplicate renderers).
+// Stage 3: same bottom-anchored outer shell with the mini transcript rising upward from
+// the top edge of the composer, while the composer stays in-flow at the exact same position.
 function StageThreeFusedChat({
   group,
   thread,
@@ -393,7 +451,7 @@ function StageThreeFusedChat({
   group: ChatGroup
   thread: GroupThread
   readOnly: boolean
-  composer: Pick<Portal, "command" | "commands" | "stop" | "setError">
+  composer: Pick<Portal, "command" | "commands" | "send" | "stop" | "setError">
   onReload: () => void
   onBack: () => void
   onCollapse: () => void
@@ -423,92 +481,102 @@ function StageThreeFusedChat({
   )
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" data-group-mini-chat>
+    <div
+      className="group/dock relative z-20 mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+      data-group-dock
+      data-group-dock-stage="chat"
+      data-group-mini-chat
+    >
+      <div className="relative h-9">
+        <div
+          className="absolute inset-x-0 bottom-0 z-10 overflow-hidden rounded-t-[22px] border border-b-border/60 border-x-foreground/25 border-t-foreground/25 bg-card shadow-[0_-10px_28px_rgb(0_0_0/0.11)] transition-[border-color,box-shadow] duration-150 group-focus-within/dock:border-x-foreground/40 group-focus-within/dock:border-t-foreground/40 dark:shadow-[0_-12px_32px_rgb(0_0_0/0.52)]"
+          data-group-mini-shell
+        >
+          <div className="flex h-[34px] items-center gap-1.5 border-b border-border/60 bg-muted/35 px-2.5">
+            <button
+              aria-label="Back to thread list"
+              className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              data-mini-back
+              onClick={onBack}
+              title="Back to list (Esc)"
+              type="button"
+            >
+              <ArrowLeftIcon className="size-3.5" />
+            </button>
+            <span
+              className={cn("size-1.5 shrink-0 rounded-full", GROUP_STATUS_DOT[thread.status])}
+              title={GROUP_STATUS_LABEL[thread.status]}
+            />
+            <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{thread.title}</span>
+            <MiniThreadBadge thread={thread} />
+            <button
+              aria-label="Open full chat"
+              className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => navigate(`#/c/${thread.id}`)}
+              onPointerEnter={() => prefetch(thread.id)}
+              title="Open full chat"
+              type="button"
+            >
+              <ArrowUpRightIcon className="size-3.5" />
+            </button>
+            <button
+              aria-label="Collapse mini chat"
+              className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={onCollapse}
+              title="Collapse"
+              type="button"
+            >
+              <ChevronDownIcon className="size-3.5" />
+            </button>
+          </div>
+
+          <Conversation className="h-[min(280px,36dvh)]" initial="instant" key={`${thread.id}:${loading}`}>
+            <ConversationContent className="gap-3.5 px-3.5 py-2.5" scrollClassName="overflow-y-auto">
+              {loading && (
+                <div className="space-y-2 py-2">
+                  <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
+                  <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
+                </div>
+              )}
+              {!loading && error && <p className="text-xs text-destructive">{error}</p>}
+              {!loading && !error && messages.length === 0 && (
+                <p className="py-3 text-center text-xs text-muted-foreground">No messages yet</p>
+              )}
+              {!loading && !error && messages.length > 0 && (
+                <Transcript
+                  compact
+                  live={live}
+                  messages={messages}
+                  notes={notes}
+                  quiet
+                  running={running}
+                  session={thread.id}
+                />
+              )}
+            </ConversationContent>
+            <ConversationScrollButton />
+          </Conversation>
+        </div>
+      </div>
+
       <div
-        className="overflow-hidden rounded-[22px] border border-foreground/20 bg-card shadow-[0_4px_18px_rgb(0_0_0/0.07)] transition-colors focus-within:border-foreground/35 dark:shadow-[0_10px_32px_rgb(0_0_0/0.45)]"
-        data-group-mini-shell
+        className="rounded-b-[22px] border border-t-0 border-foreground/25 bg-card shadow-xs transition-colors duration-150 group-focus-within/dock:border-foreground/40"
+        data-group-dock-composer
       >
-        <div className="flex items-center gap-1.5 border-b border-border/60 bg-muted/35 px-2.5 py-2">
-          <button
-            aria-label="Back to thread list"
-            className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            data-mini-back
-            onClick={onBack}
-            title="Back to list (Esc)"
-            type="button"
-          >
-            <ArrowLeftIcon className="size-3.5" />
-          </button>
-          <span
-            className={cn("size-1.5 shrink-0 rounded-full", GROUP_STATUS_DOT[thread.status])}
-            title={GROUP_STATUS_LABEL[thread.status]}
-          />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{thread.title}</span>
-          <MiniThreadBadge thread={thread} />
-          <button
-            aria-label="Open full chat"
-            className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={() => navigate(`#/c/${thread.id}`)}
-            onPointerEnter={() => prefetch(thread.id)}
-            title="Open full chat"
-            type="button"
-          >
-            <ArrowUpRightIcon className="size-3.5" />
-          </button>
-          <button
-            aria-label="Collapse mini chat"
-            className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={onCollapse}
-            title="Collapse"
-            type="button"
-          >
-            <ChevronDownIcon className="size-3.5" />
-          </button>
-        </div>
-
-        <Conversation className="h-[min(280px,36dvh)]" initial="instant" key={`${thread.id}:${loading}`}>
-          <ConversationContent className="gap-3.5 px-3.5 py-2.5" scrollClassName="overflow-y-auto">
-            {loading && (
-              <div className="space-y-2 py-2">
-                <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
-                <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />
-              </div>
-            )}
-            {!loading && error && <p className="text-xs text-destructive">{error}</p>}
-            {!loading && !error && messages.length === 0 && (
-              <p className="py-3 text-center text-xs text-muted-foreground">No messages yet</p>
-            )}
-            {!loading && !error && messages.length > 0 && (
-              <Transcript
-                compact
-                live={live}
-                messages={messages}
-                notes={notes}
-                quiet
-                running={running}
-                session={thread.id}
-              />
-            )}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
-
-        <div className="border-t border-border/60">
-          <Composer
-            attached
-            attachedTarget={{ title: thread.title, color: group.color }}
-            command={composer.command}
-            commands={composer.commands}
-            draftKey={`draft:${thread.id}`}
-            inChat
-            placeholder={`Message ${thread.title}…`}
-            running={thread.status === "working" || running}
-            send={sendToMini}
-            session={thread.id}
-            setError={composer.setError}
-            stop={composer.stop}
-          />
-        </div>
+        <Composer
+          attached
+          attachedTarget={{ title: thread.title, color: group.color }}
+          command={composer.command}
+          commands={composer.commands}
+          draftKey={`draft:${thread.id}`}
+          inChat
+          placeholder={`Message ${thread.title}…`}
+          running={thread.status === "working" || running}
+          send={sendToMini}
+          session={thread.id}
+          setError={composer.setError}
+          stop={composer.stop}
+        />
       </div>
     </div>
   )
@@ -527,35 +595,41 @@ function collectPeerThreads(data: GroupOverviewData | null, session: string) {
   return { active, archived, archivableCount }
 }
 
-// 3-stage Cursor-inspired dock wrapping the composer slot:
-// Stage 1: compact dot chip above normal composer ->
-// Stage 2: composer-width scrollable thread list above normal composer ->
-// Stage 3: mini scrollable chat fused directly onto the single real bottom composer.
+// 3-stage top-addon dock attached directly onto the composer:
+// Stage 1: slim composer-width addon bar fused to the top edge of the composer ->
+// Stage 2: drawer smoothly opens upward from that bar into a scrollable thread list ->
+// Stage 3: mini scrollable chat rises upward in the same frame while the bottom composer targets it.
 export const GroupComposerDock = memo(function GroupComposerDock({
   group,
   session,
+  draftKey,
+  running,
   data,
   composer,
   onReload,
   onSetLead,
   prefetch,
-  children,
 }: {
   group: ChatGroup
   session: string
+  draftKey: string
+  running: boolean
   data: GroupOverviewData | null
-  composer: Pick<Portal, "command" | "commands" | "stop" | "setError">
+  composer: Pick<Portal, "command" | "commands" | "send" | "stop" | "setError">
   onReload: () => void
   onSetLead: (groupId: string, session: string | null) => void
   prefetch: (session: string) => void
-  children: ReactNode
 }) {
-  const [stage, setStage] = useState<"chip" | "list" | "chat">("chip")
+  const [stage, setStage] = useState<"addon" | "list" | "chat">("addon")
   const [miniId, setMiniId] = useState<string | null>(null)
 
   const leadSession = data?.lead_session ?? group.lead_session ?? null
   const peers = collectPeerThreads(data, session)
   const miniThread = miniId ? [...peers.active, ...peers.archived].find(t => t.id === miniId) ?? null : null
+
+  const toggleList = useCallback(() => {
+    setStage(prev => (prev === "list" ? "addon" : "list"))
+  }, [])
 
   const openMini = useCallback((thread: GroupThread) => {
     setMiniId(thread.id)
@@ -567,21 +641,35 @@ export const GroupComposerDock = memo(function GroupComposerDock({
   }, [])
 
   const collapse = useCallback(() => {
-    setStage("chip")
+    setStage("addon")
   }, [])
 
   useEffect(() => {
-    if (stage === "chip") return
+    if (stage === "addon") return
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return
+      if (e.key !== "Escape" || e.defaultPrevented) return
       e.preventDefault()
-      setStage(prev => (prev === "chat" ? "list" : "chip"))
+      setStage(prev => (prev === "chat" ? "list" : "addon"))
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [stage])
 
-  if (!data || (peers.active.length === 0 && peers.archived.length === 0)) return <>{children}</>
+  if (!data || (peers.active.length === 0 && peers.archived.length === 0)) {
+    return (
+      <Composer
+        command={composer.command}
+        commands={composer.commands}
+        draftKey={draftKey}
+        inChat
+        running={running}
+        send={composer.send}
+        session={session}
+        setError={composer.setError}
+        stop={composer.stop}
+      />
+    )
+  }
 
   if (stage === "chat" && miniThread) {
     return (
@@ -599,30 +687,46 @@ export const GroupComposerDock = memo(function GroupComposerDock({
   }
 
   return (
-    <>
-      {stage === "list" ? (
-        <StageTwoThreadList
+    <div
+      className="group/dock relative z-20 mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+      data-group-dock
+      data-group-dock-stage={stage}
+    >
+      <div className="relative h-9">
+        <AddonListDrawer
           activeThreads={peers.active}
           archivableCount={peers.archivableCount}
           archivedThreads={peers.archived}
+          expanded={stage === "list"}
           group={group}
           leadSession={leadSession}
           now={data.now}
-          onCollapse={collapse}
           onOpenMini={openMini}
           onReload={onReload}
           onSetLead={onSetLead}
+          onToggle={toggleList}
           prefetch={prefetch}
           session={session}
         />
-      ) : (
-        <StageOneDotChip
-          archivedCount={peers.archived.length}
-          onExpand={() => setStage("list")}
-          threads={peers.active}
+      </div>
+
+      <div
+        className="rounded-b-[22px] border border-t-0 border-input bg-card shadow-xs transition-colors duration-150 group-focus-within/dock:border-foreground/40"
+        data-group-dock-composer
+      >
+        <Composer
+          attached
+          command={composer.command}
+          commands={composer.commands}
+          draftKey={draftKey}
+          inChat
+          running={running}
+          send={composer.send}
+          session={session}
+          setError={composer.setError}
+          stop={composer.stop}
         />
-      )}
-      {children}
-    </>
+      </div>
+    </div>
   )
 })
