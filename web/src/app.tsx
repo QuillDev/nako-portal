@@ -5,6 +5,7 @@ import { Gate } from "@/components/portal/gate"
 import { MovedOrigin } from "@/components/portal/moved-origin"
 import { DesktopLink } from "@/components/portal/desktop-link"
 import { Elsewhere } from "@/components/portal/elsewhere"
+import { PrsView } from "@/components/portal/prs-view"
 import { Chat } from "@/components/portal/chat"
 import { ChatSearch } from "@/components/portal/chat-search"
 import { DrawerLayout } from "@/components/portal/drawer"
@@ -137,7 +138,7 @@ function AppContent() {
           />
         }
       >
-        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings page={portal.route.page} portal={portal} /> : portal.route.view === "outside" ? <Elsewhere portal={portal} /> : <Chat portal={portal} />}</main>
+        <main className="relative flex min-w-0 flex-1 flex-col">{portal.route.view === "settings" ? <Settings page={portal.route.page} portal={portal} /> : portal.route.view === "outside" ? <Elsewhere portal={portal} /> : portal.route.view === "reviews" ? <PrsView portal={portal} /> : <Chat portal={portal} />}</main>
       </DrawerLayout>
       <ChatSearch sessions={portal.sessions} unarchive={portal.unarchive} />
 

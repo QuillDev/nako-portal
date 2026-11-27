@@ -1562,6 +1562,18 @@ def _groups_tools():
     return sys.modules[name]
 
 
+def _prs_tools():
+    """The PR-linking tools (prs_tools.py), loaded once under a private name."""
+    name = "nako_portal_prs_tools"
+    if name not in sys.modules:
+        loaded = _load_sibling(name, "prs_tools.py")
+        mesh = _mesh_tools()
+        loaded.CALL = lambda method, path, body=None: mesh._call(
+            method, path, body, missing="the portal server isn't running here, so PR links can't be changed"
+        )
+    return sys.modules[name]
+
+
 def _adapter(config):
     return _adapter_module._adapter(config, _adapter_module.AdapterRuntime(
         backend=HermesBackend,
@@ -1597,6 +1609,8 @@ def register(ctx):
         tools.register(ctx)
         # Chat groups in the sidebar, which the agent can make and fill.
         _groups_tools().register(ctx)
+        # GitHub PR links on chats, so headers show live PR state.
+        _prs_tools().register(ctx)
     if hasattr(ctx, "register_cli_command"):
         tools.register_cli(ctx)
     # How the mesh works, for any agent on any machine in it (`nako-portal:mesh`).

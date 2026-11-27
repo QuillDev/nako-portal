@@ -36,6 +36,7 @@ from .local_api import MAX_BODY, SESSION_ID, LocalAPI
 from .local_api import TOOL_RESULT_CHARS as TOOL_RESULT_CHARS
 from .media import media_paths, shown_files
 from .mesh import parse as remote
+from .prs import parse_pr_ref, review_chat_prompt
 from .restart_panel import RestartPanel
 
 log = logging.getLogger("hermes.portal")
@@ -96,6 +97,7 @@ class Portal(AuthRoutes, LocalAPI):
         machine_load=None,
         inspector=None,
         read_only=False,
+        prs=None,
         clock=time.time,
     ):
         self.vapid = vapid
@@ -111,6 +113,8 @@ class Portal(AuthRoutes, LocalAPI):
         self.inspector = inspector
         # Preview mode: never dispatch live turns; spawn/broadcast return dry-run previews.
         self.read_only = bool(read_only)
+        # GitHub PR tracker (`prs.PRService`), else None.
+        self.prs = prs
         # Desktop sign-ins the browser approved, waiting for the app: code -> challenge, passkey, expiry.
         self.handoffs = {}
         parsed = urlparse(origin)
@@ -216,6 +220,9 @@ class Portal(AuthRoutes, LocalAPI):
         r.add_post("/api/model-picks/favorites", self.toggle_model_favorite)
         r.add_get("/api/environments", self._auth(self.list_environments))
         r.add_post("/api/environments/{name}/stop", self._auth(self.stop_environment))
+        r.add_get("/api/prs", self._auth(self.list_prs))
+        r.add_get("/api/sessions/{session}/prs", self._auth(self.session_prs))
+        r.add_post("/api/prs/review-chat", self._auth(self.start_review_chat))
         r.add_get("/api/machine-load", self._auth(self.read_machine_load))
         r.add_post("/api/register/options", self.register_options)
         r.add_post("/api/register/finish", self.register_finish)
@@ -414,6 +421,102 @@ class Portal(AuthRoutes, LocalAPI):
             return web.json_response({"error": str(error)}, status=502)
         log.info("portal: stopped environment %s", name)
         return web.json_response({"stopped": name})
+
+    async def list_prs(self, request):
+        """GitHub PRs, stacks, and owning chats; 404 when PR tracking is disabled."""
+        if self.prs is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "PR tracking is not enabled"}), content_type="application/json")
+        refresh = request.query.get("refresh") in ("1", "true", "yes")
+        return web.json_response(await self.prs.snapshot(refresh=refresh))
+
+    async def session_prs(self, request):
+        """PRs owned by or attached to one chat session."""
+        if self.prs is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "PR tracking is not enabled"}), content_type="application/json")
+        session = self._session(request)
+        refresh = request.query.get("refresh") in ("1", "true", "yes")
+        return web.json_response({"session": session, "prs": await self.prs.for_session(session, refresh=refresh)})
+
+    async def start_review_chat(self, request):
+        """Start a review chat for a PR (or return a preview plan in read-only mode)."""
+        if self.prs is None:
+            raise web.HTTPNotFound(text=json.dumps({"error": "PR tracking is not enabled"}), content_type="application/json")
+        body = await request.json()
+        repo, number, url = parse_pr_ref(body)
+        view = await self.prs.snapshot()
+        key = f"{repo}#{number}"
+        pr = next((p for p in view["prs"] if p["key"] == key), None)
+        if pr is None:
+            pr = {
+                "key": key,
+                "repo": repo,
+                "number": number,
+                "url": url,
+                "title": str(body.get("title") or key),
+                "author": str(body.get("author") or ""),
+                "base": str(body.get("base") or "main"),
+                "head": str(body.get("head") or ""),
+            }
+        title, prompt = review_chat_prompt(pr)
+        if self.prs.readonly:
+            return web.json_response({
+                "preview": True,
+                "pr": key,
+                "title": title,
+                "prompt": prompt,
+                "url": pr["url"],
+            })
+        hub = await self._hub()
+        created = await hub.create(prompt, title=title)
+        sid = created.get("session")
+        if sid:
+            self.store.attach_session_pr(
+                sid,
+                repo=pr["repo"],
+                number=pr["number"],
+                url=pr["url"],
+                title=pr["title"],
+                branch=pr.get("head") or "",
+                base=pr.get("base") or "",
+                state="open",
+            )
+            await self.hub.broadcast({"kind": "prs.changed"})
+        return web.json_response({"preview": False, "session": sid, "title": title, "pr": key})
+
+    async def local_session_prs(self, request):
+        """Loopback API: list explicit PRs attached to a chat session."""
+        session = self._session(request)
+        return web.json_response(self.store.session_prs(session))
+
+    async def local_attach_pr(self, request):
+        """Loopback API: attach/update a GitHub PR on a chat session."""
+        session = self._session(request)
+        body = await request.json()
+        repo, number, url = parse_pr_ref(body)
+        attached = self.store.attach_session_pr(
+            session,
+            repo=repo,
+            number=number,
+            url=url,
+            title=str(body.get("title") or "").strip(),
+            branch=str(body.get("branch") or "").strip(),
+            base=str(body.get("base") or "").strip(),
+            state=str(body.get("state") or "open").strip().lower(),
+        )
+        await self.hub.broadcast({"kind": "prs.changed"})
+        return web.json_response(attached)
+
+    async def local_detach_pr(self, request):
+        """Loopback API: detach a GitHub PR from a chat session."""
+        session = self._session(request)
+        repo, number, _ = parse_pr_ref({
+            "repo": f"{request.match_info['owner']}/{request.match_info['repo']}",
+            "number": request.match_info["number"],
+        })
+        removed = self.store.detach_session_pr(session, repo, number)
+        if removed:
+            await self.hub.broadcast({"kind": "prs.changed"})
+        return web.json_response({"removed": removed, "session": session, "pr": f"{repo}#{number}"})
 
     async def read_machine_load(self, request):
         """Memory in use now and CPU over the last minute; 404 where there's nothing to read."""

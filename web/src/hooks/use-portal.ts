@@ -7,6 +7,7 @@ import { api, dataUrlToFile, sessionPath, whenOriginMoved, whenSignedOut } from 
 import { desktopApp } from "@/lib/desktop-window"
 import { reloadMcp } from "@/lib/mcp"
 import { reloadProviders } from "@/lib/providers"
+import { reloadPrs } from "@/lib/prs"
 import { reloadSecrets } from "@/lib/secrets"
 import { cachedLive, caughtUp, isCurrentRequest, reconcileSession, sentMessage } from "@/lib/portal-state"
 import { rememberTitles } from "@/lib/session-refs"
@@ -15,7 +16,7 @@ import { type Backends, ChatGroup, type Command, type CommandNote, type Frame, t
 /** Whether this page is on screen and focused, i.e. you'd see a reply land without an alert. */
 const looking = () => document.visibilityState === "visible" && document.hasFocus()
 
-export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null; fromChat?: string } | { view: "chat"; session: string } | { view: "outside" } | { view: "desktop"; query: string }
+export type Route = { view: "list" } | { view: "new" } | { view: "settings"; page: string | null; fromChat?: string } | { view: "chat"; session: string } | { view: "outside" } | { view: "reviews" } | { view: "desktop"; query: string }
 
 export type Attachment = { url: string; filename?: string; mediaType: string }
 
@@ -24,6 +25,7 @@ function parseRoute(hash: string): Route {
   if (chat) return { view: "chat", session: chat[1] }
   if (hash === "#/new") return { view: "new" }
   if (hash === "#/elsewhere") return { view: "outside" }
+  if (hash === "#/reviews") return { view: "reviews" }
   const settings = hash.match(/^#\/settings(?:\/([\w-]+))?$/)
   if (settings) return { view: "settings", page: settings[1] ?? null }
   // Mesh and environments had their own pages before they moved into Settings.
@@ -243,6 +245,9 @@ export function usePortal() {
           return
         case "mcp.changed":
           void reloadMcp()
+          return
+        case "prs.changed":
+          void reloadPrs()
           return
         case "profile.changed":
           // Another profile's chats: the open one isn't among them any more.

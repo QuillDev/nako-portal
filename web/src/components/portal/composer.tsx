@@ -10,9 +10,11 @@ import {
   PromptInputSubmit,
   PromptInputTextarea,
   usePromptInputAttachments,
+  usePromptInputController,
 } from "@/components/ai-elements/prompt-input"
 import { InputGroupAddon } from "@/components/ui/input-group"
 import { navigate, type Portal } from "@/hooks/use-portal"
+import { onComposerPrompt } from "@/lib/composer-prompt"
 import { burstHearts, saysThanks } from "@/lib/hearts"
 import type { GroupColor } from "@/lib/types"
 import { GroupSwatch } from "./groups"
@@ -200,8 +202,17 @@ function ComposerBody({ session, placeholder, running, inChat, attached, attache
   const [model, setModel] = useState<ModelSelection>({})
   const box = useRef<HTMLDivElement>(null)
   const targeted = Boolean(attachedTarget)
+  const { textInput } = usePromptInputController()
   const slash = useSlashMenu(inChat && !targeted ? commands : NO_COMMANDS)
   useTuneFit(box)
+  useEffect(() => {
+    if (!session) return
+    return onComposerPrompt(session, text => {
+      textInput.setInput(text)
+      const textarea = box.current?.querySelector("textarea")
+      textarea?.focus()
+    })
+  }, [session, textInput])
 
   const promptClass = attached
     ? `[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-none [&>[data-slot=input-group]]:border-0 [&>[data-slot=input-group]]:bg-transparent [&>[data-slot=input-group]]:dark:bg-transparent [&>[data-slot=input-group]]:shadow-none ${TALL.group}`
