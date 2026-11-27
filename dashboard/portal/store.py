@@ -21,6 +21,12 @@ LOGIN_RENEW_INTERVAL = 5 * 60
 # The colors a chat group can have, in the order new groups take them.
 GROUP_COLORS = ("blue", "green", "yellow", "orange", "red", "teal", "purple", "grey")
 GROUP_NAME_MAX = 60
+GROUP_GOAL_MAX = 500
+THREAD_SUMMARY_MAX = 280
+THREAD_LINKS_MAX = 8
+THREAD_STATES = ("working", "needs_you", "waiting", "idle", "done")
+THREAD_LINK_KINDS = ("pr", "preview", "branch", "link")
+_UNSET = object()
 MODEL_PICKS_MAX = 100
 MODEL_PRESET_NAME_MAX = 40
 SETUP_TTL = 3600
@@ -57,11 +63,20 @@ CREATE TABLE IF NOT EXISTS chat_groups (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     color TEXT NOT NULL,
+    goal TEXT NOT NULL DEFAULT '',
+    lead_session TEXT,
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS chat_group_members (
     chat TEXT PRIMARY KEY,
     group_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_thread_meta (
+    chat TEXT PRIMARY KEY,
+    task_state TEXT,
+    summary TEXT NOT NULL DEFAULT '',
+    links_json TEXT NOT NULL DEFAULT '[]',
+    updated_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS inbox (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,6 +135,11 @@ class Store:
         self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.execute("PRAGMA busy_timeout=10000")
         self.db.executescript(SCHEMA)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(chat_groups)").fetchall()}
+        if "goal" not in columns:
+            self.db.execute("ALTER TABLE chat_groups ADD COLUMN goal TEXT NOT NULL DEFAULT ''")
+        if "lead_session" not in columns:
+            self.db.execute("ALTER TABLE chat_groups ADD COLUMN lead_session TEXT")
 
     def _run(self, sql, args=()):
         with self.lock:
@@ -288,18 +308,18 @@ class Store:
     # session rotating under it). A chat is in at most one group.
 
     def groups(self):
-        rows = self._run("SELECT id, name, color FROM chat_groups ORDER BY created_at")
-        return [{"id": r[0], "name": r[1], "color": r[2]} for r in rows]
+        rows = self._run("SELECT id, name, color, goal, lead_session FROM chat_groups ORDER BY created_at")
+        return [{"id": r[0], "name": r[1], "color": r[2], "goal": r[3] or "", "lead_session": r[4] or None} for r in rows]
 
     def _group_locked(self, ref):
         ref = str(ref or "").strip()
         row = self.db.execute(
-            "SELECT id, name, color FROM chat_groups WHERE id=? OR name=? COLLATE NOCASE ORDER BY id=? DESC LIMIT 1",
+            "SELECT id, name, color, goal, lead_session FROM chat_groups WHERE id=? OR name=? COLLATE NOCASE ORDER BY id=? DESC LIMIT 1",
             (ref, ref, ref),
         ).fetchone()
         if not row:
             raise ValueError(f"No group called {ref!r}")
-        return {"id": row[0], "name": row[1], "color": row[2]}
+        return {"id": row[0], "name": row[1], "color": row[2], "goal": row[3] or "", "lead_session": row[4] or None}
 
     def group(self, ref):
         """A group by id, or by name ignoring case."""
@@ -319,26 +339,59 @@ class Store:
             raise ValueError(f"Pick a color from {', '.join(GROUP_COLORS)}")
         return color
 
-    def create_group(self, name, color=None):
+    @staticmethod
+    def _group_goal(goal):
+        if goal is None:
+            return ""
+        if not isinstance(goal, str):
+            raise ValueError("Group goal must be text")  # noqa: TRY004 - Callers map validation ValueError to HTTP 400.
+        return "\n".join(" ".join(line.split()) for line in goal.strip().splitlines()).strip()[:GROUP_GOAL_MAX]
+
+    @staticmethod
+    def _group_lead(lead_session):
+        if lead_session is None:
+            return None
+        if not isinstance(lead_session, str):
+            raise ValueError("Lead session must be a session id")  # noqa: TRY004 - Callers map validation ValueError to HTTP 400.
+        value = lead_session.strip()
+        if not value:
+            return None
+        if len(value) > 120:
+            raise ValueError("Lead session id is too long")
+        return value
+
+    def create_group(self, name, color=None, goal="", lead_session=None):
         name = self._group_name(name)
+        goal = self._group_goal(goal)
+        lead_session = self._group_lead(lead_session)
         with self._tx():
             if self.db.execute("SELECT 1 FROM chat_groups WHERE name=? COLLATE NOCASE", (name,)).fetchone():
                 raise ValueError(f"There's already a group called {name!r}")
             if color is None:
                 used = [r[0] for r in self.db.execute("SELECT color FROM chat_groups")]
                 color = min(GROUP_COLORS, key=lambda c: (used.count(c), GROUP_COLORS.index(c)))
-            group = {"id": secrets.token_hex(6), "name": name, "color": self._group_color(color)}
+            group = {
+                "id": secrets.token_hex(6),
+                "name": name,
+                "color": self._group_color(color),
+                "goal": goal,
+                "lead_session": lead_session,
+            }
             self.db.execute(
-                "INSERT INTO chat_groups (id, name, color, created_at) VALUES (?, ?, ?, ?)",
-                (group["id"], name, group["color"], self.clock()),
+                "INSERT INTO chat_groups (id, name, color, goal, lead_session, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (group["id"], name, group["color"], goal, lead_session, self.clock()),
             )
         return group
 
-    def update_group(self, ref, name=None, color=None):
+    def update_group(self, ref, name=None, color=None, goal=_UNSET, lead_session=_UNSET):
         if name is not None:
             name = self._group_name(name)
         if color is not None:
             color = self._group_color(color)
+        if goal is not _UNSET:
+            goal = self._group_goal(goal)
+        if lead_session is not _UNSET:
+            lead_session = self._group_lead(lead_session)
         with self._tx():
             group = self._group_locked(ref)
             if name is not None:
@@ -347,8 +400,28 @@ class Store:
                 group["name"] = name
             if color is not None:
                 group["color"] = color
-            self.db.execute("UPDATE chat_groups SET name=?, color=? WHERE id=?", (group["name"], group["color"], group["id"]))
+            if goal is not _UNSET:
+                group["goal"] = goal
+            if lead_session is not _UNSET:
+                group["lead_session"] = lead_session
+            self.db.execute(
+                "UPDATE chat_groups SET name=?, color=?, goal=?, lead_session=? WHERE id=?",
+                (group["name"], group["color"], group["goal"], group["lead_session"], group["id"]),
+            )
         return group
+
+    def clear_lead_session(self, session, *, keep_group_id=None):
+        """Clear lead_session on any group pointing at `session` (except `keep_group_id`)."""
+        if not session:
+            return
+        with self._tx():
+            if keep_group_id:
+                self.db.execute(
+                    "UPDATE chat_groups SET lead_session=NULL WHERE lead_session=? AND id<>?",
+                    (session, keep_group_id),
+                )
+            else:
+                self.db.execute("UPDATE chat_groups SET lead_session=NULL WHERE lead_session=?", (session,))
 
     def delete_group(self, ref):
         """Remove a group. Its chats stay; they're just no longer grouped."""
@@ -371,9 +444,86 @@ class Store:
     def chat_groups(self):
         """chat -> its group."""
         rows = self._run(
-            "SELECT m.chat, g.id, g.name, g.color FROM chat_group_members m JOIN chat_groups g ON g.id=m.group_id"
+            "SELECT m.chat, g.id, g.name, g.color, g.goal, g.lead_session FROM chat_group_members m JOIN chat_groups g ON g.id=m.group_id"
         )
-        return {chat: {"id": gid, "name": name, "color": color} for chat, gid, name, color in rows}
+        return {
+            chat: {"id": gid, "name": name, "color": color, "goal": goal or "", "lead_session": lead_session or None}
+            for chat, gid, name, color, goal, lead_session in rows
+        }
+
+    def group_chats(self, group_id):
+        """All chat ids belonging to a group (including archived chats)."""
+        return [r[0] for r in self._run("SELECT chat FROM chat_group_members WHERE group_id=?", (group_id,))]
+
+    @staticmethod
+    def _thread_state(state):
+        if state is None or state == "":
+            return None
+        if state not in THREAD_STATES:
+            raise ValueError(f"Pick a task state from {', '.join(THREAD_STATES)}")
+        return state
+
+    @staticmethod
+    def _thread_links(links):
+        if links is None:
+            return []
+        if not isinstance(links, list):
+            raise ValueError("Links must be a list")  # noqa: TRY004 - Callers map validation ValueError to HTTP 400.
+        cleaned = []
+        for item in links[:THREAD_LINKS_MAX]:
+            if not isinstance(item, dict):
+                raise ValueError("Each link needs a label and url")  # noqa: TRY004 - Callers map validation ValueError to HTTP 400.
+            label = " ".join(str(item.get("label") or "").split())[:60]
+            url = str(item.get("url") or "").strip()
+            kind = str(item.get("kind") or "link").strip()
+            if kind not in THREAD_LINK_KINDS:
+                kind = "link"
+            if not label or not url.startswith(("http://", "https://")):
+                raise ValueError("Each link needs a label and http(s) url")
+            cleaned.append({"label": label, "url": url, "kind": kind})
+        return cleaned
+
+    def set_thread_meta(self, chat, *, task_state=_UNSET, summary=_UNSET, links=_UNSET):
+        """Save optional agent-reported state, summary, or links for a chat thread."""
+        with self._tx():
+            row = self.db.execute(
+                "SELECT task_state, summary, links_json FROM chat_thread_meta WHERE chat=?",
+                (chat,),
+            ).fetchone()
+            cur_state = row[0] if row else None
+            cur_summary = row[1] if row else ""
+            cur_links = json.loads(row[2]) if row and row[2] else []
+            if task_state is not _UNSET:
+                cur_state = self._thread_state(task_state)
+            if summary is not _UNSET:
+                if summary is None:
+                    cur_summary = ""
+                elif not isinstance(summary, str):
+                    raise ValueError("Summary must be text")
+                else:
+                    cur_summary = " ".join(summary.split())[:THREAD_SUMMARY_MAX]
+            if links is not _UNSET:
+                cur_links = self._thread_links(links)
+            if cur_state is None and not cur_summary and not cur_links:
+                self.db.execute("DELETE FROM chat_thread_meta WHERE chat=?", (chat,))
+                return {"task_state": None, "summary": "", "links": []}
+            self.db.execute(
+                "INSERT OR REPLACE INTO chat_thread_meta (chat, task_state, summary, links_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (chat, cur_state, cur_summary, json.dumps(cur_links), self.clock()),
+            )
+            return {"task_state": cur_state, "summary": cur_summary, "links": cur_links}
+
+    def thread_meta_map(self):
+        rows = self._run("SELECT chat, task_state, summary, links_json FROM chat_thread_meta")
+        return {
+            chat: {
+                "task_state": task_state,
+                "summary": summary or "",
+                "links": json.loads(links_json) if links_json else [],
+            }
+            for chat, task_state, summary, links_json in rows
+        }
 
     # Push subscriptions
 

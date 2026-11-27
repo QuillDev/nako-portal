@@ -35,17 +35,22 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
       sections(sessions.filter((s) => !s.notifications && !s.reviews)),
     [sessions],
   );
+  const setLead = useMemo(
+    () => (group: string, lead_session: string | null) => updateGroup(group, { lead_session }),
+    [updateGroup],
+  );
   const actions = useMemo(
-    () => ({ pin, archive, rename: rename.start, group: picker.start }),
-    [pin, archive, rename.start, picker.start],
+    () => ({ pin, archive, rename: rename.start, group: picker.start, setLead }),
+    [pin, archive, rename.start, picker.start, setLead],
   );
   const groupActions = useMemo(
     () => ({
       rename: renameGroup.start,
       recolor: (group: string, color: GroupColor) => updateGroup(group, { color }),
       ungroup: deleteGroup,
+      setLead,
     }),
-    [renameGroup.start, updateGroup, deleteGroup],
+    [renameGroup.start, updateGroup, deleteGroup, setLead],
   );
   // The chat being dragged, and the group it's over ("" for out of its group).
   const dragged = useRef<SessionRow | null>(null);

@@ -7,6 +7,7 @@ import json
 import logging
 import mimetypes
 import re
+import sqlite3
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -19,6 +20,17 @@ from .auth_routes import HANDOFF_TTL as HANDOFF_TTL
 from .auth_routes import PKCE_CHALLENGE as PKCE_CHALLENGE
 from .auth_routes import AuthRoutes
 from .environments import EnvironmentsError
+from .group_overview import (
+    STATUS_DONE,
+    STATUS_IDLE,
+    STATUS_NEEDS_YOU,
+    STATUS_WAITING,
+    STATUS_WORKING,
+    clean_snippet,
+    is_background_thread,
+    sort_threads,
+    summarize_counts,
+)
 from .hub import NEEDS_YOU, WORKING, for_app, page
 from .local_api import MAX_BODY, SESSION_ID, LocalAPI
 from .local_api import TOOL_RESULT_CHARS as TOOL_RESULT_CHARS
@@ -82,6 +94,8 @@ class Portal(AuthRoutes, LocalAPI):
         desktop_release_dir=None,
         environments=None,
         machine_load=None,
+        inspector=None,
+        read_only=False,
         clock=time.time,
     ):
         self.vapid = vapid
@@ -93,6 +107,10 @@ class Portal(AuthRoutes, LocalAPI):
         self.environments = environments
         # Memory and CPU use of this machine (`machine_load.MachineLoad`), else None (no /proc to read).
         self.machine_load = machine_load
+        # Read-only transcript inspector for group overviews (`group_overview.GroupInspector`), else None.
+        self.inspector = inspector
+        # Preview mode: never dispatch live turns; spawn/broadcast return dry-run previews.
+        self.read_only = bool(read_only)
         # Desktop sign-ins the browser approved, waiting for the app: code -> challenge, passkey, expiry.
         self.handoffs = {}
         parsed = urlparse(origin)
@@ -221,8 +239,14 @@ class Portal(AuthRoutes, LocalAPI):
         r.add_post("/api/sessions/{session}/pin", self.pin)
         r.add_post("/api/sessions/{session}/title", self.title)
         r.add_post("/api/sessions/{session}/group", self._auth(self.set_group))
+        r.add_post("/api/sessions/{session}/meta", self._auth(self.set_thread_meta))
         r.add_get("/api/groups", self._auth(self.groups))
         r.add_post("/api/groups", self._auth(self.create_group))
+        r.add_get("/api/groups/{group}", self._auth(self.group_overview))
+        r.add_get("/api/groups/{group}/overview", self._auth(self.group_overview))
+        r.add_post("/api/groups/{group}/spawn", self._auth(self.group_spawn))
+        r.add_post("/api/groups/{group}/broadcast", self._auth(self.group_broadcast))
+        r.add_post("/api/groups/{group}/archive-idle", self._auth(self.group_archive_idle))
         r.add_post("/api/groups/{group}", self._auth(self.update_group))
         r.add_post("/api/groups/{group}/remove", self._auth(self.delete_group))
         r.add_post("/api/requests/{request}", self.answer)
@@ -557,8 +581,19 @@ class Portal(AuthRoutes, LocalAPI):
         else:
             rows, mesh_rows = await hub.sessions(), []
         member = self.store.chat_groups()
+        grouped_chats = {row.get("chat") for row in rows if row.get("chat") in member}
+        inspected = await self._inspect_chats(grouped_chats) if grouped_chats else {}
+        thread_meta = self.store.thread_meta_map() if grouped_chats else {}
         for row in rows:
-            row["group"] = member.get(row.pop("chat", None))
+            chat = row.pop("chat", None)
+            row["group"] = member.get(chat)
+            if row["group"]:
+                info = inspected.get(row["id"])
+                if info:
+                    row["group_status"] = info["status"]
+                else:
+                    meta = thread_meta.get(chat) or {}
+                    row["group_status"] = self._fallback_status(row, meta.get("task_state"))
             # A post nobody has opened the chat for since: the sidebar marks it.
             row["unread"] = (row["notifications"] or row["reviews"]) and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
         if mesh_rows:
@@ -681,6 +716,115 @@ class Portal(AuthRoutes, LocalAPI):
     # Chat groups. The same handlers serve the app (signed in) and the loopback API, which is how
     # the agent's group tools reach them.
 
+    def _request_sessions(self):
+        return {req["session"] for req in self.hub.requests.values() if req.get("session")}
+
+    def _fallback_status(self, row, explicit_state=None, *, archived=False):
+        sid = row["id"]
+        if sid in self._request_sessions() or self.hub.status.get(sid) == NEEDS_YOU:
+            return STATUS_NEEDS_YOU
+        if sid in self.hub.running or self.hub.status.get(sid) == WORKING:
+            return STATUS_WORKING
+        if explicit_state:
+            return explicit_state
+        if archived:
+            return STATUS_DONE
+        return STATUS_IDLE
+
+    async def _inspect_chats(self, chats):
+        if not chats or self.inspector is None or not self.inspector.available:
+            return {}
+        try:
+            return await asyncio.to_thread(
+                self.inspector.inspect_chats,
+                set(chats),
+                hub_status=dict(self.hub.status),
+                request_sessions=self._request_sessions(),
+                thread_meta=self.store.thread_meta_map(),
+            )
+        except sqlite3.Error as error:
+            log.warning("portal: group inspector read failed: %s", error)
+            return {}
+
+    async def _group_threads(self, group):
+        """All threads belonging to `group` (active and archived), enriched and thoughtfully sorted."""
+        chats = set(self.store.group_chats(group["id"]))
+        if not chats:
+            return []
+        meta_map = self.store.thread_meta_map()
+        inspected = await self._inspect_chats(chats)
+        if inspected:
+            return sort_threads(list(inspected.values()))
+
+        # Fallback when no read-only state.db inspector is configured (e.g. fake gateway in tests).
+        hub = await self._hub()
+        active_rows, archived_raw = await asyncio.gather(
+            hub.sessions(),
+            asyncio.to_thread(hub.backend.archived_sessions),
+        )
+        threads = []
+        seen = set()
+        for row in active_rows:
+            chat = row.get("chat")
+            if chat not in chats:
+                continue
+            seen.add(row["id"])
+            meta = meta_map.get(chat) or {}
+            status = self._fallback_status(row, meta.get("task_state"), archived=False)
+            threads.append(
+                {
+                    "id": row["id"],
+                    "chat": chat,
+                    "title": row["title"],
+                    "status": status,
+                    "task_state": meta.get("task_state"),
+                    "reason": "Needs approval" if status == STATUS_NEEDS_YOU and row["id"] in self._request_sessions() else "",
+                    "activity": "",
+                    "summary": meta.get("summary") or clean_snippet(row.get("preview") or ""),
+                    "last_active": row.get("started_at") or 0.0,
+                    "started_at": row.get("started_at") or 0.0,
+                    "message_count": row.get("message_count") or 0,
+                    "pinned": bool(row.get("pinned")),
+                    "archived": False,
+                    "background": is_background_thread(archived=False, title=row["title"], parent=None, chat_id=chat),
+                    "prs": [],
+                    "previews": [],
+                    "branch": None,
+                    "links": list(meta.get("links") or []),
+                    "parent": None,
+                }
+            )
+        for row in archived_raw:
+            chat = row.get("chat_id")
+            if chat not in chats or row["id"] in seen:
+                continue
+            meta = meta_map.get(chat) or {}
+            status = self._fallback_status(row, meta.get("task_state"), archived=True)
+            title = row.get("title") or row.get("preview") or "untitled"
+            threads.append(
+                {
+                    "id": row["id"],
+                    "chat": chat,
+                    "title": title,
+                    "status": status,
+                    "task_state": meta.get("task_state"),
+                    "reason": "Archived" if status == STATUS_DONE else "",
+                    "activity": "",
+                    "summary": meta.get("summary") or clean_snippet(row.get("preview") or ""),
+                    "last_active": row.get("started_at") or 0.0,
+                    "started_at": row.get("started_at") or 0.0,
+                    "message_count": row.get("message_count") or 0,
+                    "pinned": bool(row.get("pinned")),
+                    "archived": True,
+                    "background": True,
+                    "prs": [],
+                    "previews": [],
+                    "branch": None,
+                    "links": list(meta.get("links") or []),
+                    "parent": None,
+                }
+            )
+        return sort_threads(threads)
 
     async def _grouped(self):
         """This machine's chats with their group, and the groups."""
@@ -690,31 +834,90 @@ class Portal(AuthRoutes, LocalAPI):
         return rows, member
 
     async def groups(self, request):
-        """Every group, each with its chats (newest first). A group can be empty."""
+        """Every group, each with its goal, status counts, and chats (newest first). A group can be empty."""
         try:
             rows, member = await self._grouped()
         except ConnectionError:
             rows, member = [], {}
-        out = [{**group, "chats": []} for group in self.store.groups()]
+        grouped_chats = {row.get("chat") for row in rows if row.get("chat") in member}
+        inspected = await self._inspect_chats(grouped_chats) if grouped_chats else {}
+        meta_map = self.store.thread_meta_map() if grouped_chats else {}
+        out = [
+            {
+                **group,
+                "chats": [],
+                "counts": {"total": 0, STATUS_WORKING: 0, STATUS_NEEDS_YOU: 0, STATUS_WAITING: 0, STATUS_IDLE: 0, STATUS_DONE: 0},
+            }
+            for group in self.store.groups()
+        ]
         by_id = {group["id"]: group for group in out}
         for row in rows:
-            group = member.get(row.get("chat"))
+            chat = row.get("chat")
+            group = member.get(chat)
             if group:
-                by_id[group["id"]]["chats"].append({"session": row["id"], "title": row["title"]})
+                info = inspected.get(row["id"])
+                meta = meta_map.get(chat) or {}
+                status = info["status"] if info else self._fallback_status(row, meta.get("task_state"))
+                summary = info["summary"] if info else (meta.get("summary") or "")
+                entry = by_id[group["id"]]
+                entry["chats"].append(
+                    {
+                        "session": row["id"],
+                        "title": row["title"],
+                        "status": status,
+                        "task_state": meta.get("task_state"),
+                        "summary": summary,
+                        "is_lead": row["id"] == entry.get("lead_session"),
+                    }
+                )
+                entry["counts"]["total"] += 1
+                if status in entry["counts"]:
+                    entry["counts"][status] += 1
         return web.json_response(out)
 
     async def _changed(self):
         await self.hub.broadcast({"kind": "sessions.changed"})
 
+    async def _ensure_lead_member(self, group):
+        lead = group.get("lead_session")
+        if not lead or remote(lead):
+            return
+        try:
+            hub = await self._hub()
+        except ConnectionError:
+            return
+        chat = await asyncio.to_thread(hub.backend.chat_of, lead)
+        if chat:
+            self.store.set_chat_group(chat, group["id"])
+            self.store.clear_lead_session(lead, keep_group_id=group["id"])
+
     async def create_group(self, request):
         body = await request.json()
-        group = self.store.create_group(body.get("name"), body.get("color") or None)
+        group = self.store.create_group(
+            body.get("name"),
+            body.get("color") or None,
+            body.get("goal") or "",
+            lead_session=body.get("lead_session"),
+        )
+        await self._ensure_lead_member(group)
         await self._changed()
         return web.json_response(group)
 
     async def update_group(self, request):
         body = await request.json()
-        group = self.store.update_group(request.match_info["group"], body.get("name"), body.get("color") or None)
+        kwargs = {}
+        if "goal" in body:
+            kwargs["goal"] = body.get("goal")
+        if "lead_session" in body:
+            kwargs["lead_session"] = body.get("lead_session")
+        group = self.store.update_group(
+            request.match_info["group"],
+            body.get("name"),
+            body.get("color") or None,
+            **kwargs,
+        )
+        if "lead_session" in body and group.get("lead_session"):
+            await self._ensure_lead_member(group)
         await self._changed()
         return web.json_response(group)
 
@@ -734,8 +937,187 @@ class Portal(AuthRoutes, LocalAPI):
         if not chat:
             raise ValueError("Only portal chats can be grouped")
         group = self.store.set_chat_group(chat, body.get("group") or None)
+        self.store.clear_lead_session(session, keep_group_id=group["id"] if group else None)
         await self._changed()
         return web.json_response({"session": session, "group": group})
+
+    async def set_thread_meta(self, request):
+        """Update a portal thread's explicit task_state, short summary, or artifact links."""
+        session = self._session(request)
+        if remote(session):
+            raise ValueError("Thread metadata is for this machine's chats only")
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Send a JSON object")  # noqa: TRY004 - The request guard maps validation ValueError to HTTP 400.
+        hub = await self._hub()
+        chat = await asyncio.to_thread(hub.backend.chat_of, session)
+        if not chat:
+            raise ValueError("Only portal chats support group thread metadata")
+        kwargs = {}
+        for key in ("task_state", "summary", "links"):
+            if key in body:
+                kwargs[key] = body[key]
+        saved = self.store.set_thread_meta(chat, **kwargs)
+        await self._changed()
+        return web.json_response({"session": session, **saved})
+
+    async def group_overview(self, request):
+        """Live group state: lead chat, child/worker threads, status counts, and extracted artifacts."""
+        group = self.store.group(request.match_info["group"])
+        threads = await self._group_threads(group)
+        lead_session = group.get("lead_session")
+        public_threads = [
+            {**{k: v for k, v in t.items() if k != "chat"}, "is_lead": t["id"] == lead_session}
+            for t in threads
+        ]
+        lead = next((t for t in public_threads if t["is_lead"]), None)
+        children = [t for t in public_threads if not t["is_lead"]]
+        return web.json_response(
+            {
+                "group": group,
+                "lead_session": lead_session,
+                "lead": lead,
+                "children": children,
+                "now": self.clock(),
+                "read_only": self.read_only,
+                "counts": summarize_counts(threads),
+                "child_counts": summarize_counts(children),
+                "threads": public_threads,
+            }
+        )
+
+    async def group_spawn(self, request):
+        """Start a new thread inside this group, optionally inheriting its shared goal."""
+        group = self.store.group(request.match_info["group"])
+        body = await request.json()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise ValueError("Write a prompt first")
+        title = str(body.get("title") or "").strip()[:200] or None
+        inherit_goal = body.get("inherit_goal", True) is not False
+        dry_run = bool(body.get("dry_run")) or self.read_only
+        composed = f"[Group goal: {group['name']}]\n{group['goal']}\n\n{text}" if inherit_goal and group["goal"] else text
+        if dry_run:
+            return web.json_response(
+                {
+                    "dry_run": True,
+                    "read_only": self.read_only,
+                    "group": group,
+                    "title": title,
+                    "composed_text": composed,
+                }
+            )
+        hub = await self._hub()
+        created = await hub.create(composed, title=title, sender=body.get("from") or None)
+        chat = await asyncio.to_thread(hub.backend.chat_of, created["session"])
+        if chat:
+            self.store.set_chat_group(chat, group["id"])
+        await self._changed()
+        return web.json_response({"dry_run": False, "read_only": False, "group": group, **created})
+
+    async def group_broadcast(self, request):
+        """Send a follow-up message to selected or active threads in a group (or preview via dry_run)."""
+        group = self.store.group(request.match_info["group"])
+        body = await request.json()
+        text = str(body.get("text") or "").strip()
+        if not text:
+            raise ValueError("Write a follow-up message first")
+        scope = str(body.get("scope") or "active")
+        selected = body.get("sessions")
+        if selected is not None and not isinstance(selected, list):
+            raise ValueError("sessions must be a list of session ids")
+        threads = [t for t in await self._group_threads(group) if not t["archived"]]
+        if selected is not None:
+            wanted = {str(s) for s in selected}
+            targets = [t for t in threads if t["id"] in wanted]
+        elif scope == STATUS_NEEDS_YOU:
+            targets = [t for t in threads if t["status"] == STATUS_NEEDS_YOU]
+        elif scope == STATUS_WORKING:
+            targets = [t for t in threads if t["status"] == STATUS_WORKING]
+        elif scope == "active":
+            targets = [t for t in threads if not t["background"]]
+        else:
+            raise ValueError("Pick a scope from active, needs_you, working, or pass sessions")
+        dry_run = bool(body.get("dry_run")) or self.read_only
+        summary_targets = [{"id": t["id"], "title": t["title"], "status": t["status"]} for t in targets]
+        if dry_run:
+            return web.json_response(
+                {
+                    "dry_run": True,
+                    "read_only": self.read_only,
+                    "group": group,
+                    "text": text,
+                    "targets": summary_targets,
+                    "sent": [],
+                    "failed": [],
+                }
+            )
+        hub = await self._hub()
+        sender = body.get("from") or None
+        sent, failed = [], []
+        for target in targets:
+            try:
+                await hub.send(target["id"], text, sender=sender)
+                sent.append(target["id"])
+            except Exception as error:  # noqa: BLE001 - Per-thread failure must not hide other deliveries.
+                failed.append({"id": target["id"], "error": str(error)})
+        await self._changed()
+        return web.json_response(
+            {
+                "dry_run": False,
+                "read_only": False,
+                "group": group,
+                "text": text,
+                "targets": summary_targets,
+                "sent": sent,
+                "failed": failed,
+            }
+        )
+
+    async def group_archive_idle(self, request):
+        """Bulk-archive idle/finished threads in a group (or preview with dry_run)."""
+        group = self.store.group(request.match_info["group"])
+        body = await request.json() if request.can_read_body else {}
+        selected = body.get("sessions")
+        if selected is not None and not isinstance(selected, list):
+            raise ValueError("sessions must be a list of session ids")
+        threads = [t for t in await self._group_threads(group) if not t["archived"]]
+        if selected is not None:
+            wanted = {str(s) for s in selected}
+            targets = [t for t in threads if t["id"] in wanted]
+        else:
+            lead_session = group.get("lead_session")
+            targets = [
+                t
+                for t in threads
+                if t["id"] != lead_session and not t["pinned"] and t["status"] in (STATUS_IDLE, STATUS_DONE)
+            ]
+        summary_targets = [{"id": t["id"], "title": t["title"], "status": t["status"]} for t in targets]
+        if bool(body.get("dry_run")) or self.read_only:
+            return web.json_response(
+                {
+                    "dry_run": True,
+                    "read_only": self.read_only,
+                    "group": group,
+                    "targets": summary_targets,
+                    "archived": [],
+                }
+            )
+        hub = await self._hub()
+        archived = []
+        for target in targets:
+            await hub.archive(target["id"], True)
+            archived.append(target["id"])
+        await self._changed()
+        return web.json_response(
+            {
+                "dry_run": False,
+                "read_only": self.read_only,
+                "group": group,
+                "targets": summary_targets,
+                "archived": archived,
+            }
+        )
 
     async def answer(self, request):
         self._require(request)

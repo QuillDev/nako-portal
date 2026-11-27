@@ -13,11 +13,13 @@ import logging
 import signal
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp import web
 from portal import push
 from portal.environments import Environments
+from portal.group_overview import GroupInspector, preview_hosts_for
 from portal.hub import Hub
 from portal.link import GatewayLink
 from portal.machine_load import MachineLoad
@@ -105,6 +107,11 @@ async def main(config_path):
             if config.get("environments_command")
             else None,
             machine_load=load if (load := MachineLoad()).available else None,
+            inspector=GroupInspector(
+                home,
+                preview_hosts=preview_hosts_for(config["origin"]),
+                own_hosts=(urlparse(config["origin"]).hostname,),
+            ),
         )
         link.on_change = portal.gateway_changed
         portal.ops = ops

@@ -10,12 +10,15 @@ import { navigate, type Portal } from "@/hooks/use-portal"
 import { retryMarkdown, useMarkdown, useMarkdownError } from "@/lib/markdown"
 import { sourceName } from "@/lib/outside"
 import { inBubble } from "@/lib/bubble"
+import { useGroupOverview } from "@/lib/group-overview"
 import { usePresence } from "@/lib/presence"
+import type { ChatGroup } from "@/lib/types"
 import { Composer } from "./composer"
 import { ComposerPlaceholder } from "./screen-loading"
 import { PageHeader } from "./header"
 import { Presence } from "./presence"
 import { ChatEnvironments } from "./chat-environments"
+import { GroupBackChip, GroupComposerDock } from "./group-dock"
 import { Processes } from "./processes"
 import { Requests } from "./requests"
 import { SecretDock } from "./secrets"
@@ -25,12 +28,37 @@ import { Transcript } from "./transcript"
 import { ChatFind, FindInChatButton } from "./chat-find"
 
 // The open chat's title, background processes and ⋯ menu; unchanged while a turn streams in below it.
-const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable, actions, running, environments }: { title: string; session: string; pinned: boolean; groupable: boolean; actions: ChatActions; running: boolean; environments: boolean }) {
+const ChatHeader = memo(function ChatHeader({
+  title,
+  session,
+  pinned,
+  groupable,
+  group,
+  leadSession,
+  prefetch,
+  actions,
+  running,
+  environments,
+}: {
+  title: string
+  session: string
+  pinned: boolean
+  groupable: boolean
+  group?: ChatGroup | null
+  leadSession?: string | null
+  prefetch?: (session: string) => void
+  actions: ChatActions
+  running: boolean
+  environments: boolean
+}) {
   return (
     <PageHeader title={title}>
       {/* The floating panel keeps to the chat itself; its full controls are one tap away in the app. */}
       {!inBubble && (
         <>
+          {group && leadSession && leadSession !== session && prefetch && (
+            <GroupBackChip group={group} leadSession={leadSession} prefetch={prefetch} />
+          )}
           {environments && <ChatEnvironments session={session} />}
           <Processes key={session} running={running} session={session} />
           <DropdownMenu>
@@ -40,7 +68,7 @@ const ChatHeader = memo(function ChatHeader({ title, session, pinned, groupable,
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {sessionActions(actions, session, pinned, groupable).map(a => (
+              {sessionActions(actions, session, pinned, groupable, group).map(a => (
                 <DropdownMenuItem key={a.label} onSelect={a.run}>
                   <a.icon className="size-4 text-muted-foreground" />
                   {a.label}
@@ -301,8 +329,19 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
   const draftKey = c ? `draft:${c.session}` : ""
   const rename = useRenameDialog(portal)
   const picker = useGroupPicker(portal)
-  const { pin, archive } = portal
-  const actions = useMemo(() => ({ pin, archive, rename: rename.start, group: picker.start }), [pin, archive, rename.start, picker.start])
+  const { pin, archive, updateGroup, prefetch, command, commands, stop, setError } = portal
+  const composerControls = useMemo(
+    () => ({ command, commands, stop, setError }),
+    [command, commands, stop, setError],
+  )
+  const setLead = useMemo(
+    () => (groupId: string, lead_session: string | null) => updateGroup(groupId, { lead_session }),
+    [updateGroup],
+  )
+  const actions = useMemo(
+    () => ({ pin, archive, rename: rename.start, group: picker.start, setLead }),
+    [pin, archive, rename.start, picker.start, setLead],
+  )
   const session = c?.session
   const start = c?.start ?? 0
   const notes = useMemo(() => portal.notes.filter(n => n.session === session && n.at >= start).map(n => ({ ...n, at: n.at - start })), [portal.notes, session, start])
@@ -311,6 +350,19 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
   const secret = c?.requests.find(r => r.method === "secret")
   const offline = !portal.connected && <p className="border-b bg-muted px-4 py-2 text-muted-foreground text-xs">nako is offline. messages will work again once it reconnects.</p>
   const row = c ? portal.sessions.find(s => s.id === c.session) : undefined
+  const group = row?.group ?? null
+  const groupSync = useMemo(
+    () =>
+      group
+        ? portal.sessions
+            .filter(s => s.group?.id === group.id)
+            .map(s => `${s.id}:${s.status ?? ""}:${s.group_status ?? ""}:${s.finished ? 1 : 0}:${s.title}:${s.group?.lead_session ?? ""}`)
+            .join("|")
+        : "",
+    [portal.sessions, group],
+  )
+  const groupOverview = useGroupOverview(group?.id ?? null, groupSync)
+  const leadSession = groupOverview.data?.lead_session ?? group?.lead_session ?? null
   if (!c)
     return (
       <>
@@ -321,7 +373,18 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
     )
   return (
     <>
-      <ChatHeader environments={Boolean(portal.me?.environments)} running={c.running} actions={actions} pinned={Boolean(row?.pinned)} groupable={!row?.machine} session={c.session} title={c.title || row?.title || "chat"} />
+      <ChatHeader
+        actions={actions}
+        environments={Boolean(portal.me?.environments)}
+        group={group}
+        groupable={!row?.machine}
+        leadSession={leadSession}
+        pinned={Boolean(row?.pinned)}
+        prefetch={prefetch}
+        running={c.running}
+        session={c.session}
+        title={c.title || row?.title || "chat"}
+      />
       {rename.dialog}
       {picker.dialog}
       {offline}
@@ -362,19 +425,46 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
           </Dock>
         )}
       </Conversation>
-      {c.loading && !row ? <ComposerPlaceholder /> : <SecretDock answer={portal.answer} key={c.session} request={secret}>
-        <Composer
-          command={portal.command}
-          commands={portal.commands}
-          draftKey={draftKey}
+      {c.loading && !row ? (
+        <ComposerPlaceholder />
+      ) : !inBubble && group && !c.loading && !secret ? (
+        <GroupComposerDock
+          composer={composerControls}
+          data={groupOverview.data}
+          group={group}
+          key={`dock:${c.session}`}
+          onReload={groupOverview.reload}
+          onSetLead={setLead}
+          prefetch={prefetch}
           session={c.session}
-          inChat
-          running={c.running}
-          send={portal.send}
-          setError={portal.setError}
-          stop={portal.stop}
-        />
-      </SecretDock>}
+        >
+          <Composer
+            command={portal.command}
+            commands={portal.commands}
+            draftKey={draftKey}
+            session={c.session}
+            inChat
+            running={c.running}
+            send={portal.send}
+            setError={portal.setError}
+            stop={portal.stop}
+          />
+        </GroupComposerDock>
+      ) : (
+        <SecretDock answer={portal.answer} key={c.session} request={secret}>
+          <Composer
+            command={portal.command}
+            commands={portal.commands}
+            draftKey={draftKey}
+            session={c.session}
+            inChat
+            running={c.running}
+            send={portal.send}
+            setError={portal.setError}
+            stop={portal.stop}
+          />
+        </SecretDock>
+      )}
     </>
   )
 }

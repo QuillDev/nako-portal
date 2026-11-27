@@ -14,6 +14,8 @@ import {
 import { InputGroupAddon } from "@/components/ui/input-group"
 import { navigate, type Portal } from "@/hooks/use-portal"
 import { burstHearts, saysThanks } from "@/lib/hearts"
+import type { GroupColor } from "@/lib/types"
+import { GroupSwatch } from "./groups"
 import { isCommand, SlashMenu, useSlashMenu } from "./slash-menu"
 import { type ModelSelection, NewChatModel, SessionModel } from "./model-picker"
 
@@ -127,12 +129,17 @@ function useTuneFit(box: RefObject<HTMLDivElement | null>) {
 
 // inChat: a chat is open, so slash commands run in it. Only what the composer uses comes in, and
 // every function keeps its identity, so a streaming reply doesn't redraw the composer.
+export type AttachedTarget = { title: string; color: GroupColor }
+
 type ComposerProps = Pick<Portal, "send" | "command" | "stop" | "setError" | "commands"> & {
   draftKey: string
   session?: string
   placeholder?: string
   running: boolean
   inChat: boolean
+  // Fused inside a Stage 3 mini-chat shell: drops outer margins/border and shows the target thread.
+  attached?: boolean
+  attachedTarget?: AttachedTarget
 }
 
 export const Composer = memo(function Composer(props: ComposerProps) {
@@ -146,36 +153,82 @@ export const Composer = memo(function Composer(props: ComposerProps) {
 
 const NO_COMMANDS: ComposerProps["commands"] = []
 
-function ComposerBody({ session, placeholder, running, inChat, commands, send, command, stop, setError }: ComposerProps) {
+function ComposerStartAddon({
+  attachedTarget,
+  inChat,
+  session,
+  running,
+  model,
+  onPickModel,
+}: {
+  attachedTarget?: AttachedTarget
+  inChat: boolean
+  session?: string
+  running: boolean
+  model: ModelSelection
+  onPickModel: (next: ModelSelection) => void
+}) {
+  return (
+    <InputGroupAddon align="inline-start" className={`relative min-w-0 self-end pb-1.5 ${TALL.start}`}>
+      <AttachButton />
+      {attachedTarget ? (
+        <span
+          className="inline-flex h-6 max-w-[15rem] items-center gap-1.5 rounded-full bg-muted/75 px-2 text-[11px] font-normal text-muted-foreground"
+          data-composer-target
+        >
+          <GroupSwatch className="size-1.5 rounded-full" color={attachedTarget.color} />
+          <span className="truncate">to {attachedTarget.title}</span>
+        </span>
+      ) : (
+        <>
+          {!inChat && <NewChatModel selection={model} onPick={onPickModel} />}
+          {session && <SessionModel key={session} session={session} running={running} />}
+        </>
+      )}
+    </InputGroupAddon>
+  )
+}
+
+function composerPlaceholder(attachedTarget: AttachedTarget | undefined, running: boolean, placeholder?: string) {
+  if (attachedTarget) return placeholder || `Message ${attachedTarget.title}…`
+  if (running) return "Steer or queue a message"
+  return placeholder || "Message"
+}
+
+function ComposerBody({ session, placeholder, running, inChat, attached, attachedTarget, commands, send, command, stop, setError }: ComposerProps) {
   const [sending, setSending] = useState(false)
   const [model, setModel] = useState<ModelSelection>({})
   const box = useRef<HTMLDivElement>(null)
-  const slash = useSlashMenu(inChat ? commands : NO_COMMANDS)
+  const slash = useSlashMenu(inChat && !attached ? commands : NO_COMMANDS)
   useTuneFit(box)
 
+  const promptClass = attached
+    ? `[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-none [&>[data-slot=input-group]]:border-0 [&>[data-slot=input-group]]:bg-transparent [&>[data-slot=input-group]]:dark:bg-transparent [&>[data-slot=input-group]]:shadow-none ${TALL.group} [&>[data-slot=input-group]]:rounded-none`
+    : `[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${TALL.group}`
+
   return (
-    <div className="mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]" ref={box}>
+    <div className={attached ? "w-full" : "mx-auto w-full max-w-3xl px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]"} ref={box}>
       <SlashMenu active={slash.active} onPicked={() => box.current?.querySelector("textarea")?.focus()} options={slash.options} pick={slash.pick} />
       <DropZone anchor={box} />
-      <PromptInputAttachments className="px-1 pt-0 pb-2">
+      <PromptInputAttachments className={attached ? "px-2.5 pt-2 pb-0" : "px-1 pt-0 pb-2"}>
         {file => <PromptInputAttachment data={file} />}
       </PromptInputAttachments>
       <PromptInput
-        className={`[&>[data-slot=input-group]]:items-end [&>[data-slot=input-group]]:rounded-3xl [&>[data-slot=input-group]]:bg-card ${TALL.group}`}
+        className={promptClass}
         globalDrop
         maxFileSize={MAX_FILE}
         multiple
         onError={e => setError(e.message)}
         onSubmit={async message => {
           if (!message.text.trim() && !message.files.length) return
-          if (message.text.trim() === "!restart" && !message.files.length) {
+          if (!attached && message.text.trim() === "!restart" && !message.files.length) {
             navigate("#/settings/gateway")
             return
           }
           if (saysThanks(message.text)) burstHearts(box.current?.querySelector("form"))
           setSending(true)
           try {
-            if (inChat && isCommand(message.text) && !message.files.length) {
+            if (inChat && !attached && isCommand(message.text) && !message.files.length) {
               return await command(message.text)
             }
             await send(
@@ -188,20 +241,23 @@ function ComposerBody({ session, placeholder, running, inChat, commands, send, c
           }
         }}
       >
-        <InputGroupAddon align="inline-start" className={`relative self-end pb-1.5 ${TALL.start}`}>
-          <AttachButton />
-          {!inChat && <NewChatModel selection={model} onPick={setModel} />}
-          {session && <SessionModel key={session} session={session} running={running} />}
-        </InputGroupAddon>
+        <ComposerStartAddon
+          attachedTarget={attachedTarget}
+          inChat={inChat}
+          model={model}
+          onPickModel={setModel}
+          running={running}
+          session={session}
+        />
         <PromptInputTextarea
-          className={TALL.text}
+          className={attached ? "col-span-3 row-start-1 min-h-11 px-2.5 pt-2.5 pb-1" : TALL.text}
           enterKeyHint="send"
           onKeyDownCapture={slash.onKeyDownCapture}
-          placeholder={running ? "Steer or queue a message" : placeholder || "Message"}
+          placeholder={composerPlaceholder(attachedTarget, running, placeholder)}
           rows={1}
         />
         <InputGroupAddon align="inline-end" className={`gap-1 self-end pb-1.5 ${TALL.end}`}>
-          {running && (
+          {running && !attached && (
             <PromptInputButton
               aria-label="Stop"
               className="rounded-full"
