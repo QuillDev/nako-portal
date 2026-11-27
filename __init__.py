@@ -34,6 +34,7 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from contextlib import closing
 from pathlib import Path
 
@@ -425,6 +426,149 @@ def _local_token(data):
     return path.read_text().strip()
 
 
+# Reuse read-only SQLite connections across portal reads (2s turn sweeps, session lookups) using a
+# bounded checkout pool with exclusive single-thread ownership and autocommit so WAL checkpoints
+# are never blocked.
+RO_POOL_PER_DB = 4
+RO_POOL_MAX_DBS = 16
+
+
+def _stat_sig(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_ctime_ns, st.st_size, st.st_ino, st.st_mode)
+
+
+def _open_readonly_sqlite(path, *, check_same_thread):
+    conn = sqlite3.connect(
+        f"file:{path}?mode=ro",
+        uri=True,
+        timeout=10,
+        isolation_level=None,
+        check_same_thread=check_same_thread,
+    )
+    try:
+        conn.execute("PRAGMA query_only = ON").close()
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
+class _ReadOnlyPool:
+    """Thread-safe checkout pool of read-only autocommit SQLite connections keyed by DB path."""
+
+    def __init__(self, *, max_per_db=RO_POOL_PER_DB, max_dbs=RO_POOL_MAX_DBS):
+        self._max_per_db = max_per_db
+        self._max_dbs = max_dbs
+        self._lock = threading.Lock()
+        # path_key -> (file_id, [conn, ...]) in LRU order (most recently used at the end).
+        self._idle = {}
+        self._closed = False
+
+    @staticmethod
+    def _close_quiet(conn):
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+
+    def _drop_path(self, key):
+        with self._lock:
+            entry = self._idle.pop(key, None)
+        if entry is not None:
+            for conn in entry[1]:
+                self._close_quiet(conn)
+
+    def _checkout(self, key, file_id):
+        stale = []
+        conn = None
+        with self._lock:
+            if self._closed:
+                return None
+            entry = self._idle.get(key)
+            if entry is not None:
+                if entry[0] != file_id:
+                    stale = self._idle.pop(key)[1]
+                else:
+                    self._idle[key] = self._idle.pop(key)
+                    if entry[1]:
+                        conn = entry[1].pop()
+        for old in stale:
+            self._close_quiet(old)
+        return conn
+
+    def _checkin(self, key, file_id, conn):
+        if conn.in_transaction:
+            self._close_quiet(conn)
+            return
+        evicted = []
+        keep = False
+        with self._lock:
+            if not self._closed:
+                entry = self._idle.get(key)
+                if entry is None:
+                    self._idle[key] = (file_id, [conn])
+                    keep = True
+                    while len(self._idle) > self._max_dbs:
+                        oldest = next(iter(self._idle))
+                        evicted.extend(self._idle.pop(oldest)[1])
+                elif entry[0] == file_id and len(entry[1]) < self._max_per_db:
+                    entry[1].append(conn)
+                    self._idle[key] = self._idle.pop(key)
+                    keep = True
+        if not keep:
+            self._close_quiet(conn)
+        for old in evicted:
+            self._close_quiet(old)
+
+    def query(self, path, sql, args=()):
+        key = str(path)
+        try:
+            st = os.stat(path)
+        except OSError:
+            self._drop_path(key)
+            return []
+        file_id = (st.st_dev, st.st_ino)
+        if sqlite3.threadsafety < 3:
+            with closing(_open_readonly_sqlite(path, check_same_thread=True)) as conn, closing(conn.execute(sql, args)) as cur:
+                return cur.fetchall()
+        conn = self._checkout(key, file_id)
+        if conn is None:
+            conn = _open_readonly_sqlite(path, check_same_thread=False)
+        healthy = False
+        try:
+            with closing(conn.execute(sql, args)) as cur:
+                rows = cur.fetchall()
+            healthy = True
+            return rows
+        finally:
+            if healthy:
+                self._checkin(key, file_id, conn)
+            else:
+                self._close_quiet(conn)
+
+    def prune(self, keep_paths):
+        """Close idle connections for databases no longer in ``keep_paths``."""
+        keep = {str(p) for p in keep_paths}
+        dropped = []
+        with self._lock:
+            for key in [k for k in self._idle if k not in keep]:
+                dropped.extend(self._idle.pop(key)[1])
+        for conn in dropped:
+            self._close_quiet(conn)
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            conns = [conn for _, pool in self._idle.values() for conn in pool]
+            self._idle.clear()
+        for conn in conns:
+            self._close_quiet(conn)
+
+
 class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
     """The hub's view of Hermes: the gateway's session store and this adapter's inbound path.
 
@@ -446,6 +590,15 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
         self.mcp_installs = {}
         self.mcp_flows = {}
         self.mcp_lock = threading.Lock()
+        self._ro_pool = _ReadOnlyPool()
+        weakref.finalize(self, self._ro_pool.close)
+        self._multiplex_cache = None
+        self._profiles_cache = None
+        self._last_home_paths = None
+
+    def close(self):
+        """Close cached read-only state.db connections."""
+        self._ro_pool.close()
 
     def _mcp_changed(self):
         _hub_tell("mcp_changed")
@@ -486,18 +639,113 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
 
     # Profiles
 
+    def _read_multiplex_flag(self, config_mod):
+        """Read ``gateway.multiplex_profiles`` without deep-copying the full config dict."""
+        load_ro = getattr(config_mod, "load_config_readonly", None)
+        own_loader = getattr(config_mod.load_config, "__module__", None) == config_mod.__name__
+        if callable(load_ro) and own_loader:
+            cfg = load_ro()
+            return bool((cfg.get("gateway") or {}).get("multiplex_profiles"))
+        get_path = getattr(config_mod, "get_config_path", None)
+        if callable(get_path) and own_loader:
+            cfg_path = Path(get_path())
+            sig = (id(config_mod.load_config), str(cfg_path), _stat_sig(cfg_path))
+            cached = self._multiplex_cache
+            if cached is not None and cached[0] == sig:
+                return cached[1]
+            cfg = config_mod.load_config()
+            multiplex = bool((cfg.get("gateway") or {}).get("multiplex_profiles"))
+            self._multiplex_cache = (sig, multiplex)
+            return multiplex
+        cfg = config_mod.load_config()
+        return bool((cfg.get("gateway") or {}).get("multiplex_profiles"))
+
+    def _profiles_signature(self, profiles_mod):
+        if getattr(profiles_mod.profiles_to_serve, "__module__", None) != profiles_mod.__name__:
+            return None
+        get_dir = getattr(profiles_mod, "get_profile_dir", None)
+        get_root = getattr(profiles_mod, "_get_profiles_root", None)
+        if not callable(get_dir) and not callable(get_root):
+            return None
+        default_home = Path(get_dir(DEFAULT_PROFILE)) if callable(get_dir) else self.root
+        profiles_root = Path(get_root()) if callable(get_root) else default_home / "profiles"
+        run_elsewhere = default_home / "profiles_run_elsewhere"
+        root_sig = _stat_sig(profiles_root)
+        elsewhere_sig = _stat_sig(run_elsewhere)
+        elsewhere_names = ()
+        if elsewhere_sig is not None:
+            try:
+                with os.scandir(run_elsewhere) as it:
+                    elsewhere_names = tuple(sorted(e.name for e in it))
+            except OSError:
+                return None
+        children = []
+        if root_sig is not None:
+            try:
+                with os.scandir(profiles_root) as it:
+                    entries = sorted(it, key=lambda e: e.name)
+            except OSError:
+                return None
+            for entry in entries:
+                ep = entry.path
+                cfg_sig = _stat_sig(os.path.join(ep, "config.yaml"))
+                # Include explicit marker presence so same-tick creates/removals invalidate
+                # immediately even under coarse filesystem mtime granularity. Only check fallback
+                # identity files when config.yaml is absent.
+                has_identity = cfg_sig is not None or any(
+                    os.path.lexists(os.path.join(ep, name))
+                    for name in (".env", "SOUL.md", "profile.yaml", "auth.json", "state.db")
+                )
+                markers = (
+                    os.path.lexists(os.path.join(ep, "gateway.parked")),
+                    os.path.lexists(os.path.join(ep, ".profile_deleted")),
+                    has_identity,
+                )
+                children.append((entry.name, _stat_sig(ep), cfg_sig, markers))
+        return (
+            id(profiles_mod.profiles_to_serve),
+            str(default_home),
+            str(profiles_root),
+            root_sig,
+            elsewhere_sig,
+            elsewhere_names,
+            tuple(children),
+        )
+
+    def _served_profiles(self, profiles_mod):
+        sig = self._profiles_signature(profiles_mod)
+        if sig is not None:
+            cached = self._profiles_cache
+            if cached is not None and cached[0] == sig:
+                return cached[1]
+        served = tuple(
+            (k, Path(v))
+            for k, v in dict(profiles_mod.profiles_to_serve(multiplex=True)).items()
+            if k != DEFAULT_PROFILE
+        )
+        if sig is not None:
+            self._profiles_cache = (sig, served)
+        return served
+
     def homes(self):
         """The profiles this gateway serves, by name. Without multiplexing it serves only its own."""
         try:
-            from hermes_cli.config import load_config
-            from hermes_cli.profiles import profiles_to_serve
+            import hermes_cli.config as config_mod
+            import hermes_cli.profiles as profiles_mod
 
-            multiplex = bool((load_config().get("gateway") or {}).get("multiplex_profiles"))
-            served = dict(profiles_to_serve(multiplex=multiplex)) if multiplex else {}
+            multiplex = self._read_multiplex_flag(config_mod)
+            served = self._served_profiles(profiles_mod) if multiplex else ()
         except Exception:
             log.warning("portal: could not list served profiles", exc_info=True)
-            served = {}
-        return {DEFAULT_PROFILE: self.root, **{k: Path(v) for k, v in served.items() if k != DEFAULT_PROFILE}}
+            served = ()
+        result = {DEFAULT_PROFILE: self.root, **dict(served)}
+        pool = getattr(self, "_ro_pool", None)
+        if pool is not None:
+            keys = frozenset(result.values())
+            if keys != self._last_home_paths:
+                self._last_home_paths = keys
+                pool.prune(home / "state.db" for home in keys)
+        return result
 
     def profiles(self):
         return {"profile": self.profile, "profiles": list(self.homes())}
@@ -528,14 +776,20 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
         finally:
             reset_hermes_home_override(token)
 
-    def _read(self, sql, args=(), profile=None):
-        state = self._home(profile) / "state.db"
+    def _read_home(self, home, sql, args=()):
+        state = Path(home) / "state.db"
+        pool = getattr(self, "_ro_pool", None)
+        if pool is not None:
+            return pool.query(state, sql, args)
         if not state.exists():
             return []
-        with closing(sqlite3.connect(f"file:{state}?mode=ro", uri=True, timeout=10)) as db:
-            return db.execute(sql, args).fetchall()
+        with closing(_open_readonly_sqlite(state, check_same_thread=True)) as db, closing(db.execute(sql, args)) as cur:
+            return cur.fetchall()
 
-    def _origin(self):
+    def _read(self, sql, args=(), profile=None):
+        return self._read_home(self._home(profile), sql, args)
+
+    def _origin(self, homes=None):
         """The profile whose work is calling in: a turn or cron run is scoped to its profile's
         home; a request from the web app isn't scoped and means the profile on screen."""
         from hermes_constants import get_hermes_home_override
@@ -543,7 +797,7 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
         override = get_hermes_home_override()
         if override:
             here = Path(override).resolve()
-            for name, home in self.homes().items():
+            for name, home in (homes if homes is not None else self.homes()).items():
                 if Path(home).resolve() == here:
                     return name
         return self.profile
@@ -554,14 +808,17 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
         return _portal("search").search_sessions(self._home(), query)
 
     def sessions(self):
+        home = self._home()
         live = {
             sid: (chat, pinned)
-            for sid, chat, pinned in self._read(
-                "SELECT id, chat_id, pinned FROM sessions WHERE source='portal' AND ended_at IS NULL AND COALESCE(archived, 0)=0"
+            for sid, chat, pinned in self._read_home(
+                home,
+                "SELECT id, chat_id, pinned FROM sessions WHERE source='portal' AND ended_at IS NULL AND COALESCE(archived, 0)=0",
             )
         }
         rows = self._scoped(
-            lambda: self._list_sessions(source="portal", limit=300, include_pinned=True)
+            lambda: self._list_sessions(source="portal", limit=300, include_pinned=True),
+            home=home,
         )
         out = []
         for row in rows:
@@ -572,14 +829,17 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
 
     def archived_sessions(self):
         """Archived portal chats that can come back: still their thread's chat (not ended)."""
+        home = self._home()
         open_ = {
             sid
-            for (sid,) in self._read(
-                "SELECT id FROM sessions WHERE source='portal' AND ended_at IS NULL AND COALESCE(archived, 0)=1"
+            for (sid,) in self._read_home(
+                home,
+                "SELECT id FROM sessions WHERE source='portal' AND ended_at IS NULL AND COALESCE(archived, 0)=1",
             )
         }
         rows = self._scoped(
-            lambda: self._list_sessions(source="portal", limit=300, archived_only=True)
+            lambda: self._list_sessions(source="portal", limit=300, archived_only=True),
+            home=home,
         )
         return [row for row in rows if row["id"] in open_]
 
@@ -639,12 +899,12 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
             _history_to_messages,  # bound copy; the session_history original lacks server globals
         )
 
-        found = self._read("SELECT source FROM sessions WHERE id=?", (session,))
+        home = self._home()
+        found = self._read_home(home, "SELECT source FROM sessions WHERE id=?", (session,))
         # Any session reads (one from Slack or cron opens read-only); a turn's tool sessions don't.
         if not found or found[0][0] == "tool":
             return None
         source = found[0][0] or "portal"
-        home = self._home()
 
         def read():
             store = self._persistence()
@@ -685,7 +945,7 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
                 title = db.get_session_title(session)
             return {"title": title or "", "messages": list(messages), "source": source}
 
-        return self._scoped(read)
+        return self._scoped(read, home=home)
 
     def chat_of(self, session):
         rows = self._read("SELECT chat_id FROM sessions WHERE id=? AND source='portal'", (session,))
@@ -755,13 +1015,12 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
         the admission that turn runs: Hermes's own record, so a turn it starts without the adapter
         hearing (a queued message run after the one before it, one held over a restart) counts."""
         running = {}
-        for profile in self.homes():
+        for _profile, home in self.homes().items():
             try:
-                rows = self._read(
+                rows = self._read_home(
+                    home,
                     "SELECT s.chat_id, a.admission_id FROM sessions s JOIN session_admissions a ON a.target_session_id = s.id "
                     "WHERE s.source='portal' AND s.ended_at IS NULL AND s.chat_id IS NOT NULL AND a.status='started'",
-                    (),
-                    profile,
                 )
             except sqlite3.OperationalError:  # a Hermes from before the durable queue: hooks cover every turn
                 continue
@@ -770,9 +1029,9 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
 
     def turn_outcome(self, admission):
         """How a finished admission went, in the hub's words (an interrupted one is neither)."""
-        for profile in self.homes():
+        for _profile, home in self.homes().items():
             try:
-                rows = self._read("SELECT outcome FROM session_admissions WHERE admission_id=?", (admission,), profile)
+                rows = self._read_home(home, "SELECT outcome FROM session_admissions WHERE admission_id=?", (admission,))
             except sqlite3.OperationalError:
                 continue
             if rows:
@@ -787,12 +1046,13 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
     def session_of(self, chat):
         """The open thread for a chat: in the calling profile first, then any other (a turn that
         started before a switch still finds its thread)."""
-        first = self._origin()
-        for profile in [first, *(p for p in self.homes() if p != first)]:
-            rows = self._read(
+        homes = self.homes()
+        first = self._origin(homes)
+        for profile in [first, *(p for p in homes if p != first)]:
+            rows = self._read_home(
+                homes.get(profile, self.root),
                 "SELECT id FROM sessions WHERE source='portal' AND chat_id=? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1",
                 (chat,),
-                profile,
             )
             if rows:
                 return rows[0][0]
@@ -823,8 +1083,10 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
     def _adopt(self, chat, session):
         """Move another surface's chat (a Desktop thread) into a new portal thread, keeping its id
         and transcript: the same repoint Hermes's own /handoff does for a messaging platform."""
-        rows = self._read(
-            "SELECT source, ended_at, COALESCE(archived, 0) FROM sessions WHERE id=?", (session,)
+        profile = self.profile
+        home = self._home(profile)
+        rows = self._read_home(
+            home, "SELECT source, ended_at, COALESCE(archived, 0) FROM sessions WHERE id=?", (session,)
         )
         if not rows:
             raise ValueError("No chat with that id")
@@ -833,8 +1095,8 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
             raise ValueError("That chat is already in the portal")
         if archived:
             raise ValueError("That chat is archived")
-        newest = self._read(
-            "SELECT role, finish_reason, timestamp FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", (session,)
+        newest = self._read_home(
+            home, "SELECT role, finish_reason, timestamp FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", (session,)
         )
         if newest:
             role, finish, stamp = newest[0]
@@ -843,13 +1105,13 @@ class HermesBackend(_providers.ProviderBackend, _mcp.MCPBackend):
                 raise ValueError("That chat is in the middle of a turn; hand it off once it finishes")
 
         def repoint():
-            thread = _source(chat, self.profile)
+            thread = _source(chat, profile)
             key = self.store.get_or_create_session(thread, touch_activity=False).session_key
             return self.store.switch_session(key, session, preserve_prompt_pin=False)
 
-        if self._scoped(repoint) is None:
+        if self._scoped(repoint, home=home) is None:
             raise ValueError("Couldn't move that chat into the portal")
-        self.owner[chat] = self.profile
+        self.owner[chat] = profile
         return session
 
     async def inbound(self, chat, text, files):

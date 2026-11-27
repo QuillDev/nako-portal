@@ -190,6 +190,8 @@ def _adapter(config, runtime: AdapterRuntime):
                 for request_id in self._secrets.shown:
                     secrets_api.close(request_id)
             self._secrets = None
+            if self.backend is not None and hasattr(self.backend, "close"):
+                self.backend.close()
             self._tasks, self._http, self.link, self.backend = [], None, None, None
             self._mark_disconnected()
 
