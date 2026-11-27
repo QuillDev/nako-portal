@@ -12,6 +12,7 @@ import re
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from urllib.parse import urlparse
@@ -315,8 +316,9 @@ class _Scan:
 class GroupInspector:
     """Reads live group thread status, summaries, and artifacts strictly read-only from `state.db`."""
 
-    def __init__(self, home: Path, *, preview_hosts=(), own_hosts=(), clock=time.time):
-        self.state = Path(home) / "state.db"
+    def __init__(self, home: Path | str | Callable[[], Path | None], *, preview_hosts=(), own_hosts=(), clock=time.time):
+        self._home_source = home
+        self._last_state: Path | None = None
         self.preview_hosts = tuple(h.lower().lstrip(".") for h in preview_hosts if h)
         self.own_hosts = tuple(h.lower() for h in own_hosts if h)
         self.clock = clock
@@ -324,8 +326,19 @@ class GroupInspector:
         self._scans: dict[str, _Scan] = {}
 
     @property
+    def state(self) -> Path:
+        raw = self._home_source() if callable(self._home_source) else self._home_source
+        return Path(str(raw)) / "state.db" if raw is not None else Path()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._scans.clear()
+            self._last_state = None
+
+    @property
     def available(self) -> bool:
-        return self.state.exists()
+        s = self.state
+        return bool(str(s)) and s.is_file()
 
     def _scan_messages(self, db: sqlite3.Connection, sid: str) -> _Scan:
         scan = self._scans.get(sid)
@@ -380,14 +393,30 @@ class GroupInspector:
         thread_meta: dict[str, dict] | None = None,
     ) -> dict[str, dict]:
         """Inspect all sessions whose `chat_id` is in `chats`. Returns `{session_id: thread_info}`."""
-        if not chats or not self.available:
+        state_path = self.state
+        if not chats or not state_path.is_file():
             return {}
         now = self.clock()
         hub_status = hub_status or {}
         request_sessions = request_sessions or set()
         thread_meta = thread_meta or {}
 
-        with self._lock, connect_ro(self.state) as db:
+        with self._lock:
+            if self._last_state != state_path:
+                self._scans.clear()
+                self._last_state = state_path
+            return self._inspect_locked(state_path, chats, now, hub_status, request_sessions, thread_meta)
+
+    def _inspect_locked(
+        self,
+        state_path: Path,
+        chats: set[str],
+        now: float,
+        hub_status: dict[str, str],
+        request_sessions: set[str],
+        thread_meta: dict[str, dict],
+    ) -> dict[str, dict]:
+        with connect_ro(state_path) as db:
             placeholders = ",".join("?" for _ in chats)
             sessions = db.execute(
                 "SELECT id, chat_id, title, archived, auto_archived, pinned, message_count, "

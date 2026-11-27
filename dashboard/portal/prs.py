@@ -1008,7 +1008,7 @@ class PRService:
         clock=time.monotonic,
     ):
         self.store = store
-        self.home = Path(home) if home else None
+        self._home_source = home
         self.viewer = viewer
         self.seed_db = Path(seed_db) if seed_db else None
         self.ttl = ttl
@@ -1017,17 +1017,36 @@ class PRService:
         self.clock = clock
         self._raw: dict | None = None
         self._inferred: dict[str, dict | None] | None = None
+        self._inferred_db: Path | None = None
         self._at = 0.0
         self._running: asyncio.Future | None = None
         self._last_error: str | None = None
 
+    @property
+    def home(self) -> Path | None:
+        raw = self._home_source() if callable(self._home_source) else self._home_source
+        return Path(str(raw)) if raw is not None else None
+
     def _state_db(self) -> Path | None:
-        return (self.home / "state.db") if self.home else None
+        h = self.home
+        return (h / "state.db") if h else None
+
+    def invalidate_home(self) -> None:
+        self._inferred = None
+        self._inferred_db = None
 
     async def snapshot(self, *, refresh: bool = False) -> dict:
         raw, stale, error = await self._load_raw(refresh=refresh)
+        state_db = self._state_db()
+        if state_db != self._inferred_db:
+            self._inferred = (
+                await asyncio.to_thread(infer_pr_owners, raw.get("prs") or [], state_db)
+                if state_db and state_db.is_file()
+                else None
+            )
+            self._inferred_db = state_db
         explicit = await asyncio.to_thread(self.store.session_prs)
-        titles = await asyncio.to_thread(_session_titles, self._state_db())
+        titles = await asyncio.to_thread(_session_titles, state_db)
         return assemble_view(
             raw,
             explicit_links=explicit,
@@ -1078,8 +1097,9 @@ class PRService:
     async def _collect(self):
         raw = await asyncio.to_thread(self.collector, self.viewer)
         state_db = self._state_db()
-        inferred = await asyncio.to_thread(infer_pr_owners, raw.get("prs") or [], state_db) if state_db else {}
+        inferred = await asyncio.to_thread(infer_pr_owners, raw.get("prs") or [], state_db) if state_db and state_db.is_file() else {}
         self._raw = raw
         self._inferred = inferred
+        self._inferred_db = state_db
         self._at = self.clock()
         self._last_error = (raw.get("errors") or [None])[0]
