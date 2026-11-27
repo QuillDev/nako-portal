@@ -552,14 +552,17 @@ class Portal(AuthRoutes, LocalAPI):
         hub = await self._hub()
         if request.query.get("archived") == "only":
             return web.json_response(await hub.archived())
-        rows = await hub.sessions()
+        if self.mesh is not None:
+            rows, mesh_rows = await asyncio.gather(hub.sessions(), self.mesh.sessions())
+        else:
+            rows, mesh_rows = await hub.sessions(), []
         member = self.store.chat_groups()
         for row in rows:
             row["group"] = member.get(row.pop("chat", None))
             # A post nobody has opened the chat for since: the sidebar marks it.
             row["unread"] = (row["notifications"] or row["reviews"]) and row["message_count"] > self.store.meta(f"seen:{row['id']}", 0)
-        if self.mesh is not None:
-            rows += await self.mesh.sessions()
+        if mesh_rows:
+            rows = [*rows, *mesh_rows]
         return web.json_response(rows)
 
     async def outside(self, request):
@@ -961,7 +964,7 @@ class Portal(AuthRoutes, LocalAPI):
         if not SESSION_ID.fullmatch(session):
             raise web.HTTPNotFound()
         if remote(session):
-            path = self.mesh.attachments.file(session, raw) if self.mesh is not None else None
+            path = await asyncio.to_thread(self.mesh.attachments.file, session, raw) if self.mesh is not None else None
             if path is None:
                 raise web.HTTPNotFound()
             return self._file_response(path, raw, request.query.get("download") == "1")
@@ -969,7 +972,16 @@ class Portal(AuthRoutes, LocalAPI):
         if not raw.startswith(("/", "~/")):
             raise web.HTTPNotFound()
         path = Path(raw).expanduser()
-        if raw not in await self._shown_files(hub, session, raw) or not path.is_file() or path.stat().st_size > MAX_FILE:
+        if raw not in await self._shown_files(hub, session, raw):
+            raise web.HTTPNotFound()
+
+        def readable(target):
+            try:
+                return target.is_file() and target.stat().st_size <= MAX_FILE
+            except OSError:
+                return False
+
+        if not await asyncio.to_thread(readable, path):
             raise web.HTTPNotFound()
         return self._file_response(path, raw, request.query.get("download") == "1")
 

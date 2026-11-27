@@ -790,3 +790,44 @@ def test_homes_cache_tracks_config_and_profile_lifecycle_edits(tmp_path, monkeyp
         backend.close()
 
 
+def test_store_prunes_expired_auth_rows_and_keeps_group_updates_atomic(tmp_path):
+    from portal.store import LOGIN_TTL, SETUP_TTL, Store
+
+    now = [1000.0]
+    store = Store(tmp_path / 'portal.db', clock=lambda: now[0])
+    store.add_credential(b'cred-1', b'key-1', 0, 'laptop')
+
+    old_login = store.start_login(b'cred-1')
+    old_setup = store.new_setup_link()
+    assert store.login(old_login) == b'cred-1'
+    assert store.setup_link_valid(old_setup) is True
+
+    # After expiry, issuing a new login or setup link prunes expired rows automatically.
+    now[0] += max(LOGIN_TTL, SETUP_TTL) + 10
+    fresh_login = store.start_login(b'cred-1')
+    fresh_setup = store.new_setup_link()
+    assert store.login(old_login) is None
+    assert store.login(fresh_login) == b'cred-1'
+    assert store.setup_link_valid(old_setup) is False
+    assert store.setup_link_valid(fresh_setup) is True
+    assert store._run('SELECT COUNT(*) FROM logins')[0][0] == 1
+    assert store._run('SELECT COUNT(*) FROM setup_links')[0][0] == 1
+
+    # Group membership join, rename clash guard, and atomic deletion stay consistent.
+    g1 = store.create_group('Alpha', 'blue')
+    g2 = store.create_group('Beta', 'green')
+    store.set_chat_group('chat-a', g1['id'])
+    store.set_chat_group('chat-b', g2['id'])
+    assert store.chat_groups() == {'chat-a': g1, 'chat-b': g2}
+
+    with pytest.raises(ValueError, match="already a group"):
+        store.update_group(g1['id'], name='beta')
+    renamed = store.update_group(g1['id'], name='Gamma', color='purple')
+    assert store.chat_groups()['chat-a'] == renamed
+
+    store.delete_group(g1['id'])
+    assert store.chat_groups() == {'chat-b': g2}
+    assert store._run('SELECT COUNT(*) FROM chat_group_members WHERE group_id=?', (g1['id'],))[0][0] == 0
+
+
+

@@ -6,6 +6,7 @@ browser vendor's push service sees ciphertext, never the conversation.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -15,6 +16,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+import aiohttp
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
@@ -23,6 +25,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 log = logging.getLogger("hermes.portal")
 RECORD_SIZE = 4096
+PUSH_TIMEOUT = 15
 
 
 def _b64(data: bytes) -> str:
@@ -98,8 +101,9 @@ class Pusher:
 
     async def notify(self, title: str, body: str, session: str | None = None) -> int:
         payload = json.dumps({"title": title, "body": body, "session": session}).encode()
-        delivered = 0
-        for subscription in self.store.pushes():
+        timeout = aiohttp.ClientTimeout(total=PUSH_TIMEOUT)
+
+        async def deliver(subscription) -> int:
             endpoint = subscription["endpoint"]
             keys = subscription["keys"]
             try:
@@ -107,6 +111,7 @@ class Pusher:
                 async with self.http.post(
                     endpoint,
                     data=body_bytes,
+                    timeout=timeout,
                     headers={
                         "Authorization": self.vapid.header(endpoint),
                         "Content-Encoding": "aes128gcm",
@@ -119,9 +124,14 @@ class Pusher:
                         # The browser dropped this subscription.
                         self.store.remove_push(endpoint)
                     elif response.status < 300:
-                        delivered += 1
+                        return 1
                     else:
                         log.warning("Nako portal push got %s from %s", response.status, urlparse(endpoint).netloc)
             except Exception as error:  # noqa: BLE001 - An invalid subscription must not stop delivery to the others.
                 log.warning("Nako portal push failed: %s", type(error).__name__)
-        return delivered
+            return 0
+
+        subscriptions = self.store.pushes()
+        if not subscriptions:
+            return 0
+        return sum(await asyncio.gather(*(deliver(sub) for sub in subscriptions)))

@@ -35,6 +35,7 @@ export function listen({ origin, cookie, onAlert, onFrame = () => {}, log = () =
   let stopped = false
   let attempt = 0
   let socket = null
+  let settleSocket = null
   let timer = null
   let waiting = null
 
@@ -52,14 +53,16 @@ export function listen({ origin, cookie, onAlert, onFrame = () => {}, log = () =
         continue
       }
       const outcome = await new Promise(resolve => {
+        settleSocket = resolve
         socket = new WebSocket(origin.socketUrl, { headers: { Cookie: header, Origin: origin.value } })
         socket.on("open", () => {
           log("listening for alerts")
           attempt = 0
         })
         socket.on("message", data => {
-          onFrame(String(data))
-          const alert = parseAlert(String(data))
+          const text = String(data)
+          onFrame(text)
+          const alert = parseAlert(text)
           if (alert) onAlert(alert)
         })
         socket.on("unexpected-response", (_request, response) => resolve([401, 403].includes(response.statusCode) ? "signed-out" : "error"))
@@ -69,6 +72,7 @@ export function listen({ origin, cookie, onAlert, onFrame = () => {}, log = () =
         })
         socket.on("close", () => resolve("closed"))
       })
+      settleSocket = null
       drop(socket)
       socket = null
       if (stopped) return
@@ -92,6 +96,8 @@ export function listen({ origin, cookie, onAlert, onFrame = () => {}, log = () =
     stop() {
       stopped = true
       drop(socket)
+      settleSocket?.("stopped")
+      settleSocket = null
       this.wake()
     },
   }
