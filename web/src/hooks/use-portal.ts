@@ -115,6 +115,8 @@ export function usePortal() {
 
   const currentRef = useRef(current)
   currentRef.current = current
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
   const socketRef = useRef<WebSocket | null>(null)
   const retryRef = useRef(1000)
   const cacheRef = useRef(new Map<string, Cached>())
@@ -224,6 +226,8 @@ export function usePortal() {
           return
         case "status":
           setSessions(rows => rows.map(r => (r.id === frame.session ? { ...r, status: frame.status, finished: Boolean(frame.unread) } : r)))
+          // A grouped chat's group status comes from its transcript, so the server has to recompute it.
+          if (sessionsRef.current.some(r => r.id === frame.session && r.group)) loadSessions()
           return
         case "outside": {
           const next = { sources: frame.sources, running: frame.running }
