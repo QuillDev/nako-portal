@@ -62,7 +62,7 @@ const ChatHeader = memo(function ChatHeader({
           {group && leadSession && leadSession !== session && prefetch && (
             <GroupBackChip group={group} leadSession={leadSession} prefetch={prefetch} />
           )}
-          {prs && <ChatPrs key={session} session={session} />}
+          {prs && <ChatPrs key={`prs:${session}`} session={session} />}
           {environments && <ChatEnvironments session={session} />}
           <Processes key={session} running={running} session={session} />
           <DropdownMenu>
