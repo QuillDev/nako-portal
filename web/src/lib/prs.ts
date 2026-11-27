@@ -43,6 +43,10 @@ const PrOwner = d.object({
   source: d.string().default("portal"),
   archived: d.boolean().default(false),
   explicit: d.boolean().default(false),
+  group_name: d.string().optional(),
+  lead_session: d.string().nullable().optional(),
+  lead_title: d.string().optional(),
+  lead_archived: d.boolean().optional(),
 })
 
 const PrStackNode = d.object({
@@ -57,6 +61,9 @@ const PrStackNode = d.object({
   depth: d.number().default(0),
   session: d.string().nullable().optional(),
   session_title: d.string().default(""),
+  lead_session: d.string().nullable().optional(),
+  lead_title: d.string().optional(),
+  group_name: d.string().optional(),
 })
 
 const PrMergedParent = d.object({
@@ -129,7 +136,9 @@ const PrsSnapshot = d.object({
   viewer: d.string(),
   taken_at: d.number(),
   stale: d.boolean().default(false),
+  refreshing: d.boolean().default(false),
   readonly: d.boolean().default(false),
+  window_days: d.number().default(0),
   error: d.string().nullable().optional(),
   prs: d.array(PrItem),
   stacks: d.array(PrStack),
@@ -173,15 +182,69 @@ export const PR_PILL: Record<PrStatus, string> = {
   merged: "bg-purple-500/15 text-purple-700 dark:text-purple-400",
 }
 
-const STATUS_PRIORITY: Record<PrStatus, number> = {
-  conflict: 0,
-  ci_failed: 1,
-  changes_requested: 2,
-  needs_your_review: 3,
-  pending: 4,
-  ready_to_merge: 5,
-  draft: 6,
-  merged: 7,
+export const PR_TEXT: Record<PrStatus, string> = {
+  conflict: "text-destructive",
+  ci_failed: "text-destructive",
+  changes_requested: "text-orange-600 dark:text-orange-400",
+  needs_your_review: "text-amber-700 dark:text-amber-400",
+  ready_to_merge: "text-emerald-600 dark:text-emerald-400",
+  draft: "text-muted-foreground",
+  pending: "text-muted-foreground",
+  merged: "text-purple-600 dark:text-purple-400",
+}
+
+const STALE_DAYS = 14
+
+export function updatedMs(pr: PrItem): number {
+  if (!pr.updated_at) return 0
+  const ms = Date.parse(pr.updated_at)
+  return Number.isNaN(ms) ? 0 : ms
+}
+
+export function shortAge(iso: string): string {
+  if (!iso) return ""
+  const ms = Date.parse(iso)
+  if (Number.isNaN(ms)) return ""
+  const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (secs < 60) return "now"
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d`
+  const months = Math.floor(days / 30)
+  return `${months}mo`
+}
+
+export function isStaleOrDraft(pr: PrItem): boolean {
+  if (pr.draft) return true
+  if (pr.status === "conflict") {
+    const ms = updatedMs(pr)
+    if (ms > 0 && Date.now() - ms > STALE_DAYS * 86_400_000) return true
+  }
+  return false
+}
+
+export function shortStatus(pr: PrItem): string {
+  switch (pr.status) {
+    case "ready_to_merge":
+      return "Ready"
+    case "ci_failed":
+      return "CI failed"
+    case "changes_requested":
+      return "Changes"
+    case "conflict":
+      return "Conflict"
+    case "needs_your_review":
+      return "Review"
+    case "draft":
+      return "Draft"
+    case "merged":
+      return "Merged"
+    default:
+      return pr.checks.state === "pending" ? "Running" : "Waiting"
+  }
 }
 
 export function shortRepo(repo: string) {
@@ -226,7 +289,26 @@ export type PrGroupRow = {
   kind: "stack" | "standalone"
   repos: string[]
   members: PrItem[]
-  priority: number
+  latestUpdated: number
+  staleOrDraft: boolean
+}
+
+export type PrStatusFilter = "all" | "attention" | "ready"
+
+export function needsAttention(pr: PrItem): boolean {
+  if (pr.draft) return false
+  return (
+    pr.status === "ci_failed" ||
+    pr.status === "changes_requested" ||
+    pr.status === "conflict" ||
+    pr.status === "needs_your_review"
+  )
+}
+
+function matchesStatus(pr: PrItem, filter: PrStatusFilter): boolean {
+  if (filter === "attention") return needsAttention(pr)
+  if (filter === "ready") return pr.status === "ready_to_merge"
+  return true
 }
 
 function matchesFilter(pr: PrItem, q: string) {
@@ -249,8 +331,13 @@ function matchesTab(pr: PrItem, tab: PrTab) {
   return true
 }
 
-/** Group and sort visible PRs into parent->child stacks first, then urgent standalones. */
-export function visiblePrGroups(data: PrsSnapshot | null, tab: PrTab, query: string): PrGroupRow[] {
+/** Group visible PRs into stacks and standalones, ordered newest activity first (flat stack order). */
+export function visiblePrGroups(
+  data: PrsSnapshot | null,
+  tab: PrTab,
+  query: string,
+  statusFilter: PrStatusFilter = "all",
+): PrGroupRow[] {
   if (!data || tab === "feed") return []
   const byKey = new Map(data.prs.map(p => [p.key, p]))
   const groups: PrGroupRow[] = []
@@ -259,26 +346,24 @@ export function visiblePrGroups(data: PrsSnapshot | null, tab: PrTab, query: str
     const members: PrItem[] = []
     for (const m of stack.members) {
       const pr = byKey.get(m.key)
-      if (pr && matchesTab(pr, tab) && matchesFilter(pr, query)) {
+      if (pr && matchesTab(pr, tab) && matchesStatus(pr, statusFilter) && matchesFilter(pr, query)) {
         members.push(pr)
       }
     }
     if (members.length === 0) continue
-    const priority = Math.min(...members.map(pr => STATUS_PRIORITY[pr.status]))
+    const latestUpdated = Math.max(...members.map(updatedMs))
+    const staleOrDraft = members.every(isStaleOrDraft)
     groups.push({
       id: stack.id,
       kind: members.length > 1 || members.some(pr => Boolean(pr.merged_parent)) ? "stack" : "standalone",
       repos: stack.repos,
       members,
-      priority,
+      latestUpdated,
+      staleOrDraft,
     })
   }
 
-  return groups.toSorted((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "stack" ? -1 : 1
-    if (a.priority !== b.priority) return a.priority - b.priority
-    return a.id.localeCompare(b.id)
-  })
+  return groups.toSorted((a, b) => b.latestUpdated - a.latestUpdated || a.id.localeCompare(b.id))
 }
 
 export function sessionPrList(data: PrsSnapshot | null, session: string): PrItem[] {
@@ -301,31 +386,84 @@ export function attentionCount(data: PrsSnapshot | null): number {
   ).length
 }
 
+const CACHE_KEY = "portal:prs:v1"
+const FRESH_MS = 30_000
+const POLL_MS = 120_000
+
+function readCachedSnapshot(): PrsSnapshot | null {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    if (!raw) return null
+    const parsed = PrsSnapshot.parse(JSON.parse(raw))
+    return { ...parsed, stale: true, refreshing: false }
+  } catch {
+    return null
+  }
+}
+
+function writeCachedSnapshot(snapshot: PrsSnapshot) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(snapshot))
+  } catch {
+    // Ignore quota or storage errors in restricted environments.
+  }
+}
+
 type State = {
   data: PrsSnapshot | null
   error: string
+  refreshing: boolean
 }
 
-let current: State = { data: null, error: "" }
+let current: State = { data: readCachedSnapshot(), error: "", refreshing: false }
 const listeners = new Set<() => void>()
 let inflight: Promise<void> | null = null
 let fetchSeq = 0
+let lastLoadedAt = 0
+let lastActiveLoadedAt = 0
+let loadedOlder = false
+let activePollers = 0
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 function set(next: State) {
   current = next
   for (const listener of listeners) listener()
 }
 
-export function loadPrs(fresh = false): Promise<void> {
-  if (!fresh && inflight) return inflight
+export function loadPrs(
+  fresh = false,
+  options?: { passive?: boolean; includeOlder?: boolean },
+): Promise<void> {
+  const passive = Boolean(options?.passive) && !fresh
+  const includeOlder = Boolean(options?.includeOlder) || loadedOlder
+  if (options?.includeOlder) loadedOlder = true
+  if (!fresh && !options?.includeOlder && inflight) return inflight
   const seq = ++fetchSeq
-  const path = fresh ? "/api/prs?refresh=1" : "/api/prs"
+  const params = new URLSearchParams()
+  if (fresh) params.set("refresh", "1")
+  if (passive) params.set("passive", "1")
+  if (includeOlder) params.set("include_older", "1")
+  const qs = params.toString()
+  const path = qs ? `/api/prs?${qs}` : "/api/prs"
+  if (fresh || (!passive && current.data?.refreshing)) {
+    set({ ...current, refreshing: true })
+  }
   const run = async (): Promise<void> => {
     try {
       const raw = await api<unknown>(path)
-      if (seq >= fetchSeq) set({ data: PrsSnapshot.parse(raw), error: "" })
+      if (seq >= fetchSeq) {
+        const parsed = PrsSnapshot.parse(raw)
+        const now = Date.now()
+        lastLoadedAt = now
+        if (!passive) lastActiveLoadedAt = now
+        if (parsed.window_days === 0 && parsed.prs.length > 0 && includeOlder) loadedOlder = true
+        writeCachedSnapshot(parsed)
+        set({ data: parsed, error: "", refreshing: parsed.refreshing })
+      }
     } catch (error: unknown) {
-      if (seq >= fetchSeq) set({ ...current, error: error instanceof Error ? error.message : String(error) })
+      if (seq >= fetchSeq) {
+        set({ ...current, error: error instanceof Error ? error.message : String(error), refreshing: false })
+      }
     } finally {
       if (inflight === promise) inflight = null
     }
@@ -336,10 +474,42 @@ export function loadPrs(fresh = false): Promise<void> {
 }
 
 export function reloadPrs(): Promise<void> {
-  return loadPrs(false)
+  return loadPrs(false, { passive: true })
 }
 
-export async function startReviewChat(pr: PrItem): Promise<ReviewChatResult> {
+function handleVisibility() {
+  if (document.visibilityState === "visible" && Date.now() - lastActiveLoadedAt > FRESH_MS) {
+    void loadPrs(false)
+  }
+}
+
+function retainPoller() {
+  activePollers += 1
+  if (activePollers === 1) {
+    pollTimer = setInterval(() => {
+      if (document.visibilityState === "visible") void loadPrs(false)
+    }, POLL_MS)
+    document.addEventListener("visibilitychange", handleVisibility)
+  }
+  if (lastActiveLoadedAt === 0 || Date.now() - lastActiveLoadedAt > FRESH_MS || current.data?.refreshing) {
+    void loadPrs(false)
+  }
+  return () => {
+    activePollers = Math.max(0, activePollers - 1)
+    if (activePollers === 0) {
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+      document.removeEventListener("visibilitychange", handleVisibility)
+    }
+  }
+}
+
+export async function startReviewChat(
+  pr: PrItem,
+  options?: { prompt?: string; actionLabel?: string },
+): Promise<ReviewChatResult> {
   const raw = await api<unknown>("/api/prs/review-chat", {
     method: "POST",
     body: {
@@ -350,13 +520,16 @@ export async function startReviewChat(pr: PrItem): Promise<ReviewChatResult> {
       author: pr.author,
       base: pr.base,
       head: pr.head,
+      ...(options?.prompt ? { prompt: options.prompt } : {}),
+      ...(options?.actionLabel ? { action_label: options.actionLabel } : {}),
     },
   })
   return ReviewChatResult.parse(raw)
 }
 
-/** Last PR snapshot, refreshed on mount and every `every` ms while visible. */
-export function usePrs(enabled: boolean, every = 60_000): State {
+/** Cached + live PR snapshot. Pass `{ poll: true }` only on the PRs page so idle tabs never poll GitHub. */
+export function usePrs(enabled: boolean, options?: { poll?: boolean }): State {
+  const poll = Boolean(options?.poll)
   const state = useSyncExternalStore(
     listener => {
       listeners.add(listener)
@@ -366,11 +539,10 @@ export function usePrs(enabled: boolean, every = 60_000): State {
   )
   useEffect(() => {
     if (!enabled) return
-    void loadPrs()
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void loadPrs()
-    }, every)
-    return () => clearInterval(timer)
-  }, [enabled, every])
+    if (poll) return retainPoller()
+    if (lastLoadedAt === 0) {
+      void loadPrs(false, { passive: true })
+    }
+  }, [enabled, poll])
   return state
 }

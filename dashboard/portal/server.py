@@ -434,7 +434,13 @@ class Portal(AuthRoutes, LocalAPI):
         if self.prs is None:
             raise web.HTTPNotFound(text=json.dumps({"error": "PR tracking is not enabled"}), content_type="application/json")
         refresh = request.query.get("refresh") in ("1", "true", "yes")
-        return web.json_response(await self.prs.snapshot(refresh=refresh))
+        passive = request.query.get("passive") in ("1", "true", "yes")
+        include_older = request.query.get("include_older") in ("1", "true", "yes")
+        response = web.json_response(
+            await self.prs.snapshot(refresh=refresh, passive=passive, include_older=include_older)
+        )
+        response.enable_compression()
+        return response
 
     async def session_prs(self, request):
         """PRs owned by or attached to one chat session."""
@@ -442,7 +448,9 @@ class Portal(AuthRoutes, LocalAPI):
             raise web.HTTPNotFound(text=json.dumps({"error": "PR tracking is not enabled"}), content_type="application/json")
         session = self._session(request)
         refresh = request.query.get("refresh") in ("1", "true", "yes")
-        return web.json_response({"session": session, "prs": await self.prs.for_session(session, refresh=refresh)})
+        return web.json_response(
+            {"session": session, "prs": await self.prs.for_session(session, refresh=refresh, passive=not refresh)}
+        )
 
     async def start_review_chat(self, request):
         """Start a review chat for a PR (or return a preview plan in read-only mode)."""
@@ -465,6 +473,13 @@ class Portal(AuthRoutes, LocalAPI):
                 "head": str(body.get("head") or ""),
             }
         title, prompt = review_chat_prompt(pr)
+        custom_prompt = str(body.get("prompt") or "").strip()
+        action_label = str(body.get("action_label") or "").strip()
+        if custom_prompt:
+            prompt = custom_prompt
+            short_repo = pr["repo"].split("/")[-1]
+            prefix = f"{action_label}: " if action_label else ""
+            title = f"{prefix}{short_repo}#{pr['number']} {pr['title']}"[:120]
         if self.prs.readonly:
             return web.json_response({
                 "preview": True,
