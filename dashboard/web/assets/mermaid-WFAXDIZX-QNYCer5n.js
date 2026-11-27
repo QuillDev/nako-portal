@@ -1,1 +1,0 @@
-export{i as Mermaid}from"./dist-PXql2TcR.js";

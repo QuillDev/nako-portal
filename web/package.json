@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "lint": "oxlint --deny-warnings",
+    "doctor": "react-doctor --yes --blocking warning",
+    "check": "bun run typecheck && bun run lint && bun run doctor"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -16,6 +19,7 @@
     "emoji-picker-element": "1.29.1",
     "emoji-picker-element-data": "1.8.0",
     "lucide-react": "^1.61.0",
+    "nakomponents": "github:QuillDev/nakomponents#c185a563f39a1a897b8faf057b0304fe1db3c4c0",
     "radix-ui": "^1.8.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -31,6 +35,8 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "oxlint": "^1.80.0",
+    "react-doctor": "^0.9.23",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"

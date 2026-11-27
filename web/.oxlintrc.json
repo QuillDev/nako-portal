@@ -1,0 +1,365 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": [
+    "./node_modules/nakomponents/oxlint.json"
+  ],
+  "overrides": [
+    {
+      "files": [
+        "src/components/portal/chat.tsx",
+        "src/components/portal/environments.tsx",
+        "src/components/portal/mcp.tsx",
+        "src/components/portal/model-picker.tsx",
+        "src/components/portal/presence.tsx",
+        "src/components/portal/settings.tsx",
+        "src/components/portal/sidebar.tsx",
+        "src/components/portal/transcript.tsx",
+        "src/hooks/use-portal.ts"
+      ],
+      "rules": {
+        "eslint/complexity": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/drawer.tsx",
+        "src/components/portal/settings.tsx",
+        "src/components/portal/sidebar.tsx",
+        "src/hooks/use-portal.ts"
+      ],
+      "rules": {
+        "eslint/max-lines-per-function": "off"
+      }
+    },
+    {
+      "files": [
+        "public/sw.js",
+        "src/lib/environments.ts",
+        "src/lib/model-presets.ts"
+      ],
+      "rules": {
+        "eslint/no-await-in-loop": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/ai-elements/prompt-input.tsx",
+        "src/components/portal/model-picker.tsx",
+        "src/components/portal/model-preset-settings.tsx",
+        "src/lib/machine-load.ts",
+        "src/lib/model-presets.ts"
+      ],
+      "rules": {
+        "eslint/no-shadow": "off"
+      }
+    },
+    {
+      "files": [
+        "public/early.js",
+        "src/lib/api.ts",
+        "src/lib/desktop-window.ts"
+      ],
+      "rules": {
+        "eslint/no-underscore-dangle": "off"
+      }
+    },
+    {
+      "files": [
+        "src/lib/environments.ts"
+      ],
+      "rules": {
+        "eslint/no-unmodified-loop-condition": "off"
+      }
+    },
+    {
+      "files": [
+        "src/main.tsx"
+      ],
+      "rules": {
+        "import/no-unassigned-import": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/ui/input-group.tsx"
+      ],
+      "rules": {
+        "jsx-a11y/click-events-have-key-events": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/transcript.tsx"
+      ],
+      "rules": {
+        "jsx-a11y/media-has-caption": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/groups.tsx",
+        "src/components/portal/mesh.tsx",
+        "src/components/portal/providers.tsx",
+        "src/components/portal/secrets-settings.tsx",
+        "src/components/portal/secrets.tsx",
+        "src/components/portal/session-actions.tsx"
+      ],
+      "rules": {
+        "jsx-a11y/no-autofocus": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/sidebar.tsx",
+        "src/components/ui/input-group.tsx"
+      ],
+      "rules": {
+        "jsx-a11y/no-noninteractive-element-interactions": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat-find.tsx",
+        "src/components/portal/chat-search.tsx",
+        "src/components/portal/code-fullscreen.tsx",
+        "src/components/portal/drawer.tsx",
+        "src/components/portal/gateway-restart.tsx",
+        "src/components/portal/html-viewer.tsx",
+        "src/components/portal/image-viewer.tsx",
+        "src/components/portal/mcp.tsx",
+        "src/components/portal/mesh.tsx",
+        "src/components/portal/preset-emoji.tsx",
+        "src/components/portal/screen-loading.tsx",
+        "src/components/portal/secrets.tsx",
+        "src/components/portal/sidebar-footer.tsx",
+        "src/components/portal/slash-menu.tsx",
+        "src/components/portal/transcript.tsx",
+        "src/components/portal/updating.tsx",
+        "src/components/portal/usage-settings.tsx",
+        "src/components/ui/input-group.tsx"
+      ],
+      "rules": {
+        "jsx-a11y/prefer-tag-over-role": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat.tsx",
+        "src/components/portal/composer.tsx",
+        "src/hooks/use-portal.ts",
+        "src/lib/passkeys.ts"
+      ],
+      "rules": {
+        "oxc/no-map-spread": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat-search.tsx",
+        "src/components/portal/elsewhere.tsx",
+        "src/components/portal/html-viewer.tsx",
+        "src/components/portal/mcp.tsx",
+        "src/components/portal/model-picker.tsx",
+        "src/components/portal/model-preset-settings.tsx",
+        "src/components/portal/preset-emoji.tsx",
+        "src/components/portal/processes.tsx",
+        "src/components/portal/providers.tsx",
+        "src/components/portal/settings.tsx",
+        "src/components/portal/sign-off-settings.tsx",
+        "src/components/portal/usage-settings.tsx",
+        "src/lib/environments.ts",
+        "src/lib/machine-load.ts",
+        "src/lib/mcp.ts",
+        "src/lib/mesh.ts",
+        "src/lib/providers.ts",
+        "src/lib/secrets.ts"
+      ],
+      "rules": {
+        "promise/always-return": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/providers.tsx"
+      ],
+      "rules": {
+        "promise/no-callback-in-promise": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat-search.tsx",
+        "src/components/portal/code-fullscreen.tsx",
+        "src/components/portal/elsewhere.tsx",
+        "src/components/portal/table-menu.tsx"
+      ],
+      "rules": {
+        "react-hooks/exhaustive-deps": "off"
+      }
+    },
+    {
+      "files": [
+        "src/app.tsx",
+        "src/components/portal/model-picker.tsx",
+        "src/components/portal/screen-loading.tsx",
+        "src/components/portal/settings.tsx",
+        "src/components/portal/transcript.tsx"
+      ],
+      "rules": {
+        "react-perf/jsx-no-jsx-as-prop": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat-find.tsx",
+        "src/components/portal/chat.tsx",
+        "src/components/portal/elsewhere.tsx",
+        "src/components/portal/image-viewer.tsx",
+        "src/components/portal/model-picker.tsx",
+        "src/components/portal/process-log.tsx",
+        "src/components/portal/processes.tsx",
+        "src/components/portal/providers.tsx",
+        "src/components/portal/slash-menu.tsx",
+        "src/lib/mesh.ts"
+      ],
+      "rules": {
+        "react/exhaustive-effect-dependencies": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat-find.tsx",
+        "src/components/portal/chat.tsx",
+        "src/components/portal/elsewhere.tsx"
+      ],
+      "rules": {
+        "react/immutability": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/ai-elements/confirmation.tsx",
+        "src/components/ai-elements/reasoning.tsx"
+      ],
+      "rules": {
+        "react/jsx-no-constructed-context-values": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/transcript.tsx"
+      ],
+      "rules": {
+        "react/no-array-index-key": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/settings-frame.tsx"
+      ],
+      "rules": {
+        "react/no-object-type-as-default-prop": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/chat.tsx",
+        "src/components/portal/processes.tsx",
+        "src/components/portal/usage-settings.tsx"
+      ],
+      "rules": {
+        "react/purity": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/ai-elements/prompt-input.tsx",
+        "src/components/portal/chat.tsx",
+        "src/components/portal/drawer.tsx",
+        "src/components/portal/groups.tsx",
+        "src/components/portal/html-viewer.tsx",
+        "src/components/portal/image-viewer.tsx",
+        "src/components/portal/presence.tsx",
+        "src/components/portal/providers.tsx",
+        "src/components/portal/session-actions.tsx",
+        "src/components/portal/transcript.tsx"
+      ],
+      "rules": {
+        "react/refs": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/ai-elements/reasoning.tsx",
+        "src/components/portal/chat-find.tsx",
+        "src/components/portal/elsewhere.tsx",
+        "src/components/portal/mcp.tsx",
+        "src/components/portal/mesh.tsx",
+        "src/components/portal/presence.tsx",
+        "src/components/portal/process-log.tsx",
+        "src/components/portal/secrets.tsx",
+        "src/components/portal/settings.tsx",
+        "src/components/portal/slash-menu.tsx"
+      ],
+      "rules": {
+        "react/set-state-in-effect": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/model-picker.tsx"
+      ],
+      "rules": {
+        "react/static-components": "off"
+      }
+    },
+    {
+      "files": [
+        "public/early.js",
+        "src/components/portal/model-picker.tsx",
+        "src/components/portal/model-preset-settings.tsx",
+        "src/components/portal/slash-menu.tsx",
+        "src/lib/portal-state.ts",
+        "src/lib/times.ts"
+      ],
+      "rules": {
+        "unicorn/consistent-function-scoping": "off"
+      }
+    },
+    {
+      "files": [
+        "src/lib/media.ts"
+      ],
+      "rules": {
+        "unicorn/no-array-reverse": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/load-warning.tsx",
+        "src/components/portal/usage-settings.tsx",
+        "src/lib/media.ts"
+      ],
+      "rules": {
+        "unicorn/no-array-sort": "off"
+      }
+    },
+    {
+      "files": [
+        "src/components/portal/transcript.tsx"
+      ],
+      "rules": {
+        "unicorn/no-new-array": "off"
+      }
+    },
+    {
+      "files": [
+        "src/hooks/use-portal.ts",
+        "src/lib/attachments.ts"
+      ],
+      "rules": {
+        "unicorn/prefer-add-event-listener": "off"
+      }
+    }
+  ]
+}

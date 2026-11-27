@@ -29,7 +29,7 @@ cd android
 ./gradlew assembleDebug
 ```
 
-The debug APK is under `android/app/build/outputs/apk/debug/`. Enter the same portal origin in either shell. Web UI changes can be built with `npm --prefix web ci && npm --prefix web run build`.
+The debug APK is under `android/app/build/outputs/apk/debug/`. Enter the same portal origin in either shell. Web UI changes can be built with `bun --cwd web install && bun --cwd web run build`.
 
 ## Tests
 
