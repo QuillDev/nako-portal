@@ -6,6 +6,8 @@ import { Skullet } from "@/components/ui/skeleton"
 import { SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { Switch } from "@/components/ui/switch"
 import { GatewayRestart } from "./gateway-restart"
+import { BackendSwitch } from "./sidebar-footer"
+import { showsBackends } from "@/lib/backends"
 import { type Portal } from "@/hooks/use-portal"
 import { api, ApiError } from "@/lib/api"
 import { cancelled, register } from "@/lib/passkeys"
@@ -239,6 +241,11 @@ export function Settings({ portal, page }: { portal: Portal; page: string | null
     ),
     nako: (
       <>
+        {showsBackends(portal.backend) && (
+          <Row label="Backend">
+            <BackendSwitch onPick={portal.switchBackend} state={portal.backend} />
+          </Row>
+        )}
         <Row label="Sticker while she works">
           <Switch checked={presence} label="Sticker while she works" onCheckedChange={setPresence} />
         </Row>
