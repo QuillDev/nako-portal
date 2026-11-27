@@ -326,6 +326,7 @@ class GatewayClient:
         self.on_stale = on_stale
         self.peer = None
         self.connected_event = asyncio.Event()
+        self._tasks = set()
 
     def _methods(self):
         methods = {}
@@ -389,8 +390,13 @@ class GatewayClient:
     def tell(self, method, *args):
         """Tell the hub something and move on; nothing waits for the answer."""
         task = asyncio.get_running_loop().create_task(self.call(method, *args))
-        task.add_done_callback(_quiet)
+        self._tasks.add(task)
+        task.add_done_callback(self._done)
         return task
+
+    def _done(self, task):
+        self._tasks.discard(task)
+        _quiet(task)
 
 
 def _quiet(task):

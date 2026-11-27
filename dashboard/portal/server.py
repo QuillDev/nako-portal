@@ -119,6 +119,7 @@ class Portal(AuthRoutes, LocalAPI):
         self.secure = parsed.scheme == "https"
         # session -> (expires, files its transcript shows), so a chat's images don't each reread it.
         self.shown = {}
+        self._shown_locks = {}
         # Other machines' Hermes when this portal is a mesh hub (`mesh.Mesh`), else None.
         self.mesh = None
         # This portal's link to its hub when it's a machine in someone's mesh (`mesh.Node`), else None.
@@ -153,6 +154,8 @@ class Portal(AuthRoutes, LocalAPI):
         self.hub.connected = False
         self.hub.invalidate_models()
         self.hub.running.clear()
+        self.hub._turn_sessions.clear()
+        self.hub._command_turns.clear()
         self.hub.progress.clear()
         self.hub.requests.clear()
         # Nothing says what runs elsewhere without a gateway; it says again once one is back.
@@ -455,6 +458,9 @@ class Portal(AuthRoutes, LocalAPI):
         self.hub.inboxes = None
         self.hub.invalidate_models()
         self.shown.clear()
+        for key, lock in list(self._shown_locks.items()):
+            if not lock.locked():
+                self._shown_locks.pop(key, None)
         await self.hub.broadcast({"kind": "profile.changed", "profile": shown["profile"]})
         return web.json_response(shown)
 
@@ -570,6 +576,8 @@ class Portal(AuthRoutes, LocalAPI):
         session = self._session(request)
         hub, inner = await self._target(session) if remote(session) else (self.hub, session)
         opened = await hub.open(inner)
+        if hub is self.hub:
+            self._remember_shown(session, opened["messages"])
         # Only the Notifications and Reviews chats keep a read mark, so other chats skip relisting every chat.
         if hub is self.hub and hub.connected and (hub.inboxes is None or session in hub.inboxes):
             listed = next((row for row in await hub.sessions() if row["id"] == session), None)
@@ -993,24 +1001,42 @@ class Portal(AuthRoutes, LocalAPI):
             },
         )
 
+    def _remember_shown(self, session, messages):
+        now = self.clock()
+        files = shown_files(messages)
+        if self.mesh is not None and any(message.get("sender") for message in messages):
+            received = self.mesh.attachments.delivered(session)
+            for message in messages:
+                if message.get("sender"):
+                    files.update(path for path in media_paths(message.get("text") or "") if path in received)
+        files = frozenset(files)
+        for stale in [key for key, (until, _) in self.shown.items() if until < now]:
+            del self.shown[stale]
+            lock = self._shown_locks.get(stale)
+            if lock is not None and not lock.locked():
+                self._shown_locks.pop(stale, None)
+        self.shown[session] = (now + SHOWN_FILES_TTL, files)
+        return files
+
     async def _shown_files(self, hub, session, wanted):
         """The files a session's transcript shows. Remembered for a short while; a file that isn't
         among them rereads the transcript, so one a newer reply delivered still opens."""
         now = self.clock()
         expires, files = self.shown.get(session, (0, frozenset()))
-        if expires < now or wanted not in files:
-            messages = (await hub.open(session))["messages"]
-            files = shown_files(messages)
-            if self.mesh is not None:
-                received = self.mesh.attachments.delivered(session)
-                for message in messages:
-                    if message.get("sender"):
-                        files.update(path for path in media_paths(message.get("text") or "") if path in received)
-            files = frozenset(files)
-            for stale in [key for key, (until, _) in self.shown.items() if until < now]:
-                del self.shown[stale]
-            self.shown[session] = (now + SHOWN_FILES_TTL, files)
-        return files
+        if expires >= now and wanted in files:
+            return files
+        lock = self._shown_locks.setdefault(session, asyncio.Lock())
+        try:
+            async with lock:
+                now = self.clock()
+                expires, files = self.shown.get(session, (0, frozenset()))
+                if expires >= now and wanted in files:
+                    return files
+                messages = (await hub.open(session))["messages"]
+                return self._remember_shown(session, messages)
+        finally:
+            if session not in self.shown and not lock.locked():
+                self._shown_locks.pop(session, None)
 
     # Other machines (mesh)
 
@@ -1230,7 +1256,10 @@ class _Client:
         self.lock = asyncio.Lock()
 
     async def send(self, message):
+        await self.send_text(json.dumps(message))
+
+    async def send_text(self, payload):
         async with self.lock:
             if self.revoked:
                 return
-            await self.ws.send_json(message)
+            await self.ws.send_str(payload)

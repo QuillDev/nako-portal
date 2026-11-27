@@ -66,9 +66,19 @@ async def main(config_path):
 
     async with aiohttp.ClientSession() as http:
         pusher = push.Pusher(http, store, vapid)
+        bg_tasks = set()
+
+        def _bg_done(task):
+            bg_tasks.discard(task)
+            if not task.cancelled():
+                error = task.exception()
+                if error is not None:
+                    log.warning("portal: background push task failed: %s", error, exc_info=error)
 
         def alert(session, title, text):
-            loop.create_task(pusher.notify(title, text, session))
+            task = loop.create_task(pusher.notify(title, text, session))
+            bg_tasks.add(task)
+            task.add_done_callback(_bg_done)
 
         link = GatewayLink(config["code"], on_stale=done.set)
         hub = Hub(link, alert=alert)
@@ -128,7 +138,7 @@ async def main(config_path):
         log.info("portal: serving %s on 127.0.0.1:%s", config["origin"], port)
         await done.wait()
         log.info("portal: shutting down")
-        for task in tasks:
+        for task in (*tasks, *bg_tasks):
             task.cancel()
         for runner in runners:
             await runner.cleanup()
