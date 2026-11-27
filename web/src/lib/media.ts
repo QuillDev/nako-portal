@@ -44,8 +44,11 @@ function cut(text: string, found: Found[]) {
 export const isImage = (path: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path)
 export const isHtml = (path: string) => /\.html?$/i.test(path)
 
+const HAS_MEDIA = /media:/i
+
 /** A reply without its MEDIA: tags, and the files they deliver. */
 export function splitReply(text: string) {
+  if (!HAS_MEDIA.test(text)) return { body: text.replace(/[^\S\n]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim(), files: [] as string[] }
   const found = find(text, MEDIA, g => g.path || g.line)
   return { body: cut(text, found), files: [...new Set(found.map(f => f.path))] }
 }

@@ -39,7 +39,7 @@ export function ChatFind({ root, session }: { root: RefObject<HTMLDivElement | n
 
   useEffect(() => {
     setCurrent(0)
-    if (!open || !root.current) { setMatches([]); return }
+    if (!open || !query || !root.current) { setMatches(prev => (prev.length ? [] : prev)); return }
     const element = root.current
     let frame = 0
     const update = () => setMatches(chatFindRanges(element, query))

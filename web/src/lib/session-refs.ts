@@ -48,7 +48,19 @@ let titles = new Map<string, string>()
 const listeners = new Set<() => void>()
 
 export function rememberTitles(rows: { id: string; title: string }[]) {
-  titles = new Map(rows.filter(row => row.title).map(row => [row.id, row.title]))
+  const next = new Map<string, string>()
+  for (const row of rows) if (row.title) next.set(row.id, row.title)
+  if (next.size === titles.size) {
+    let same = true
+    for (const [id, title] of next) {
+      if (titles.get(id) !== title) {
+        same = false
+        break
+      }
+    }
+    if (same) return
+  }
+  titles = next
   for (const listener of listeners) listener()
 }
 

@@ -2,7 +2,7 @@
 // gets a small host element with a full screen button portalled into it, the way tables get their
 // phone menu; the button opens the same block over the whole window.
 import { Maximize2Icon, XIcon } from "lucide-react"
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react"
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import type { defaultComponents } from "streamdown"
 import { loadedMarkdown } from "@/lib/markdown"
@@ -22,8 +22,10 @@ function BlockCode(props: CodeProps) {
   const body = useRef<HTMLElement>(null)
   const [host, setHost] = useState<HTMLElement | null>(null)
   const [open, setOpen] = useState(false)
+  const close = useCallback(() => setOpen(false), [])
   // Streamdown hands the rest of the props to the block's body, so the ref lands inside the block.
   useLayoutEffect(() => {
+    if (host?.isConnected) return
     const actions = body.current?.closest('[data-streamdown="code-block"]')?.querySelector<HTMLElement>('[data-streamdown="code-block-actions"]')
     if (!actions) return
     let next = actions.querySelector<HTMLElement>(":scope > [data-code-fullscreen]")
@@ -46,7 +48,7 @@ function BlockCode(props: CodeProps) {
         </button>,
         host,
       )}
-      {open && <FullScreenCode code={code} language={language} onClose={() => setOpen(false)} />}
+      {open && <FullScreenCode code={code} language={language} onClose={close} />}
     </>
   )
 }

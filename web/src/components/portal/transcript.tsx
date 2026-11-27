@@ -93,8 +93,17 @@ function blocks(messages: HistoryMessage[], notes: Note[] = [], quiet = false): 
 }
 
 // Stops following the bottom while a disclosure opens, so its header stays under the finger. The
-// scroller's own context changes as it scrolls; this one never does, so rows can skip rendering.
+// scroller's own context changes as it scrolls; keeping the subscription in this tiny wrapper
+// prevents scroll updates from re-rendering the transcript rows below it.
 const StopScroll = createContext<() => void>(() => {})
+
+function StopScrollProvider({ children }: { children: ReactNode }) {
+  const { stopScroll } = useStickToBottomContext()
+  const latest = useRef(stopScroll)
+  latest.current = stopScroll
+  const [stop] = useState(() => () => latest.current())
+  return <StopScroll.Provider value={stop}>{children}</StopScroll.Provider>
+}
 
 // Shown in the chat like Desktop's command lines: the invocation, then what it printed.
 const CommandNote = memo(function CommandNote({ text }: { text: string }) {
@@ -234,36 +243,34 @@ const named = (path: string) => path.split(/[\\/]/).pop() || path
 const sessionFile = (session: string, path: string): Item => ({ url: fileUrl(session, path), name: named(path), path, download: downloadUrl(session, path) })
 
 // The time under a message; hovering (or tapping, on a phone) shows the day too, beside it so
-// it covers no text.
+// it covers no text. Shares the single TooltipProvider mounted by Transcript.
 function Stamp({ at, children }: { at: number; children?: ReactNode }) {
   const [open, setOpen] = useState(false)
   return (
-    <TooltipProvider delayDuration={300}>
-      <Tooltip onOpenChange={setOpen} open={open}>
-        <TooltipTrigger asChild>
-          <button
-            className="flex w-fit items-center gap-1 text-muted-foreground text-xs group-[.is-user]:ml-auto"
-            onClick={e => {
-              e.preventDefault()
-              setOpen(o => !o)
-            }}
-            type="button"
-          >
-            {children}
-            {timeOf(at)}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="right" sideOffset={6}>{fullTime(at)}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip onOpenChange={setOpen} open={open}>
+      <TooltipTrigger asChild>
+        <button
+          className="flex w-fit items-center gap-1 text-muted-foreground text-xs group-[.is-user]:ml-auto"
+          onClick={e => {
+            e.preventDefault()
+            setOpen(o => !o)
+          }}
+          type="button"
+        >
+          {children}
+          {timeOf(at)}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={6}>{fullTime(at)}</TooltipContent>
+    </Tooltip>
   )
 }
 
-function Day({ at }: { at: number }) {
+const Day = memo(function Day({ at }: { at: number }) {
   return (
     <p className="flex items-center gap-3 text-muted-foreground text-xs before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">{dayLabel(at)}</p>
   )
-}
+})
 
 const User = memo(function User({ session, text, at, images, steered }: { session: string; text: string; at?: number; images?: string[]; steered?: boolean }) {
   const turn = splitUserTurn(text)
@@ -343,11 +350,12 @@ const Assistant = memo(function Assistant({
   steered,
   streaming,
 }: { session: string; text: string; at?: number; reasoning?: string; label?: string; sender?: Sender; steered?: boolean; streaming?: boolean }) {
-  const { body: raw, files } = splitReply(text)
+  const { body: raw, files } = useMemo(() => splitReply(text), [text])
   // A shared secret's card sits where its SECRET: line was, between the text around it.
   const parts = useMemo(() => splitSecrets(raw, streaming).map((p): ReplyPart => (p.text === undefined ? p : { text: linkSessionRefs(p.text) })), [raw, streaming])
   const body = parts.length === 1 ? (parts[0].text ?? "") : raw
-  const copyable = useMemo(() => copyReplyText(text), [text])
+  const fileItems = useMemo(() => files.map(path => sessionFile(session, path)), [session, files])
+  const copyable = useMemo(() => (streaming ? "" : copyReplyText(text)), [streaming, text])
   const stopScroll = useContext(StopScroll)
   return (
     <Message from="assistant">
@@ -378,7 +386,7 @@ const Assistant = memo(function Assistant({
                 </MessageResponse>
               ),
             )}
-          <Files urls={files.map(path => sessionFile(session, path))} />
+          <Files urls={fileItems} />
         </div>
       </MessageContent>
       {(at !== undefined || (!streaming && copyable)) && <div className="flex min-h-6 items-center gap-2">
@@ -389,29 +397,16 @@ const Assistant = memo(function Assistant({
   )
 })
 
-export function Transcript({
+// Historical turns stay untouched while live streaming chunks arrive below them.
+const HistoryBlocks = memo(function HistoryBlocks({
   session,
   messages,
-  live,
-  running,
   notes,
-  quiet = false,
-}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; quiet?: boolean }) {
+  quiet,
+}: { session: string; messages: HistoryMessage[]; notes?: Note[]; quiet: boolean }) {
   const shown = useMemo(() => blocks(messages, notes, quiet), [messages, notes, quiet])
-  const { stopScroll } = useStickToBottomContext()
-  const latest = useRef(stopScroll)
-  latest.current = stopScroll
-  const [stop] = useState(() => () => latest.current())
-  // A message the turn already saved is in the transcript; a chat reread mid-turn has both.
-  const saved = useMemo(() => {
-    const turn = messages.slice(messages.findLastIndex(m => m.role === "user") + 1)
-    return new Set(turn.filter(m => m.role === "assistant").map(m => m.text.trim()))
-  }, [messages])
-  const written = live?.messages.filter(m => m.text.trim() && !saved.has(m.text.trim())) ?? []
-  // Quiet: only text she's written since her last tool call, which may be the reply.
-  const pending = quiet ? written.filter(m => (m.after ?? 0) >= (live?.tools.length ?? 0)).slice(-1) : written
   return (
-    <StopScroll.Provider value={stop}>
+    <>
       {shown.map(b =>
         b.kind === "user" ? (
           <User at={b.at} images={b.images} key={b.key} session={session} steered={b.steered} text={b.text} />
@@ -425,10 +420,49 @@ export function Transcript({
           <Steps key={b.key} steps={b.steps} />
         ),
       )}
+    </>
+  )
+})
+
+const LiveTail = memo(function LiveTail({
+  session,
+  messages,
+  live,
+  running,
+  quiet,
+}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; quiet: boolean }) {
+  // A message the turn already saved is in the transcript; a chat reread mid-turn has both.
+  const saved = useMemo(() => {
+    const turn = messages.slice(messages.findLastIndex(m => m.role === "user") + 1)
+    return new Set(turn.filter(m => m.role === "assistant").map(m => m.text.trim()))
+  }, [messages])
+  const written = live?.messages.filter(m => m.text.trim() && !saved.has(m.text.trim())) ?? []
+  // Quiet: only text she's written since her last tool call, which may be the reply.
+  const pending = quiet ? written.filter(m => (m.after ?? 0) >= (live?.tools.length ?? 0)).slice(-1) : written
+  return (
+    <>
       {pending.map((m, i) => (
         <Assistant key={m.id} session={session} streaming={running && i === pending.length - 1} text={m.text} />
       ))}
       {!quiet && running && !pending.length && <Shimmer className="text-sm">working…</Shimmer>}
-    </StopScroll.Provider>
+    </>
   )
-}
+})
+
+export const Transcript = memo(function Transcript({
+  session,
+  messages,
+  live,
+  running,
+  notes,
+  quiet = false,
+}: { session: string; messages: HistoryMessage[]; live: Live | null; running: boolean; notes?: Note[]; quiet?: boolean }) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <StopScrollProvider>
+        <HistoryBlocks messages={messages} notes={notes} quiet={quiet} session={session} />
+        <LiveTail live={live} messages={messages} quiet={quiet} running={running} session={session} />
+      </StopScrollProvider>
+    </TooltipProvider>
+  )
+})
