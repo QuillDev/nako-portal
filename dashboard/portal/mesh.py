@@ -672,12 +672,14 @@ class Mesh:
         lists = await asyncio.gather(*(one(m) for m in list(self.peers)))
         rows = [row for group in lists for row in group]
         known = {row["id"] for row in rows}
-        nodes = load_nodes(self.data)
-        for opened in self.attachments.sessions():
-            sid = opened["session"]
-            machine, _ = parse(sid) or (None, None)
-            if machine in nodes and machine not in self.peers and sid not in known and not opened.get("archived"):
-                rows.append({"id": sid, "title": opened.get("title") or "untitled", "machine": machine, "source": "portal", "message_count": len(opened.get("messages") or []), "started_at": opened.get("last_active") or 0, "status": None})
+        nodes = await asyncio.to_thread(load_nodes, self.data)
+        offline = {name for name in nodes if name not in self.peers}
+        if offline:
+            for opened in await asyncio.to_thread(lambda: list(self.attachments.sessions())):
+                sid = opened["session"]
+                machine, _ = parse(sid) or (None, None)
+                if machine in offline and machine not in self.peers and sid not in known and not opened.get("archived"):
+                    rows.append({"id": sid, "title": opened.get("title") or "untitled", "machine": machine, "source": "portal", "message_count": len(opened.get("messages") or []), "started_at": opened.get("last_active") or 0, "status": None})
         return rows
 
     def status_frames(self):
@@ -792,7 +794,7 @@ class Mesh:
                 if not isinstance(opened, dict) or opened.get("session") != session:
                     raise ValueError("Invalid attachment transcript")
                 opened = _rewrite(opened, machine)
-            self.attachments.save(sid, opened=opened, item=item)
+            await asyncio.to_thread(self.attachments.save, sid, opened=opened, item=item)
             return {"ok": True}
 
         async def relay(session, method, args):
@@ -823,12 +825,17 @@ class Mesh:
                 if deliveries and hub is not self.hub:
                     raise ValueError("Send file attachments to a hub chat")
                 if deliveries:
-                    self.attachments.save(inner, opened={"messages": [{"role": "assistant", "text": text}]})
-                    for item in deliveries:
-                        self.attachments.save(inner, item=item)
-                        raw = item["path"]
-                        saved = self.attachments.file(inner, raw)
-                        text = text.replace(raw, str(saved))
+                    def save_deliveries():
+                        updated = text
+                        self.attachments.save(inner, opened={"messages": [{"role": "assistant", "text": updated}]})
+                        for item in deliveries:
+                            self.attachments.save(inner, item=item)
+                            raw = item["path"]
+                            saved = self.attachments.file(inner, raw)
+                            updated = updated.replace(raw, str(saved))
+                        return updated
+
+                    text = await asyncio.to_thread(save_deliveries)
                 args = [text, []]
             # answer(request id, result) names the request, not the chat.
             call = getattr(hub, method)
@@ -853,7 +860,7 @@ class Mesh:
         name = str(request.query.get("name") or "")
         auth = request.headers.get("Authorization", "")
         token = auth[7:] if auth.startswith("Bearer ") else ""
-        known = load_nodes(self.data).get(name) if MACHINE.match(name) else None
+        known = (await asyncio.to_thread(load_nodes, self.data)).get(name) if MACHINE.match(name) else None
         if not known or not token or not secrets.compare_digest(_digest(token), str(known.get("token_sha256"))):
             log.warning("portal: refused a mesh connection for %r", name)
             return web.json_response({"error": "bad machine or token"}, status=401)
@@ -875,7 +882,7 @@ class Mesh:
         if old is not None:
             await old.ws.close()
         log.info("portal: %s joined the mesh", name)
-        _joined(self.data, name)
+        await asyncio.to_thread(_joined, self.data, name)
         await self.hub.broadcast({"kind": "machines.changed"})
         try:
             await peer.run()
@@ -928,6 +935,9 @@ class Node:
         self.ops = ops
         self.peer = None
         self.uploaded = {}
+        self._uploaded_transcripts = {}
+        self._synced_sessions = {}
+        self._tasks = set()
         self.attachments_supported = False
         self.upload_lock = asyncio.Lock()
         self.connected_event = asyncio.Event()
@@ -940,7 +950,12 @@ class Node:
         if peer is None:
             return
         task = asyncio.get_running_loop().create_task(self._forward(peer, frame))
-        task.add_done_callback(_quiet)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+
+    def _task_done(self, task):
+        self._tasks.discard(task)
+        _quiet(task)
 
     async def _upload(self, peer, opened):
         if not self.attachments_supported:
@@ -956,17 +971,39 @@ class Node:
             pass  # The gateway is down; keep the hub's last known archive flag.
         return opened
 
+    @staticmethod
+    def _file_stamp(raw):
+        info = Path(raw).expanduser().stat()
+        return (info.st_mtime_ns, info.st_size, info.st_ino)
+
+    def _files_current(self, session, files):
+        for raw in files:
+            uploaded = self.uploaded.get((session, raw))
+            if uploaded is None:
+                return False
+            try:
+                if self._file_stamp(raw) != uploaded:
+                    return False
+            except FileNotFoundError:
+                continue  # Already uploaded durably to hub; nothing new on disk to re-send.
+            except OSError:
+                return False
+        return True
+
     async def _upload_files(self, peer, opened):
-        await peer.call("attachment", opened["session"], opened)
+        session = opened["session"]
+        digest = hashlib.sha256(json.dumps(opened, sort_keys=True, default=str).encode()).hexdigest()
+        if self._uploaded_transcripts.get(session) != digest:
+            await peer.call("attachment", session, opened)
+            self._uploaded_transcripts[session] = digest
         for raw in sorted(shown_files(opened.get("messages") or [])):
             try:
-                info = Path(raw).expanduser().stat()
-                stamp = (info.st_mtime_ns, info.st_size, info.st_ino)
-                key = (opened["session"], raw)
+                stamp = await asyncio.to_thread(self._file_stamp, raw)
+                key = (session, raw)
                 if self.uploaded.get(key) == stamp:
                     continue
                 item = await asyncio.to_thread(read_attachment, raw)
-                await peer.call("attachment", opened["session"], None, item)
+                await peer.call("attachment", session, None, item)
                 self.uploaded[key] = stamp
             except (OSError, ValueError) as error:
                 log.info("portal: attachment unavailable (%s)", error)
@@ -1086,6 +1123,8 @@ class Node:
             peer = Peer(ws, self._methods())
             self.peer = peer
             self.uploaded.clear()
+            self._uploaded_transcripts.clear()
+            self._synced_sessions.clear()
             running = asyncio.get_running_loop().create_task(peer.run())
             syncing = None
             uploading = None
@@ -1104,24 +1143,45 @@ class Node:
             finally:
                 self.peer = None
                 self.connected_event.clear()
-                for task in (running, syncing, uploading):
+                for task in (running, syncing, uploading, *list(self._tasks)):
                     if task is not None:
                         task.cancel()
                 await ws.close()
             await asyncio.sleep(self.RETRY)
 
+    async def _sync_attachments_once(self, peer):
+        seen = set()
+        entries = [
+            *((False, row) for row in await self.hub.sessions()),
+            *((True, row) for row in await self.hub.archived()),
+        ]
+        for archived, row in entries:
+            sid = row["id"]
+            seen.add(sid)
+            sig = (archived, row.get("title"), row.get("message_count"))
+            cached = self._synced_sessions.get(sid)
+            if cached is not None and cached[0] == sig and (
+                not cached[1] or await asyncio.to_thread(self._files_current, sid, cached[1])
+            ):
+                continue
+            try:
+                # Bulk reads must not evict the transcripts currently open in the app.
+                opened = await self._opened(sid, cache=False)
+                files = tuple(sorted(shown_files(opened.get("messages") or [])))
+                if files:
+                    await self._upload(peer, opened)
+                if not files or all((sid, raw) in self.uploaded for raw in files):
+                    self._synced_sessions[sid] = (sig, files)
+            except (ValueError, OSError):
+                log.info("portal: attachment backfill skipped an unavailable chat")
+        for stale in [sid for sid in self._synced_sessions if sid not in seen]:
+            del self._synced_sessions[stale]
+
     async def _sync_attachments(self, peer):
         # Backfill existing chats and retry after a lost link. One file per RPC.
         while True:
             try:
-                for row in [*await self.hub.sessions(), *await self.hub.archived()]:
-                    try:
-                        # Bulk reads must not evict the transcripts currently open in the app.
-                        opened = await self._opened(row["id"], cache=False)
-                        if shown_files(opened.get("messages") or []):
-                            await self._upload(peer, opened)
-                    except (ValueError, OSError):
-                        log.info("portal: attachment backfill skipped an unavailable chat")
+                await self._sync_attachments_once(peer)
             except asyncio.CancelledError:
                 raise
             except Exception:

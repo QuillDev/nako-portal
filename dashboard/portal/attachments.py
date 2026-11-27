@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 from pathlib import Path, PureWindowsPath
 
 from .media import shown_files
@@ -67,6 +68,7 @@ class Attachments:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._lock = threading.Lock()
 
     def _key(self, session):
         if not SESSION.fullmatch(session):
@@ -97,22 +99,23 @@ class Attachments:
             temp.unlink(missing_ok=True)
 
     def save(self, session, opened=None, item=None):
-        view = self.view(session)
-        if opened is not None:
-            if "archived" not in opened and "archived" in (view.get("opened") or {}):
-                opened = {**opened, "archived": view["opened"]["archived"]}
-            view["opened"] = opened
-        if item is not None:
-            raw, data = decode_attachment(item)
-            allowed = shown_files((view.get("opened") or {}).get("messages") or [])
-            if raw not in allowed:
-                raise ValueError("That file wasn't attached in this chat")
-            name = re.sub(r"[^\w. -]", "_", PureWindowsPath(raw).name)[:160] or "file"
-            key = hashlib.sha256(data).hexdigest() + "/" + name
-            (self.root / key).parent.mkdir(exist_ok=True, mode=0o700)
-            self._write(self.root / key, data)
-            view["files"][raw] = key
-        self._write(self._key(session), json.dumps(view).encode())
+        with self._lock:
+            view = self.view(session)
+            if opened is not None:
+                if "archived" not in opened and "archived" in (view.get("opened") or {}):
+                    opened = {**opened, "archived": view["opened"]["archived"]}
+                view["opened"] = opened
+            if item is not None:
+                raw, data = decode_attachment(item)
+                allowed = shown_files((view.get("opened") or {}).get("messages") or [])
+                if raw not in allowed:
+                    raise ValueError("That file wasn't attached in this chat")
+                name = re.sub(r"[^\w. -]", "_", PureWindowsPath(raw).name)[:160] or "file"
+                key = hashlib.sha256(data).hexdigest() + "/" + name
+                (self.root / key).parent.mkdir(exist_ok=True, mode=0o700)
+                self._write(self.root / key, data)
+                view["files"][raw] = key
+            self._write(self._key(session), json.dumps(view).encode())
 
     def file(self, session, raw):
         view = self.view(session)

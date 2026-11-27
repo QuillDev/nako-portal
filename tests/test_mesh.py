@@ -1050,3 +1050,32 @@ async def test_rebranded_enrollment_uses_detected_agent_and_service(world, tmp_p
     lines = commands.read_text().splitlines()
     assert any(line.startswith('mesh join ') for line in lines)
     assert 'gateway restart' in lines
+
+
+async def test_attachment_backfill_reuploads_modified_files_new_attachments_and_archive_changes(mesh, tmp_path):
+    first = tmp_path / "chart.png"
+    first.write_bytes(b"v1-bytes")
+    second = tmp_path / "extra.txt"
+    second.write_bytes(b"second-file")
+    sid = mesh.machine.hermes.add_session("20261101_160000_abcd10", "Backfill watch")
+    mesh.machine.hermes._row(sid, "assistant", f"MEDIA:{first}")
+    remote = f"mesh.{MACHINE}.{sid}"
+    await _join(mesh)
+    await until(lambda: mesh.mesh.attachments.file(remote, str(first)) is not None)
+    assert mesh.mesh.attachments.file(remote, str(first)).read_bytes() == b"v1-bytes"
+
+    # Modifying the attached file in place is detected and re-uploaded on the next backfill sweep.
+    first.write_bytes(b"v2-updated-bytes")
+    await mesh.machine.node._sync_attachments_once(mesh.machine.node.peer)
+    assert mesh.mesh.attachments.file(remote, str(first)).read_bytes() == b"v2-updated-bytes"
+
+    # Appending a new message with another file uploads the new attachment.
+    mesh.machine.hermes._row(sid, "assistant", f"MEDIA:{second}")
+    await mesh.machine.node._sync_attachments_once(mesh.machine.node.peer)
+    assert mesh.mesh.attachments.file(remote, str(second)).read_bytes() == b"second-file"
+
+    # Archiving the chat propagates to the hub's saved transcript so offline listing omits it.
+    mesh.machine.hermes.sessions[sid]["archived"] = True
+    await mesh.machine.node._sync_attachments_once(mesh.machine.node.peer)
+    assert mesh.mesh.attachments.view(remote)["opened"]["archived"] is True
+
