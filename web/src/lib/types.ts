@@ -1,6 +1,6 @@
 import { d, type Infer } from "@/lib/decode"
 
-export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; origin?: string; name?: string; environments?: boolean; machine_load?: boolean; backend?: Backends }
+export type Me = { signed_in: boolean; has_passkeys: boolean; connected: boolean; origin?: string; name?: string; environments?: boolean; machine_load?: boolean; backend?: Backends; prs?: boolean }
 
 // The agents that can dial into the portal (`/api/backend`) and the one it talks to now.
 export type Backends = { active: string; backends: { id: string; connected: boolean; version?: string; build?: string }[] }
@@ -163,4 +163,5 @@ export type Frame =
   | { kind: "secrets.changed" }
   | { kind: "providers.changed" }
   | { kind: "mcp.changed" }
+  | { kind: "prs.changed" }
   | { kind: "event"; session: string; type: string; payload: Record<string, unknown> }

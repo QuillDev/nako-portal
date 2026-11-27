@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 import signal
 import sys
 from pathlib import Path
@@ -26,6 +27,7 @@ from portal.machine_load import MachineLoad
 from portal.machine_ops import MachineOps
 from portal.mesh import Mesh, Node
 from portal.offline import Offline
+from portal.prs import PRService
 from portal.server import Portal
 from portal.store import Store
 
@@ -112,6 +114,7 @@ async def main(config_path):
                 preview_hosts=preview_hosts_for(config["origin"]),
                 own_hosts=(urlparse(config["origin"]).hostname,),
             ),
+            prs=PRService(store, home=home, viewer=config.get("github_user") or None) if shutil.which("gh") else None,
         )
         link.on_change = portal.gateway_changed
         portal.ops = ops

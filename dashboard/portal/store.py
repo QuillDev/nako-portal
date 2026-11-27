@@ -84,8 +84,21 @@ CREATE TABLE IF NOT EXISTS inbox (
     text TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS session_prs (
+    session TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    number INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    branch TEXT NOT NULL DEFAULT '',
+    base TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open',
+    linked_at REAL NOT NULL,
+    PRIMARY KEY (session, repo, number)
+);
 CREATE INDEX IF NOT EXISTS idx_logins_credential ON logins(credential_id);
 CREATE INDEX IF NOT EXISTS idx_chat_group_members_group ON chat_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_session_prs_pr ON session_prs(repo, number);
 """
 
 
@@ -559,3 +572,83 @@ class Store:
             "SELECT id, chat, text, created_at FROM inbox WHERE id>? ORDER BY id ASC LIMIT ?", (cursor, limit)
         )
         return [{"id": r[0], "chat": r[1], "text": r[2], "created_at": r[3]} for r in rows]
+
+    # Session PR links: explicit chat <-> GitHub PR attachments registered by agents.
+
+    def attach_session_pr(
+        self,
+        session: str,
+        *,
+        repo: str,
+        number: int,
+        url: str,
+        title: str = "",
+        branch: str = "",
+        base: str = "",
+        state: str = "open",
+    ) -> dict:
+        clean_state = state if state in ("open", "merged", "closed") else "open"
+        now = self.clock()
+        self._run(
+            "INSERT INTO session_prs (session, repo, number, url, title, branch, base, state, linked_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(session, repo, number) DO UPDATE SET "
+            "url=excluded.url, "
+            "title=CASE WHEN excluded.title<>'' THEN excluded.title ELSE session_prs.title END, "
+            "branch=CASE WHEN excluded.branch<>'' THEN excluded.branch ELSE session_prs.branch END, "
+            "base=CASE WHEN excluded.base<>'' THEN excluded.base ELSE session_prs.base END, "
+            "state=excluded.state, "
+            "linked_at=excluded.linked_at",
+            (session, repo, number, url, title[:200], branch[:160], base[:160], clean_state, now),
+        )
+        rows = self._run(
+            "SELECT session, repo, number, url, title, branch, base, state, linked_at "
+            "FROM session_prs WHERE session=? AND repo=? AND number=?",
+            (session, repo, number),
+        )
+        r = rows[0]
+        return {
+            "session": r[0],
+            "repo": r[1],
+            "number": r[2],
+            "url": r[3],
+            "title": r[4],
+            "branch": r[5],
+            "base": r[6],
+            "state": r[7],
+            "linked_at": r[8],
+        }
+
+    def detach_session_pr(self, session: str, repo: str, number: int) -> bool:
+        with self.lock:
+            cursor = self.db.execute(
+                "DELETE FROM session_prs WHERE session=? AND repo=? AND number=?", (session, repo, number)
+            )
+            return cursor.rowcount > 0
+
+    def session_prs(self, session: str | None = None) -> list[dict]:
+        if session is not None:
+            rows = self._run(
+                "SELECT session, repo, number, url, title, branch, base, state, linked_at "
+                "FROM session_prs WHERE session=? ORDER BY linked_at DESC",
+                (session,),
+            )
+        else:
+            rows = self._run(
+                "SELECT session, repo, number, url, title, branch, base, state, linked_at "
+                "FROM session_prs ORDER BY linked_at DESC"
+            )
+        return [
+            {
+                "session": r[0],
+                "repo": r[1],
+                "number": r[2],
+                "url": r[3],
+                "title": r[4],
+                "branch": r[5],
+                "base": r[6],
+                "state": r[7],
+                "linked_at": r[8],
+            }
+            for r in rows
+        ]

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { openChatSearch, SEARCH_KEYS } from "@/components/portal/chat-search";
 import type { Portal } from "@/hooks/use-portal";
 import { inBubble } from "@/lib/bubble";
+import { attentionCount, usePrs } from "@/lib/prs";
 import type { GroupColor, SessionRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useDrawer } from "./drawer";
@@ -97,6 +98,9 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
   const inbox = sessions.find((s) => s.notifications);
   const reviews = sessions.find((s) => s.reviews);
   const open = portal.route.view === "chat" ? portal.route.session : null;
+  const prsEnabled = Boolean(portal.me?.prs);
+  const { data: prsData } = usePrs(prsEnabled);
+  const prNeeds = attentionCount(prsData);
 
   return (
     <aside
@@ -162,7 +166,26 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
           open={open}
           row={inbox}
         />
-        {(reviews || portal.sessionsState === "loading") ? (
+        {prsEnabled ? (
+          <button
+            className={cn(
+              "flex w-full select-none items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+              (portal.route.view === "reviews" || (reviews && open === reviews.id)) && "bg-accent",
+            )}
+            onClick={() => go("#/reviews")}
+            type="button"
+          >
+            <GitPullRequestIcon className="size-4 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">Reviews</span>
+            {reviews?.unread && open !== reviews.id ? (
+              <span className="size-2 shrink-0 rounded-full bg-emerald-500" title="new post" />
+            ) : prNeeds > 0 ? (
+              <span className="shrink-0 text-muted-foreground text-xs tabular-nums" title={`${prNeeds} PRs need attention`}>
+                {prNeeds}
+              </span>
+            ) : null}
+          </button>
+        ) : (reviews || portal.sessionsState === "loading") ? (
           <ChannelRow
             fallback="Reviews"
             go={go}

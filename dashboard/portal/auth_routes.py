@@ -74,6 +74,7 @@ class AuthRoutes:
             me["machine_load"] = self.machine_load is not None
             if hasattr(self.hub.backend, "backend_state"):
                 me["backend"] = self.hub.backend.backend_state()
+            me["prs"] = self.prs is not None
         return web.json_response(me)
 
 

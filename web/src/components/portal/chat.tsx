@@ -18,6 +18,7 @@ import { ComposerPlaceholder } from "./screen-loading"
 import { PageHeader } from "./header"
 import { Presence } from "./presence"
 import { ChatEnvironments } from "./chat-environments"
+import { ChatPrs } from "./chat-prs"
 import { GroupBackChip, GroupComposerDock } from "./group-dock"
 import { Processes } from "./processes"
 import { Requests } from "./requests"
@@ -39,6 +40,7 @@ const ChatHeader = memo(function ChatHeader({
   actions,
   running,
   environments,
+  prs,
 }: {
   title: string
   session: string
@@ -50,6 +52,7 @@ const ChatHeader = memo(function ChatHeader({
   actions: ChatActions
   running: boolean
   environments: boolean
+  prs: boolean
 }) {
   return (
     <PageHeader title={title}>
@@ -59,6 +62,7 @@ const ChatHeader = memo(function ChatHeader({
           {group && leadSession && leadSession !== session && prefetch && (
             <GroupBackChip group={group} leadSession={leadSession} prefetch={prefetch} />
           )}
+          {prs && <ChatPrs key={session} session={session} />}
           {environments && <ChatEnvironments session={session} />}
           <Processes key={session} running={running} session={session} />
           <DropdownMenu>
@@ -381,6 +385,7 @@ function PortalChat({ portal, find }: { portal: Portal; find?: ReactNode }) {
         leadSession={leadSession}
         pinned={Boolean(row?.pinned)}
         prefetch={prefetch}
+        prs={Boolean(portal.me?.prs)}
         running={c.running}
         session={c.session}
         title={c.title || row?.title || "chat"}
