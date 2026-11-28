@@ -96,7 +96,7 @@ export function usePortal() {
   }, [])
   const generation = useRef({ request: 0, turn: 0 })
   const [connected, setConnected] = useState(true)
-  const [hermes, setHermes] = useState<import("@/lib/types").HermesBuild | null>(null)
+  const [agent, setAgent] = useState<import("@/lib/types").AgentBuild | null>(null)
   // Which agent the portal talks to (Python, Bun) and which are connected.
   const [backend, setBackend] = useState<Backends | null>(null)
   const backendRef = useRef(backend)
@@ -212,12 +212,12 @@ export function usePortal() {
       switch (frame.kind) {
         case "hub.connected":
           setConnected(true)
-          setHermes(frame.hermes ?? null)
+          setAgent(frame.hermes ?? null)
           loadSessions()
           if (currentRef.current) refresh(currentRef.current.session)
           return
         case "hub.disconnected":
-          setHermes(null)
+          setAgent(null)
           return setConnected(false)
         case "sessions.changed":
           loadSessions()
@@ -526,17 +526,6 @@ export function usePortal() {
     setMe(m => (m ? { ...m, name: saved.name } : m))
   }, [])
 
-  const switchBackend = useCallback(
-    async (id: string) => {
-      try {
-        applyBackend(await api<Backends>("/api/backend", { method: "POST", body: { backend: id } }))
-      } catch (e) {
-        setError((e as Error).message)
-      }
-    },
-    [applyBackend],
-  )
-
   const rename = useCallback(
     (session: string, title: string) =>
       act(async () => {
@@ -646,7 +635,7 @@ export function usePortal() {
     }
   }, [current, live])
 
-  return { me, setName, boot, refresh, sessions, sessionsState, outside, route, current, live, connected, hermes, backend, switchBackend, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
+  return { me, setName, boot, refresh, sessions, sessionsState, outside, route, current, live, connected, agent, backend, linked, error, setError, send, stop, answer, rename, pin, archive, unarchive, setGroup, createGroup, updateGroup, deleteGroup, loadOlder, prefetch, commands, command, notes, signOff, machinesSeen }
 }
 
 export type Portal = ReturnType<typeof usePortal>

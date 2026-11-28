@@ -14,10 +14,9 @@ import { useGroupPicker, useGroupRename } from "./groups";
 import { useRenameDialog } from "./session-actions";
 import { CHAT_DRAG, canDrag, type ChatDrag, sections, useFolded } from "./sidebar-utils";
 import { ChannelRow, ChatRow, DOT, GroupBlock } from "./sidebar-rows";
-import { showsBackends } from "@/lib/backends";
-import { AppVersion, BackendSwitch, ConnectionDot, HermesVersion } from "./sidebar-footer";
+import { AgentVersion, AppVersion, ConnectionDot } from "./sidebar-footer";
 
-type SidebarProps = Pick<Portal, "sessions" | "sessionsState" | "pin" | "archive" | "prefetch" | "setGroup" | "createGroup" | "updateGroup" | "deleteGroup" | "setError" | "rename" | "route" | "outside" | "connected" | "linked" | "hermes" | "backend" | "switchBackend" | "me"> & {
+type SidebarProps = Pick<Portal, "sessions" | "sessionsState" | "pin" | "archive" | "prefetch" | "setGroup" | "createGroup" | "updateGroup" | "deleteGroup" | "setError" | "rename" | "route" | "outside" | "connected" | "linked" | "agent" | "me"> & {
   currentSession?: string;
   currentTitle?: string;
   currentSource?: string;
@@ -261,7 +260,7 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
           {portal.connected ? (
             <>
               <AppVersion />
-              {portal.linked && portal.hermes && <HermesVersion version={portal.hermes} />}
+              {portal.linked && portal.agent && <AgentVersion version={portal.agent} />}
             </>
           ) : (
             <span className="px-2 text-muted-foreground text-xs">
@@ -270,7 +269,6 @@ export const Sidebar = memo(function Sidebar({ className, currentSession, curren
           )}
         </div>
         <div className="flex items-center gap-1">
-          {portal.connected && showsBackends(portal.backend) && <BackendSwitch onPick={portal.switchBackend} state={portal.backend} />}
           {portal.connected && <LoadWarning go={go} me={portal.me} />}
           <Button
             aria-label="Settings"
