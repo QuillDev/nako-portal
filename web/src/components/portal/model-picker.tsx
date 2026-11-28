@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem } from "@/components/ui/command"
 import { DropdownContent, DropdownList, SearchableDropdown } from "@/components/ui/searchable-dropdown"
 import { api, ApiError } from "@/lib/api"
-import { presetDetails, presetMatches, refreshModelPicks, toggleModelFavorite, useModelFavorites, useModelPresets } from "@/lib/model-presets"
+import { modelProviderKey, presetDetails, presetMatches, refreshModelPicks, toggleModelFavorite, useModelFavorites, useModelPresets } from "@/lib/model-presets"
 import { favoriteId, type ModelFavorite } from "@/lib/model-favorites"
 
 export const modelChoice = d.object({
@@ -79,7 +79,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const [error, setError] = useState("")
   const favorites = useModelFavorites()
   const search = useRef<HTMLInputElement>(null)
-  const catalog = new Map(value.providers.map(provider => [provider.provider, provider]))
+  const catalog = new Map(value.providers.map(provider => [modelProviderKey(provider.provider), provider]))
   const presets = useModelPresets()
   const presetsOnly = named && presets.length > 0
   const activePreset = presetsOnly ? presets.find(item => presetMatches(item, value)) : undefined
@@ -94,7 +94,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const matches = (model: string, provider: string, tuning = "") => `${provider} ${model} ${tuning}`.toLowerCase().includes(filter)
   const details = (favorite: ModelFavorite) => "effort" in favorite ? [favorite.effort, favorite.speed].filter(Boolean).join(" · ") : ""
   const shownFavorites = favorites.filter(favorite => {
-    const provider = catalog.get(favorite.provider)
+    const provider = catalog.get(modelProviderKey(favorite.provider))
     return provider?.models.includes(favorite.model) && (supportsTuning || !("effort" in favorite)) && matches(favorite.model, provider.label, details(favorite))
   })
   const toggle = (favorite: ModelFavorite) => {
@@ -108,7 +108,10 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const save = async (pick: Pick) => {
     setSaving(true)
     setError("")
-    try { await onPick(pick) } catch (e) {
+    try {
+      const provider = pick.provider && catalog.get(modelProviderKey(pick.provider))?.provider
+      await onPick(provider ? { ...pick, provider } : pick)
+    } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
       // A chip has nowhere to say what went wrong; the picker does.
       setOpen(true)
@@ -119,9 +122,9 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
   const speeds = value.speeds && value.speeds.length > 1 ? value.speeds : undefined
   const renderRow = (pick: ModelFavorite, description?: string) => {
     const id = favoriteId(pick)
-    const active = pick.provider === value.provider && pick.model === value.model &&
+    const active = modelProviderKey(pick.provider) === modelProviderKey(value.provider) && pick.model === value.model &&
       (!("effort" in pick) || (pick.effort === preset.effort && pick.speed === preset.speed))
-    const name = `${pick.model} on ${catalog.get(pick.provider)?.label}${description ? `, ${description}` : ""}`
+    const name = `${pick.model} on ${catalog.get(modelProviderKey(pick.provider))?.label}${description ? `, ${description}` : ""}`
     return <div key={id} className="flex items-stretch rounded-sm hover:bg-accent focus-within:bg-accent">
       <CommandItem className="min-h-9 min-w-0 flex-1 max-sm:min-h-11" disabled={saving} value={id} onSelect={() => void save(pick)}>
         <span className="min-w-0">
@@ -157,7 +160,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
           <DropdownList className="p-1">
             <CommandEmpty>No preset matches.</CommandEmpty>
             {presets.map(item => {
-              const available = catalog.get(item.pick.provider)?.models.includes(item.pick.model)
+              const available = catalog.get(modelProviderKey(item.pick.provider))?.models.includes(item.pick.model)
               return <CommandItem key={item.id} value={`${item.name} ${item.id}`} keywords={[presetDetails(item)]}
                 disabled={saving || !available} className="min-h-11" onSelect={() => void save(item.pick)}>
                 <PresetIcon icon={item.icon} />
@@ -175,7 +178,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
         <DropdownList>
           <CommandEmpty>No model matches.</CommandEmpty>
           {shownFavorites.length > 0 && <CommandGroup heading="Favorites" className="mb-1 border-b pb-2">
-            {shownFavorites.map(pick => renderRow(pick, [catalog.get(pick.provider)?.label, details(pick)].filter(Boolean).join(" · ")))}
+            {shownFavorites.map(pick => renderRow(pick, [catalog.get(modelProviderKey(pick.provider))?.label, details(pick)].filter(Boolean).join(" · ")))}
           </CommandGroup>}
           {value.providers.map(p => {
             const shown = p.models.map(model => ({ provider: p.provider, model }))
@@ -187,7 +190,7 @@ export function ModelPicker({ value, onPick, label = "Model", disabled = false, 
       {supportsTuning && <fieldset disabled={saving} className="flex items-center gap-1 border-t p-1.5">
         {value.efforts && <Option label="effort" value={value.effort || ""} values={value.efforts} onPick={effort => void save({ effort })} />}
         {speeds && <Option label="speed" value={value.speed || ""} values={speeds} onPick={speed => void save({ speed })} />}
-        {canSavePreset && (preset.effort || preset.speed) && catalog.get(preset.provider)?.models.includes(preset.model) &&
+        {canSavePreset && (preset.effort || preset.speed) && catalog.get(modelProviderKey(preset.provider))?.models.includes(preset.model) &&
           <button type="button" aria-pressed={starred.has(favoriteId(preset))}
             className="flex min-h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent aria-pressed:text-primary max-sm:min-h-11"
             onClick={() => toggle(preset)}><StarIcon className="size-3.5" fill={starred.has(favoriteId(preset)) ? "currentColor" : "none"} /> {starred.has(favoriteId(preset)) ? "Preset saved" : "Save preset"}</button>}
