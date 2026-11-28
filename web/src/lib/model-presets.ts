@@ -91,9 +91,17 @@ export async function toggleModelFavorite(value: ModelFavorite) {
   apply(await api<unknown>("/api/model-picks/favorites", { method: "POST", body: value }))
 }
 
+// Presets outlive the backend that named the provider.
+export function modelProviderKey(provider: string) {
+  if (provider === "claude-subscription-directsdk-experimental" || provider === "claude-code") return "claude-subscription"
+  if (provider === "antigravity-oauth" || provider === "google-antigravity" || provider === "agy-oauth") return "antigravity"
+  if (provider === "codex") return "openai-codex"
+  return provider
+}
+
 export function presetMatches(preset: ModelPreset, value: { provider: string; model: string; effort?: string; speed?: string }) {
   const { pick } = preset
-  return pick.provider === value.provider && pick.model === value.model &&
+  return modelProviderKey(pick.provider) === modelProviderKey(value.provider) && pick.model === value.model &&
     pick.effort === (value.effort || "") && (pick.speed || "normal") === (value.speed || "normal")
 }
 
