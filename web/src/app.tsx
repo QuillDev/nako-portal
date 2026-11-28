@@ -128,9 +128,7 @@ function AppContent() {
             outside={portal.outside}
             connected={portal.connected}
             linked={portal.linked}
-            hermes={portal.hermes}
-            backend={portal.backend}
-            switchBackend={portal.switchBackend}
+            agent={portal.agent}
             me={portal.me}
             currentSession={portal.current?.session}
             currentTitle={portal.current?.title}
